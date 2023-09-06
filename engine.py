@@ -3138,6 +3138,10 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, bet amount must be a positive number.")
             return
 
+        if bet > 500000:
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is 500,000 coins.")
+            return
+
         if bet > current_balance:
             # Calculate the missing amount needed to complete the transaction including tax.
             missing_amount = bet - current_balance
@@ -3192,6 +3196,10 @@ class CurrencySystem(commands.Cog):
         # Check if bet amount is positive
         if bet <= 0:
             await ctx.send(f"{ctx.author.mention}, bet amount must be a positive number.")
+            return
+
+        if bet > 500000:
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is 500,000 coins.")
             return
 
         if bet > current_balance:
