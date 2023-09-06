@@ -1016,6 +1016,61 @@ class CurrencySystem(commands.Cog):
 
 # Metrics
 
+    @commands.command(name='wealthiest', help='Shows the top 10 wealthiest users.')
+    async def wealthiest(self, ctx):
+        cursor = self.conn.cursor()
+
+        try:
+            # Get the top 10 wealthiest users
+            cursor.execute("""
+                SELECT u.user_id, u.balance, IFNULL(SUM(s.price * us.amount), 0) AS stock_value, IFNULL(SUM(e.value * ue.quantity), 0) AS etf_value
+                FROM users u
+                LEFT JOIN user_stocks us ON u.user_id = us.user_id
+                LEFT JOIN user_etfs ue ON u.user_id = ue.user_id
+                LEFT JOIN stocks s ON us.symbol = s.symbol
+                LEFT JOIN etfs e ON ue.etf_id = e.etf_id
+                GROUP BY u.user_id
+                ORDER BY u.balance + stock_value + etf_value DESC
+                LIMIT 10
+            """)
+            wealthiest_users = cursor.fetchall()
+
+            # Create the embed
+            embed = discord.Embed(title='Top 10 Wealthiest Users', color=discord.Color.gold())
+
+            # Add fields for the top 10 wealthiest users
+            for i, (user_id, balance, stock_value, etf_value) in enumerate(wealthiest_users, start=1):
+                total_wealth = balance + stock_value + etf_value
+                wealth_shorthand = self.format_wealth(total_wealth)
+                embed.add_field(name=f"Wealthiest #{i}: User ID {user_id}", value=f"Wealth: {wealth_shorthand}", inline=False)
+
+            await ctx.send(embed=embed)
+
+        except sqlite3.Error as e:
+            # Log error message for debugging
+            print(f"Database error: {e}")
+
+            # Inform the user that an error occurred
+            await ctx.send(f"An error occurred while retrieving user wealth data. Please try again later.")
+
+        except Exception as e:
+            # Log error message for debugging
+            print(f"An unexpected error occurred: {e}")
+
+            # Inform the user that an error occurred
+            await ctx.send(f"An unexpected error occurred. Please try again later.")
+
+    def format_wealth(self, wealth):
+        if wealth >= 10 ** 12:
+            return f"{wealth / 10 ** 12:.0f}T"
+        elif wealth >= 10 ** 9:
+            return f"{wealth / 10 ** 9:.0f}B"
+        elif wealth >= 10 ** 6:
+            return f"{wealth / 10 ** 6:.0f}M"
+        else:
+            return f"{wealth:.0f}"
+
+
     @commands.command(name="total_tax_distributed", help="View the total amount of tax distributed.")
     async def total_tax_distributed(self, ctx):
         cursor = self.conn.cursor()
