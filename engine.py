@@ -29,6 +29,7 @@ announcement_channel_ids = [1093540470593962014, 1124784361766650026, 1124414952
 stockMin = 10
 stockMax = 15000
 dStockLimit = 2000000
+dETFLimit = 500000
 MAX_BALANCE = Decimal('1000000000000000')
 sellPressureMin = 0.000011
 sellPressureMax = 0.00005
@@ -747,6 +748,35 @@ async def get_etf_value(conn, etf_id):
 
 
 
+def get_top_ten_users(conn):
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            u.user_id,
+            SUM(COALESCE(u.balance, 0)) AS wallet_balance,
+            SUM(COALESCE(us.amount * s.price, 0)) AS stock_balance,
+            SUM(COALESCE(ue.quantity * e.value, 0)) AS etf_balance,
+            SUM(COALESCE(u.balance, 0) + COALESCE(us.amount * s.price, 0) + COALESCE(ue.quantity * e.value, 0)) AS total_balance
+        FROM
+            users AS u
+        LEFT JOIN
+            user_stocks AS us ON u.user_id = us.user_id
+        LEFT JOIN
+            stocks AS s ON us.symbol = s.symbol
+        LEFT JOIN
+            user_etfs AS ue ON u.user_id = ue.user_id
+        LEFT JOIN
+            etfs AS e ON ue.etf_id = e.etf_id
+        GROUP BY
+            u.user_id
+        ORDER BY
+            total_balance DESC
+        LIMIT 10
+    """)
+
+    top_ten_users = cursor.fetchall()
+    return top_ten_users
+
 def get_current_week():
     return (datetime.date.today() - datetime.date(2023, 1, 1)).days // 7
 
@@ -941,6 +971,8 @@ class CurrencySystem(commands.Cog):
 
         await message.clear_reactions()
 ##
+
+
 
 # Bot to Channel
 
@@ -1546,6 +1578,7 @@ class CurrencySystem(commands.Cog):
 # Limit Order
 
     @commands.command(name="limit_order", help="Place a limit order to buy or sell stocks.")
+    @is_allowed_user(930513222820331590, PBot)
     async def limit_order(self, ctx, order_type: str, symbol: str, price: float, quantity: int):
         user_id = ctx.author.id
 
@@ -3127,12 +3160,15 @@ class CurrencySystem(commands.Cog):
                 etf_value = etf_value_row[0] if etf_value_row else 0
                 total_etf_value += etf_value * quantity
 
+            # Calculate total value of all funds
+            total_funds_value = current_balance + total_stock_value + total_etf_value
 
             # Create the embed
             embed = Embed(title=f"{ctx.author.name}'s Financial Stats", color=Colour.green())
-            embed.add_field(name="Balance", value=f"{current_balance} coins", inline=False)
-            embed.add_field(name="Total Stock Value", value=f"{total_stock_value} coins", inline=False)
-            embed.add_field(name="Total ETF Value", value=f"{total_etf_value} coins", inline=False)
+            embed.add_field(name="Balance", value=f"{current_balance:,.0f} coins", inline=False)
+            embed.add_field(name="Total Stock Value", value=f"{total_stock_value:,.0f} coins", inline=False)
+            embed.add_field(name="Total ETF Value", value=f"{total_etf_value:,.0f} coins", inline=False)
+            embed.add_field(name="Total Funds Value", value=f"{total_funds_value:,.0f} coins", inline=False)
 
             await ctx.send(embed=embed)
 
