@@ -1698,6 +1698,47 @@ class CurrencySystem(commands.Cog):
 
 # Stock Tools
 
+    @commands.command(name='topstocks', help='Shows the top 5 highest and lowest price stocks.')
+    async def topstocks(self, ctx):
+        cursor = self.conn.cursor()
+
+        try:
+            # Get the top 5 highest price stocks
+            cursor.execute("SELECT symbol, price FROM stocks ORDER BY price DESC LIMIT 5")
+            top_high_stocks = cursor.fetchall()
+
+            # Get the top 5 lowest price stocks
+            cursor.execute("SELECT symbol, price FROM stocks ORDER BY price ASC LIMIT 5")
+            top_low_stocks = cursor.fetchall()
+
+            # Create the embed
+            embed = discord.Embed(title='Top 5 Highest and Lowest Price Stocks', color=discord.Color.blue())
+
+            # Add fields for the top 5 highest price stocks
+            for i, (symbol, price) in enumerate(top_high_stocks, start=1):
+                embed.add_field(name=f"High #{i}: {symbol}", value=f"Price: {price:,.2f} coins", inline=False)
+
+            # Add fields for the top 5 lowest price stocks
+            for i, (symbol, price) in enumerate(top_low_stocks, start=1):
+                embed.add_field(name=f"Low #{i}: {symbol}", value=f"Price: {price:,.2f} coins", inline=False)
+
+            await ctx.send(embed=embed)
+
+        except sqlite3.Error as e:
+            # Log error message for debugging
+            print(f"Database error: {e}")
+
+            # Inform the user that an error occurred
+            await ctx.send(f"An error occurred while retrieving stock data. Please try again later.")
+
+        except Exception as e:
+            # Log error message for debugging
+            print(f"An unexpected error occurred: {e}")
+
+            # Inform the user that an error occurred
+            await ctx.send(f"An unexpected error occurred. Please try again later.")
+
+
     @commands.command(name="give_stock", help="Give a user an amount of a stock. Deducts it from the total supply.")
     @is_allowed_user(930513222820331590, 236981978153484298, 1006347962043092992)  # The user must have the 'admin' role to use this command.
     async def give_stock(self, ctx, user: discord.User, symbol: str, amount: int):
