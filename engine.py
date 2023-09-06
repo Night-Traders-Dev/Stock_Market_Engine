@@ -2263,7 +2263,7 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"An error occurred while updating user ETF holdings. Error: {str(e)}")
             return
 
-
+        decay_other_stocks(self.conn, "P3:BANK")
         self.conn.commit()
 
         await ctx.send(f"You have successfully bought {quantity} units of ETF {etf_id}. Your new balance is: {new_balance} coins.")
@@ -2318,7 +2318,7 @@ class CurrencySystem(commands.Cog):
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred while updating user ETF holdings. Error: {str(e)}")
             return
-
+        decay_other_stocks(self.conn, "P3:BANK")
         self.conn.commit()
 
         await ctx.send(f"You have successfully sold {quantity} units of ETF {etf_id}. Your new balance is: {new_balance} coins.")
