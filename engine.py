@@ -3142,7 +3142,7 @@ class CurrencySystem(commands.Cog):
 
             # Calculate total stock value
             cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=?", (user_id,))
-            user_stocks = cursor.fetchall()
+           user_stocks = cursor.fetchall()
             total_stock_value = 0
             for symbol, amount in user_stocks:
                 cursor.execute("SELECT price FROM stocks WHERE symbol=?", (symbol,))
@@ -3154,11 +3154,14 @@ class CurrencySystem(commands.Cog):
             cursor.execute("SELECT etf_id, quantity FROM user_etfs WHERE user_id=?", (user_id,))
             user_etfs = cursor.fetchall()
             total_etf_value = 0
-            for etf_id, quantity in user_etfs:
-                cursor.execute("SELECT value FROM etfs WHERE etf_id=?", (etf_id,))
+            for etf in user_etfs:
+                etf_id = etf[0]
+                quantity = etf[1]
+
+                cursor.execute("SELECT SUM(stocks.price * etf_stocks.quantity) FROM etf_stocks JOIN stocks ON etf_stocks.symbol = stocks.symbol WHERE etf_stocks.etf_id=? GROUP BY etf_stocks.etf_id", (etf_id,))
                 etf_value_row = cursor.fetchone()
                 etf_value = etf_value_row[0] if etf_value_row else 0
-                total_etf_value += etf_value * quantity
+                total_etf_value += (etf_value or 0) * quantity
 
             # Calculate total value of all funds
             total_funds_value = current_balance + total_stock_value + total_etf_value
@@ -3185,6 +3188,7 @@ class CurrencySystem(commands.Cog):
 
             # Inform the user that an error occurred
             await ctx.send(f"An unexpected error occurred. Please try again later.")
+
 
 
     @commands.command(name='check_stocks', help='Check which stocks you can still buy.')
