@@ -1016,59 +1016,82 @@ class CurrencySystem(commands.Cog):
 
 # Metrics
 
-    @commands.command(name='wealthiest', help='Shows the top 10 wealthiest users.')
-    async def wealthiest(self, ctx):
+    @commands.command(name="top_wealth", help="Show the top 10 wealthiest users.")
+    async def top_wealth(self, ctx):
         cursor = self.conn.cursor()
 
-        try:
-            # Get the top 10 wealthiest users
-            cursor.execute("""
-                SELECT u.user_id, u.balance, IFNULL(SUM(s.price * us.amount), 0) AS stock_value, IFNULL(SUM(e.value * ue.quantity), 0) AS etf_value
-                FROM users u
-                LEFT JOIN user_stocks us ON u.user_id = us.user_id
-                LEFT JOIN user_etfs ue ON u.user_id = ue.user_id
-                LEFT JOIN stocks s ON us.symbol = s.symbol
-                LEFT JOIN etfs e ON ue.etf_id = e.etf_id
-                GROUP BY u.user_id
-                ORDER BY u.balance + stock_value + etf_value DESC
-                LIMIT 10
-            """)
-            wealthiest_users = cursor.fetchall()
+        await ctx.message.delete()
 
-            # Create the embed
-            embed = discord.Embed(title='Top 10 Wealthiest Users', color=discord.Color.gold())
+        # Get the top 10 wealthiest users
+        cursor.execute("SELECT user_id FROM users ORDER BY balance DESC LIMIT 10")
+        top_users = cursor.fetchall()
 
-            # Add fields for the top 10 wealthiest users
-            for i, (user_id, balance, stock_value, etf_value) in enumerate(wealthiest_users, start=1):
-                total_wealth = balance + stock_value + etf_value
-                wealth_shorthand = self.format_wealth(total_wealth)
-                embed.add_field(name=f"Wealthiest #{i}: User ID {user_id}", value=f"Wealth: {wealth_shorthand}", inline=False)
+        if not top_users:
+            await ctx.send("No users found.")
+            return
 
-            await ctx.send(embed=embed)
+        embed = discord.Embed(title="Top 10 Wealthiest Users", color=discord.Color.gold())
 
-        except sqlite3.Error as e:
-            # Log error message for debugging
-            print(f"Database error: {e}")
+        for user_id in top_users:
+            user_id = user_id[0]
+            user = ctx.guild.get_member(user_id)
+            if user:
+                username = user.display_name
+            else:
+                username = f"User ID: {user_id}"
 
-            # Inform the user that an error occurred
-            await ctx.send(f"An error occurred while retrieving user wealth data. Please try again later.")
+            # Calculate user's wealth (balance + stock value + ETF value)
+            total_wealth = self.calculate_total_wealth(user_id)
 
-        except Exception as e:
-            # Log error message for debugging
-            print(f"An unexpected error occurred: {e}")
+            # Format wealth in shorthand
+            wealth_shorthand = self.format_value(total_wealth)
 
-            # Inform the user that an error occurred
-            await ctx.send(f"An unexpected error occurred. Please try again later.")
+            embed.add_field(name=username, value=wealth_shorthand, inline=False)
 
-    def format_wealth(self, wealth):
-        if wealth >= 10 ** 12:
-            return f"{wealth / 10 ** 12:.0f}T"
-        elif wealth >= 10 ** 9:
-            return f"{wealth / 10 ** 9:.0f}B"
-        elif wealth >= 10 ** 6:
-            return f"{wealth / 10 ** 6:.0f}M"
+        await ctx.send(embed=embed)
+
+    def calculate_total_wealth(self, user_id):
+        cursor = self.conn.cursor()
+
+        # Get user balance
+        cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
+        current_balance_row = cursor.fetchone()
+        current_balance = current_balance_row[0] if current_balance_row else 0
+
+        # Calculate total stock value
+        cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=?", (user_id,))
+        user_stocks = cursor.fetchall()
+        total_stock_value = 0
+
+        for symbol, amount in user_stocks:
+            cursor.execute("SELECT price FROM stocks WHERE symbol=?", (symbol,))
+            stock_price_row = cursor.fetchone()
+            stock_price = stock_price_row[0] if stock_price_row else 0
+            total_stock_value += stock_price * amount
+
+        # Calculate total ETF value
+        cursor.execute("SELECT etf_id, quantity FROM user_etfs WHERE user_id=?", (user_id,))
+        user_etfs = cursor.fetchall()
+        total_etf_value = 0
+
+        for etf_id, quantity in user_etfs:
+            cursor.execute("SELECT value FROM etfs WHERE etf_id=?", (etf_id,))
+            etf_value_row = cursor.fetchone()
+            etf_value = etf_value_row[0] if etf_value_row else 0
+            total_etf_value += etf_value * quantity
+
+        return current_balance + total_stock_value + total_etf_value
+
+    def format_value(self, value):
+        if value >= 10 ** 12:
+            return f"{value / 10 ** 12:.2f}T"
+        elif value >= 10 ** 9:
+            return f"{value / 10 ** 9:.2f}B"
+        elif value >= 10 ** 6:
+            return f"{value / 10 ** 6:.2f}M"
         else:
-            return f"{wealth:.0f}"
+            return f"{value:.2f}"
+
 
 
     @commands.command(name="total_tax_distributed", help="View the total amount of tax distributed.")
