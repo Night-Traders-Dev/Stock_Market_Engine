@@ -3142,7 +3142,7 @@ class CurrencySystem(commands.Cog):
 
             # Calculate total stock value
             cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=?", (user_id,))
-           user_stocks = cursor.fetchall()
+            user_stocks = cursor.fetchall()
             total_stock_value = 0
             for symbol, amount in user_stocks:
                 cursor.execute("SELECT price FROM stocks WHERE symbol=?", (symbol,))
@@ -3188,6 +3188,7 @@ class CurrencySystem(commands.Cog):
 
             # Inform the user that an error occurred
             await ctx.send(f"An unexpected error occurred. Please try again later.")
+
 
 
 
