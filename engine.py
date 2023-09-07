@@ -3234,6 +3234,70 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, the coin landed on {coin_result}. You lost {total_cost} coins including tax. Your new balance is {new_balance}.")
 
 
+    @commands.command(name='slotmachine', aliases=["slots"], help='Play the slot machine. Bet an amount up to 500,000 coins.')
+    @is_allowed_server(P3, SludgeSliders, OM3)
+    async def slotmachine(self, ctx, bet: int):
+        user_id = ctx.author.id
+        current_balance = get_user_balance(self.conn, user_id)
+
+        # Check if bet amount is positive and within the limit
+        if bet <= 0:
+            await ctx.send(f"{ctx.author.mention}, bet amount must be a positive number.")
+            return
+
+        if bet > 500000:
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is 500,000 coins.")
+            return
+
+        if bet > current_balance:
+            # Calculate the missing amount needed to complete the transaction including tax.
+            missing_amount = bet - current_balance
+            await ctx.send(f"{ctx.author.mention}, you do not have enough coins to place the bet. You need {missing_amount:.2f} more coins, including tax, to place this bet.")
+            return
+
+        # Define slot machine symbols and their values
+        symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "7️⃣"]
+        payouts = {"🍒": 5, "🍋": 10, "🍊": 15, "🍇": 20, "🔔": 25, "💎": 50, "7️⃣": 100}
+
+        # Spin the slot machine
+        result = [random.choice(symbols) for _ in range(3)]
+
+        # Calculate the payout
+        payout_multiplier = payouts[result[0]] if all(symbol == result[0] for symbol in result) else 0
+        win_amount = bet * payout_multiplier
+
+        # Calculate tax based on the bet amount
+        tax_percentage = get_tax_percentage(bet, current_balance)
+        tax = (bet * Decimal(tax_percentage)) * Decimal(0.25)
+
+        # Calculate total cost including tax
+        total_cost = bet + tax
+
+        # Check for negative balance after tax
+        if current_balance - total_cost < 0:
+            await ctx.send(f"{ctx.author.mention}, you don't have enough coins to cover the bet and tax.")
+            return
+
+        # Deduct the bet and tax from the user's current balance
+        new_balance = current_balance - total_cost
+        update_user_balance(self.conn, user_id, new_balance)
+
+        # Create and send the embed with the slot machine result
+        embed = discord.Embed(title="Slot Machine", color=discord.Color.gold())
+        embed.add_field(name="Result", value=" ".join(result), inline=False)
+
+        if win_amount > 0:
+            new_balance += win_amount
+            update_user_balance(self.conn, user_id, new_balance)
+            embed.add_field(name="Congratulations!", value=f"You won {win_amount} coins!", inline=False)
+        else:
+            embed.add_field(name="Better luck next time!", value=f"You lost {total_cost} coins including tax. Your new balance is {new_balance} coins.", inline=False)
+
+        embed.set_footer(text=f"Your new balance: {new_balance} coins")
+        await ctx.send(embed=embed)
+
+
+
     @commands.command(name='simulate_roulette', help='Simulate a roulette bet to see the amount in taxes it would cost, and how much you would win/lose.')
     @is_allowed_server(P3, SludgeSliders, OM3)
     async def simulate_roulette(self, ctx, bet: int):
