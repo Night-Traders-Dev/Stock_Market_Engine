@@ -29,7 +29,7 @@ from math import ceil, floor
 announcement_channel_ids = [1093540470593962014, 1124784361766650026, 1124414952812326962]
 stockMin = 10
 stockMax = 150000
-dStockLimit = 8000000 #2000000 standard
+dStockLimit = 10000000 #2000000 standard
 dETFLimit = 500000
 MAX_BALANCE = Decimal('1000000000000000')
 sellPressureMin = 0.000011
@@ -59,7 +59,7 @@ ledger_channel2 = 1150492875474342029
 SludgeSliders = 1087147399371292732
 P3 = 1121529633448394973
 OM3 = 1070860008868302858
-PBL = 1141943139574235199
+PBL = 1132202921589739540
 
 allowedServers = P3, SludgeSliders, OM3, PBL
 ##
@@ -84,11 +84,41 @@ def create_stock_page(stocks):
     return embed
 ##
 
-
 ## Begin Ledger
-async def log_transaction(ctx, action, symbol, quantity, pre_tax_amount, post_tax_amount, balance_before, balance_after, price):
+
+# Register a custom adapter for decimal.Decimal
+sqlite3.register_adapter(Decimal, lambda d: str(d))
+
+
+# Function to create a connection to the SQLite database
+def create_connection():
+    return sqlite3.connect("p3ledger.db")
+
+ledger_conn = create_connection()
+
+async def log_transaction(ledger_conn, ctx, action, symbol, quantity, pre_tax_amount, post_tax_amount, balance_before, balance_after, price):
     # Get the user's username from the context
     username = ctx.author.name
+
+    # Convert Decimal values to strings
+    pre_tax_amount_str = str(pre_tax_amount)
+    post_tax_amount_str = str(post_tax_amount)
+    balance_before_str = str(balance_before)
+    balance_after_str = str(balance_after)
+    price_str = str(price)
+
+    # Create a timestamp for the transaction
+    timestamp = ctx.message.created_at.strftime("%Y-%m-%d %H:%M:%S")
+
+    # Insert the transaction into the stock_transactions table
+    conn = create_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO stock_transactions (user_id, action, symbol, quantity, pre_tax_amount, post_tax_amount, balance_before, balance_after, price)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (ctx.author.id, action, symbol, quantity, pre_tax_amount_str, post_tax_amount_str, balance_before_str, balance_after_str, price_str))
+    conn.commit()
+    conn.close()
 
     # Determine whether it's a stock or ETF transaction
     is_etf = True if action in ["Buy ETF", "Sell ETF"] else False
@@ -119,9 +149,19 @@ async def log_transaction(ctx, action, symbol, quantity, pre_tax_amount, post_ta
         await channel2.send(embed=embed)
 
 
-async def log_transfer(ctx, sender_name, receiver_name, amount):
+
+
+async def log_transfer(ledger_conn, ctx, sender_name, receiver_name, receiver_id, amount):
     # Get the current timestamp in UTC
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Insert the transfer transaction into the transfer_transactions table
+    cursor = ledger_conn.cursor()
+    cursor.execute("""
+        INSERT INTO transfer_transactions (sender_id, receiver_id, amount)
+        VALUES (?, ?, ?)
+    """, (ctx.author.id, receiver_id, amount))
+    ledger_conn.commit()
 
     # Replace CHANNEL_ID with the actual ID of your logging channel
     channel1 = ctx.guild.get_channel(ledger_channel)
@@ -140,12 +180,23 @@ async def log_transfer(ctx, sender_name, receiver_name, amount):
         await channel1.send(embed=embed)
         await channel2.send(embed=embed)
 
-async def log_burn_stocks(ctx, stock_name, quantity, price_before, price_after):
+
+async def log_burn_stocks(ledger_conn, ctx, stock_name, quantity, price_before, price_after):
     # Get the user's username from the context
     username = ctx.author.name
 
     # Create a timestamp for the transaction
     timestamp = ctx.message.created_at.strftime("%Y-%m-%d %H:%M:%S")
+
+    # Insert the stock burning transaction into the stock_burning_transactions table
+    conn = create_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO stock_burning_transactions (user_id, stock_name, quantity, price_before, price_after)
+        VALUES (?, ?, ?, ?, ?)
+    """, (ctx.author.id, stock_name, quantity, price_before, price_after))
+    conn.commit()
+    conn.close()
 
     # Replace CHANNEL_ID with the actual ID of your logging channel
     channel1 = ctx.guild.get_channel(ledger_channel)
@@ -167,9 +218,22 @@ async def log_burn_stocks(ctx, stock_name, quantity, price_before, price_after):
         await channel1.send(embed=embed)
         await channel2.send(embed=embed)
 
-async def log_gambling_transaction(ctx, game, bet_amount, win_loss, amount_after_tax):
+async def log_gambling_transaction(ledger_conn, ctx, game, bet_amount, win_loss, amount_after_tax):
     # Get the user's username from the context
     username = ctx.author.name
+
+    # Create a timestamp for the transaction
+    timestamp = ctx.message.created_at.strftime("%Y-%m-%d %H:%M:%S")
+
+    # Insert the gambling transaction into the gambling_transactions table
+    conn = create_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO gambling_transactions (user_id, game, bet_amount, win_loss, amount_after_tax)
+        VALUES (?, ?, ?, ?, ?)
+    """, (ctx.author.id, game, bet_amount, win_loss, amount_after_tax))
+    conn.commit()
+    conn.close()
 
     # Replace CHANNEL_ID_1 and CHANNEL_ID_2 with the actual IDs of your ledger channels
     channel1 = ctx.guild.get_channel(ledger_channel)
@@ -189,9 +253,82 @@ async def log_gambling_transaction(ctx, game, bet_amount, win_loss, amount_after
         # Send the log message as an embed to both ledger channels
         await channel1.send(embed=embed)
         await channel2.send(embed=embed)
-
-
 ## End Ledger
+
+def setup_ledger():
+    try:
+        # Create a connection to the SQLite database
+        conn = sqlite3.connect("p3ledger.db")
+        cursor = conn.cursor()
+
+        # Create a table for stock transactions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stock_transactions (
+                transaction_id INTEGER PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                pre_tax_amount REAL NOT NULL,
+                post_tax_amount REAL NOT NULL,
+                balance_before REAL NOT NULL,
+                balance_after REAL NOT NULL,
+                price REAL NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Create a table for transfer transactions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transfer_transactions (
+                transaction_id INTEGER PRIMARY KEY,
+                sender_id TEXT NOT NULL,
+                receiver_id TEXT NOT NULL,
+                amount REAL NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Create a table for stock burning transactions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stock_burning_transactions (
+                transaction_id INTEGER PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                stock_name TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                price_before REAL NOT NULL,
+                price_after REAL NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+           )
+        """)
+
+        # Create a table for gambling transactions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS gambling_transactions (
+                transaction_id INTEGER PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                game TEXT NOT NULL,
+                bet_amount REAL NOT NULL,
+                win_loss TEXT NOT NULL,
+                amount_after_tax REAL NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Commit the changes and close the connection
+        conn.commit()
+        conn.close()
+        print("Ledger created successfully")
+
+    except sqlite3.Error as e:
+        # Handle the database error
+        print(f"Database error: {e}")
+
+    except Exception as e:
+        # Handle unexpected errors
+        print(f"An unexpected error occurred: {e}")
+
+
 def setup_database():
     conn = sqlite3.connect("currency_system.db")
     conn.row_factory = sqlite3.Row
@@ -454,6 +591,7 @@ def setup_database():
 
 
 setup_database()
+setup_ledger()
 
 
 
@@ -1154,8 +1292,32 @@ class CurrencySystem(commands.Cog):
 
         await ctx.message.delete()
 
-        # Get the top 10 wealthiest users
-        cursor.execute("SELECT user_id FROM users ORDER BY balance DESC LIMIT 10")
+        # Get the top 10 wealthiest users, sorting them by total wealth (balance + stock value + ETF value)
+        cursor.execute("""
+            SELECT users.user_id,
+                   (users.balance + IFNULL(total_stock_value, 0) + IFNULL(total_etf_value, 0)) AS total_wealth
+            FROM users
+            LEFT JOIN (
+                SELECT user_id, SUM(stocks.price * user_stocks.amount) AS total_stock_value
+                FROM user_stocks
+                LEFT JOIN stocks ON user_stocks.symbol = stocks.symbol
+                GROUP BY user_id
+            ) AS user_stock_data ON users.user_id = user_stock_data.user_id
+            LEFT JOIN (
+                SELECT user_id, SUM(etf_value * user_etfs.quantity) AS total_etf_value
+                FROM user_etfs
+                LEFT JOIN (
+                    SELECT etf_stocks.etf_id, SUM(stocks.price * etf_stocks.quantity) AS etf_value
+                    FROM etf_stocks
+                    LEFT JOIN stocks ON etf_stocks.symbol = stocks.symbol
+                    GROUP BY etf_stocks.etf_id
+                ) AS etf_data ON user_etfs.etf_id = etf_data.etf_id
+                GROUP BY user_id
+            ) AS user_etf_data ON users.user_id = user_etf_data.user_id
+            ORDER BY total_wealth DESC
+            LIMIT 10
+        """)
+
         top_users = cursor.fetchall()
 
         if not top_users:
@@ -1164,16 +1326,8 @@ class CurrencySystem(commands.Cog):
 
         embed = discord.Embed(title="Top 10 Wealthiest Users", color=discord.Color.gold())
 
-        for user_id in top_users:
-            user_id = user_id[0]
-            user = ctx.guild.get_member(user_id)
-            if user:
-                username = user.display_name
-            else:
-                username = f"User ID: {user_id}"
-
-            # Calculate user's wealth (balance + stock value + ETF value)
-            total_wealth = self.calculate_total_wealth(user_id)
+        for user_id, total_wealth in top_users:
+            username = self.get_username(ctx, user_id)
 
             # Format wealth in shorthand
             wealth_shorthand = self.format_value(total_wealth)
@@ -1181,6 +1335,16 @@ class CurrencySystem(commands.Cog):
             embed.add_field(name=username, value=wealth_shorthand, inline=False)
 
         await ctx.send(embed=embed)
+
+
+## Wealth Functions
+
+    def get_username(self, ctx, user_id):
+        user = ctx.guild.get_member(user_id)
+        if user:
+            return user.display_name
+        else:
+            return f"User ID: {user_id}"
 
     def calculate_total_wealth(self, user_id):
         cursor = self.conn.cursor()
@@ -1206,11 +1370,14 @@ class CurrencySystem(commands.Cog):
         user_etfs = cursor.fetchall()
         total_etf_value = 0
 
-        for etf_id, quantity in user_etfs:
-            cursor.execute("SELECT value FROM etfs WHERE etf_id=?", (etf_id,))
+        for etf in user_etfs:
+            etf_id = etf[0]
+            quantity = etf[1]
+
+            cursor.execute("SELECT SUM(stocks.price * etf_stocks.quantity) FROM etf_stocks JOIN stocks ON etf_stocks.symbol = stocks.symbol WHERE etf_stocks.etf_id=? GROUP BY etf_stocks.etf_id", (etf_id,))
             etf_value_row = cursor.fetchone()
             etf_value = etf_value_row[0] if etf_value_row else 0
-            total_etf_value += etf_value * quantity
+            total_etf_value += (etf_value or 0) * quantity
 
         return current_balance + total_stock_value + total_etf_value
 
@@ -1223,6 +1390,8 @@ class CurrencySystem(commands.Cog):
             return f"{value / 10 ** 6:.2f}M"
         else:
             return f"{value:.2f}"
+## End Wealth Functions
+
 
 
 
@@ -1244,7 +1413,7 @@ class CurrencySystem(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name="metrics", help="View system metrics")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     async def view_metrics(self, ctx):
         cursor = self.conn.cursor()
 
@@ -1298,7 +1467,7 @@ class CurrencySystem(commands.Cog):
 # Currency Tools
 
     @commands.command(name="reset_game", help="Reset all user stocks and ETFs to 0 and set the balance to 100.00")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     @is_allowed_user(930513222820331590, PBot)
     async def reset_game(self, ctx):
         cursor = self.conn.cursor()
@@ -1323,7 +1492,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="revert_all_stocks", help="Revert all user-held stocks and place them back into the stock market for all users.")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     @is_allowed_user(930513222820331590, PBot)
     async def revert_all_stocks(self, ctx):
         cursor = self.conn.cursor()
@@ -1408,12 +1577,13 @@ class CurrencySystem(commands.Cog):
         update_user_balance(self.conn, recipient_id, recipient_balance + amount)
 
         # Log the transfer
-        await log_transfer(ctx, ctx.author.name, recipient.name, amount)
+        await log_transfer(ledger_conn, ctx, ctx.author.name, recipient.name, recipient.id, amount)
+
 
         await ctx.send(f"{ctx.author.mention}, you have successfully given {amount} coins to {recipient.mention}.")
 
     @commands.command(name="daily", help="Claim your daily coins.")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     async def daily(self, ctx):
         async with self.lock:  # Use the asynchronous lock
             user_id = ctx.author.id
@@ -1535,7 +1705,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="backup_database")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     @is_allowed_user(930513222820331590, PBot)
     async def backup_database(self, ctx):
         try:
@@ -1557,7 +1727,7 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"An error occurred while creating the database backup: {e}")
 
     @commands.command(name="restore_backup")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     @is_allowed_user(930513222820331590, PBot)
     async def restore_database(self, ctx):
         try:
@@ -1594,7 +1764,7 @@ class CurrencySystem(commands.Cog):
 # Stock Market
 # Buy Stock
     @commands.command(name="buy", aliases=["buy_stock"], help="Buy stocks. Provide the stock name and amount.")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     async def buy(self, ctx, stock_name: str, amount: int):
         user_id = ctx.author.id
 
@@ -1715,7 +1885,7 @@ class CurrencySystem(commands.Cog):
 
         decay_other_stocks(self.conn, stock_name)
         await self.increase_price(ctx, stock_name, amount)
-        await log_transaction(ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, price)
+        await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, price)
         self.conn.commit()
 
 #        await update_market_etf_price(bot, conn)
@@ -1725,7 +1895,7 @@ class CurrencySystem(commands.Cog):
 
 # Sell Stock
     @commands.command(name="sell", aliases=["sell_stock"], help="Sell stocks. Provide the stock name and amount.")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     async def sell(self, ctx, stock_name: str, amount: int):
         user_id = ctx.author.id
 
@@ -1783,7 +1953,7 @@ class CurrencySystem(commands.Cog):
             calculate_team_profit_loss(self.conn, team_id)
 
         await self.decrease_price(ctx, stock_name, amount)
-        await log_transaction(ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price)
+        await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price)
         self.conn.commit()
 
 #        await update_market_etf_price(bot, conn)
@@ -2070,7 +2240,7 @@ class CurrencySystem(commands.Cog):
 # Stock Engine
 
     @commands.command(name="change_prices")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     @is_allowed_user(930513222820331590, PBot)
     async def change_prices(self, ctx):
         cursor = self.conn.cursor()
@@ -2150,7 +2320,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="increase_price")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     @is_allowed_user(930513222820331590, PBot)
     async def increase_price(self, ctx, stock_name: str, amount: float):
         cursor = self.conn.cursor()
@@ -2179,7 +2349,7 @@ class CurrencySystem(commands.Cog):
 
         await ctx.send(f"The price of {stock_name} has increased to {new_price}.")
     @commands.command(name="decrease_price")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     @is_allowed_user(930513222820331590, PBot)
     async def decrease_price(self, ctx, stock_name: str, amount: float):
         cursor = self.conn.cursor()
@@ -2509,7 +2679,7 @@ class CurrencySystem(commands.Cog):
 
 # Buy/Sell ETFs
     @commands.command(name="buy_etf", help="Buy an ETF. Provide the ETF ID and quantity.")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     async def buy_etf(self, ctx, etf_id: int, quantity: int):
         user_id = ctx.author.id
         cursor = self.conn.cursor()
@@ -2528,7 +2698,7 @@ class CurrencySystem(commands.Cog):
             return
 
         total_cost = Decimal(etf_value) * Decimal(quantity)
-        
+
 
         # Calculate the tax amount based on dynamic factors
         tax_percentage = get_tax_percentage(quantity, total_cost)  # Custom function to determine the tax percentage based on quantity and total_cost
@@ -2564,7 +2734,7 @@ class CurrencySystem(commands.Cog):
             return
 
         decay_other_stocks(self.conn, "P3:BANK")
-        await log_transaction(ctx, "Buy ETF", etf_id, quantity, total_cost, total_cost_with_tax, current_balance, new_balance, etf_value)
+        await log_transaction(ledger_conn, ctx, "Buy ETF", etf_id, quantity, total_cost, total_cost_with_tax, current_balance, new_balance, etf_value)
         self.conn.commit()
 
         await ctx.send(f"You have successfully bought {quantity} units of ETF {etf_id}. Your new balance is: {new_balance} coins.")
@@ -2620,7 +2790,7 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"An error occurred while updating user ETF holdings. Error: {str(e)}")
             return
         decay_other_stocks(self.conn, "P3:BANK")
-        await log_transaction(ctx, "Sell ETF", etf_id, quantity, total_sale_amount, total_sale_amount_with_tax, current_balance, new_balance, etf_value)
+        await log_transaction(ledger_conn, ctx, "Sell ETF", etf_id, quantity, total_sale_amount, total_sale_amount_with_tax, current_balance, new_balance, etf_value)
         self.conn.commit()
 
         await ctx.send(f"You have successfully sold {quantity} units of ETF {etf_id}. Your new balance is: {new_balance} coins.")
@@ -2676,7 +2846,7 @@ class CurrencySystem(commands.Cog):
                             await ctx.send(f"An error occurred while removing user ETF holdings. Error: {str(e)}")
                         else:
                             decay_other_stocks(self.conn, "P3:BANK")
-                            await log_transaction(ctx, "Sell ALL ETF", etf_id, quantity, total_cost, total_cost_with_tax, current_balance, new_balance, etf_value)
+                            await log_transaction(ledger_conn, ctx, "Sell ALL ETF", etf_id, quantity, total_cost, total_cost_with_tax, current_balance, new_balance, etf_value)
                             self.conn.commit()
                             sold_etfs.append(etf_id)
 
@@ -2744,7 +2914,7 @@ class CurrencySystem(commands.Cog):
 
 ## Begin Lottery
     @commands.command(name="buy_tickets", help="Buy raffle tickets.")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     async def buy_tickets(self, ctx, quantity: int):
         await ctx.message.delete()
         if quantity <= 0:
@@ -3115,7 +3285,7 @@ class CurrencySystem(commands.Cog):
 
     @commands.command(name="fix_negative_balances", help="Fix negative balances for all users.")
     @is_allowed_user(930513222820331590, PBot)
-    @is_allowed_server(P3, SludgeSliders, OM3)  # Add your server IDs here
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)  # Add your server IDs here
     async def fix_negative_balances(self, ctx):
         cursor = self.conn.cursor()
 
@@ -3412,7 +3582,7 @@ class CurrencySystem(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name="simulate_sell")
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     async def simulate_sell(self, ctx, stock_name: str, amount: float):
         cursor = self.conn.cursor()
 
@@ -3448,7 +3618,7 @@ class CurrencySystem(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='roulette', help='Play roulette. Choose a color (red/black/green) or a number (0-36) or "even"/"odd" and your bet amount.')
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     async def roulette(self, ctx, choice: str, bet: int):
         user_id = ctx.author.id
         current_balance = get_user_balance(self.conn, user_id)
@@ -3504,13 +3674,13 @@ class CurrencySystem(commands.Cog):
             new_balance += win_amount
             update_user_balance(self.conn, user_id, new_balance)
             await ctx.send(f"{ctx.author.mention}, congratulations! The ball landed on {spin_result} ({spin_color}). You won {win_amount} coins. Your new balance is {new_balance}.")
-            await log_gambling_transaction(ctx, "Roulette", bet, f"You won {win_amount} coins", new_balance)
+            await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You won {win_amount} coins", new_balance)
         else:
             await ctx.send(f"{ctx.author.mention}, the ball landed on {spin_result} ({spin_color}). You lost {total_cost} coins including tax. Your new balance is {new_balance}.")
-            await log_gambling_transaction(ctx, "Roulette", bet, f"You lost {total_cost} coins", new_balance)
+            await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You lost {total_cost} coins", new_balance)
 
     @commands.command(name='coinflip', help='Flip a coin and bet on heads or tails.')
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     async def coinflip(self, ctx, choice: str, bet: int):
         user_id = ctx.author.id
         current_balance = get_user_balance(self.conn, user_id)
@@ -3552,14 +3722,14 @@ class CurrencySystem(commands.Cog):
             new_balance += win_amount
             update_user_balance(self.conn, user_id, new_balance)
             await ctx.send(f"{ctx.author.mention}, congratulations! The coin landed on {coin_result}. You won {win_amount} coins. Your new balance is {new_balance}.")
-            await log_gambling_transaction(ctx, "Coinflip", bet, f"You won {win_amount} coins", new_balance)
+            await log_gambling_transaction(ledger_conn, ctx, "Coinflip", bet, f"You won {win_amount} coins", new_balance)
         else:
             await ctx.send(f"{ctx.author.mention}, the coin landed on {coin_result}. You lost {total_cost} coins including tax. Your new balance is {new_balance}.")
-            await log_gambling_transaction(ctx, "Coinflip", bet, f"You lost {total_cost} coins", new_balance)
+            await log_gambling_transaction(ledger_conn, ctx, "Coinflip", bet, f"You lost {total_cost} coins", new_balance)
 
 
     @commands.command(name='slotmachine', aliases=['slots'], help='Play the slot machine. Bet an amount up to 500,000 coins.')
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     async def slotmachine(self, ctx, bet: int):
         user_id = ctx.author.id
         current_balance = get_user_balance(self.conn, user_id)
@@ -3614,10 +3784,10 @@ class CurrencySystem(commands.Cog):
             new_balance += win_amount
             update_user_balance(self.conn, user_id, new_balance)
             embed.add_field(name="Congratulations!", value=f"You won {win_amount} coins!", inline=False)
-            await log_gambling_transaction(ctx, "Slots", bet, f"You won {win_amount} coins", new_balance)
+            await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"You won {win_amount} coins", new_balance)
         else:
             embed.add_field(name="Better luck next time!", value=f"You lost {total_cost} coins including tax. Your new balance is {new_balance} coins.", inline=False)
-            await log_gambling_transaction(ctx, "Slots", bet, f"You lost {total_cost} coins", new_balance)
+            await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"You lost {total_cost} coins", new_balance)
 
         embed.set_footer(text=f"Your new balance: {new_balance} coins")
         await ctx.send(embed=embed)
@@ -3626,7 +3796,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name='simulate_roulette', help='Simulate a roulette bet to see the amount in taxes it would cost, and how much you would win/lose.')
-    @is_allowed_server(P3, SludgeSliders, OM3)
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL)
     async def simulate_roulette(self, ctx, bet: int):
         user_id = ctx.author.id
         current_balance = get_user_balance(self.conn, user_id)  # Placeholder function for fetching user's balance
@@ -3832,7 +4002,7 @@ class CurrencySystem(commands.Cog):
         price_after_burn = Decimal(updated_stock[2])  # Get the updated price
 
         # Log the stock burn transaction
-        await log_burn_stocks(ctx, stock_name, amount, price_before_burn, price_after_burn)
+        await log_burn_stocks(ledger_conn, ctx, stock_name, amount, price_before_burn, price_after_burn)
         self.conn.commit()
 
         await ctx.send(f"Burned {amount} {stock_name} stocks, reducing the total supply.")
