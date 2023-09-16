@@ -21,6 +21,7 @@ import pickle
 import math
 import requests
 import typing
+import re
 from math import ceil, floor
 
 
@@ -45,6 +46,16 @@ ticketPrice = 100
 swap_increments = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 100, 1000, 10000, 100000, 1000000]
 swapThreshold = 50
 
+etf_values = {
+    "5 minutes": None,
+    "15 minutes": None,
+    "30 minutes": None,
+    "1 hour": None,
+    "3 hours": None,
+    "6 hours": None,
+    "12 hours": None,
+    "24 hours": None,
+}
 
 #admins
 jacob = 930513222820331590
@@ -63,6 +74,26 @@ PBL = 1132202921589739540
 
 allowedServers = P3, SludgeSliders, OM3, PBL
 ##
+
+## WORK
+# Define your token earning range
+MIN_EARNINGS = 25000
+MAX_EARNINGS = 500000
+
+# List of possible work descriptions
+WORK_DESCRIPTIONS = [
+    "You wrote a brilliant essay!",
+    "You fixed some code bugs!",
+    "You saved the day with your quick thinking!",
+    "You made everyone smile with your jokes!",
+    "You helped a friend in need!",
+    "You cooked a delicious meal!",
+    "You completed a challenging task!",
+    "You learned something new!",
+]
+
+## End Work
+
 
 ##
 # Function to split a list into chunks of a specific size
@@ -179,6 +210,43 @@ async def log_transfer(ledger_conn, ctx, sender_name, receiver_name, receiver_id
         # Send the log message as an embed to the specified channel
         await channel1.send(embed=embed)
         await channel2.send(embed=embed)
+
+# Function to log a stock transfer
+async def log_stock_transfer(ledger_conn, ctx, sender, receiver, symbol, amount):
+    try:
+        # Get the current timestamp in UTC
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+#        # Insert the transfer transaction into the transfer_transactions table
+#        cursor = ledger_conn.cursor()
+#        cursor.execute("""
+#            INSERT INTO transfer_transactions (sender_id, receiver_id, symbol, amount, timestamp)
+#            VALUES (?, ?, ?, ?, ?)
+#        """, (sender.id, receiver.id, symbol, amount, timestamp))
+#        ledger_conn.commit()
+
+        # Replace CHANNEL_ID with the actual ID of your logging channel
+        channel1 = ctx.guild.get_channel(ledger_channel)
+        channel2 = ctx.guild.get_channel(ledger_channel2)
+
+        if channel1 and channel2:
+            # Create an embed for the log message with a purple color
+            embed = discord.Embed(
+                title=f"Stock Transfer from {sender.name} to {receiver.name}",
+                description=f"Stock: {symbol}\n"
+                            f"Amount: {amount}\n"
+                            f"Timestamp (UTC): {timestamp}",
+                color=discord.Color.purple()
+            )
+
+            # Send the log message as an embed to the specified channels
+            await channel1.send(embed=embed)
+            await channel2.send(embed=embed)
+
+    except Exception as e:
+        # Handle any exceptions that may occur during logging
+        print(f"Error while logging stock transfer: {e}")
+
 
 
 async def log_burn_stocks(ledger_conn, ctx, stock_name, quantity, price_before, price_after):
@@ -312,6 +380,17 @@ def setup_ledger():
                 win_loss TEXT NOT NULL,
                 amount_after_tax REAL NOT NULL,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # Create a table for stock transfers
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS stock_transfer_transactions (
+                id INTEGER PRIMARY KEY,
+                sender_id INTEGER NOT NULL,
+                receiver_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -726,12 +805,23 @@ class StockMarket:
 
 
 class StockBot(commands.Bot):
+    # Define the etf_values dictionary as a class attribute
+    etf_values = {
+        "5 minutes": None,
+        "15 minutes": None,
+        "30 minutes": None,
+        "1 hour": None,
+        "3 hours": None,
+        "6 hours": None,
+        "12 hours": None,
+        "24 hours": None,
+    }
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     async def on_ready(self):
         print(f"Logged in as {self.user.name}")
-
 
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CommandError):
@@ -1603,6 +1693,53 @@ class CurrencySystem(commands.Cog):
                 minutes, _ = divmod(remainder, 60)
                 await ctx.send(f"You've already claimed your daily reward! You can claim again in {int(hours)} hours and {int(minutes)} minutes.")
 
+    @commands.command(name='work', help='Earn tokens by doing some work!')
+    async def work(ctx):
+        # Calculate random earnings within the defined range
+        earnings = random.randint(MIN_EARNINGS, MAX_EARNINGS)
+    
+        # Get the user's current balance from the database
+        cursor = conn.cursor()
+        cursor.execute("SELECT balance FROM user_balances WHERE user_id=?", (ctx.author.id,))
+        result = cursor.fetchone()
+    
+        if result is None:
+            # If the user doesn't have a balance record, create one
+            cursor.execute("INSERT INTO user_balances (user_id, balance) VALUES (?, ?)", (ctx.author.id, earnings))
+            current_balance = earnings
+        else:
+            # Update the user's balance
+            current_balance = result[0] + earnings
+            cursor.execute("UPDATE user_balances SET balance=? WHERE user_id=?", (current_balance, ctx.author.id))
+
+        conn.commit()
+
+        # Get a random work description
+        work_description = random.choice(WORK_DESCRIPTIONS)
+
+        # Get the current timestamp
+        timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Post the work results in the ledger channels
+        channel1 = ctx.guild.get_channel(ledger_channel)
+        channel2 = ctx.guild.get_channel(ledger_channel2)
+
+        if channel1 and channel2:
+            # Create an embed for the work results
+            embed = discord.Embed(
+                title=f"{ctx.author.name} worked hard!",
+                description=f"Description: {work_description}\n"
+                            f"Earnings: {earnings} tokens\n"
+                            f"Balance Before: {current_balance - earnings} tokens\n"
+                            f"Balance After: {current_balance} tokens\n"
+                            f"Timestamp (UTC): {timestamp}",
+                color=discord.Color.green()
+            )
+
+            # Send the work results as an embed to the specified channels
+            await channel1.send(embed=embed)
+            await channel2.send(embed=embed)
+
 
     @commands.command(name="balance", aliases=["wallet"], help="Check your balance.")
     async def balance(self, ctx):
@@ -2014,13 +2151,55 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, you do not own any stocks.")
             return
 
-        embed = discord.Embed(title="My Stocks", description=f"Stocks owned by {ctx.author.name}:", color=discord.Color.green())
+        page_size = 25  # Number of stocks to display per page
+        total_pages = (len(user_stocks) + page_size - 1) // page_size
 
-        for stock in user_stocks:
-            embed.add_field(name=stock['symbol'], value=f"Amount: {stock['amount']}", inline=True)
+        embeds = []  # List to store the embeds
 
-        await ctx.send(embed=embed)
+        for page in range(total_pages):
+            embed = discord.Embed(
+                title="My Stocks",
+                description=f"Stocks owned by {ctx.author.name} (Page {page + 1}/{total_pages}):",
+                color=discord.Color.green()
+            )
 
+            # Calculate the range of stocks for this page
+            start_idx = page * page_size
+            end_idx = (page + 1) * page_size
+
+            # Add stocks to the embed for this page
+            for stock in user_stocks[start_idx:end_idx]:
+                embed.add_field(name=stock['symbol'], value=f"Amount: {stock['amount']}", inline=True)
+
+            embeds.append(embed)
+
+        # Send the first page
+        current_page = 0
+        message = await ctx.send(embed=embeds[current_page])
+
+        # Add reactions for pagination
+        if total_pages > 1:
+            await message.add_reaction("⬅️")
+            await message.add_reaction("➡️")
+
+            def check(reaction, user):
+                return user == ctx.author and str(reaction.emoji) in ["⬅️", "➡️"]
+
+            while True:
+                try:
+                    reaction, user = await self.bot.wait_for("reaction_add", timeout=60.0, check=check)
+                except asyncio.TimeoutError:
+                    break
+
+                if str(reaction.emoji) == "➡️" and current_page < total_pages - 1:
+                    current_page += 1
+                    await message.edit(embed=embeds[current_page])
+                elif str(reaction.emoji) == "⬅️" and current_page > 0:
+                    current_page -= 1
+                    await message.edit(embed=embeds[current_page])
+
+        # Remove reactions after pagination or if there's only one page
+        await message.clear_reactions()
 
     @commands.command(name='list_stocks', aliases=["stocks"])
     async def list_stocks(self, ctx):
@@ -2159,6 +2338,46 @@ class CurrencySystem(commands.Cog):
         self.conn.commit()
 
         await ctx.send(f"Gave {amount} of {symbol} to {user.name}.")
+
+    @commands.command(name="send_stock", help="Send a user an amount of a stock from your stash.")
+    async def send_stock(self, ctx, user: discord.User, symbol: str, amount: int):
+        cursor = self.conn.cursor()
+
+        await ctx.message.delete()
+
+        # Check if the stock exists.
+        cursor.execute("SELECT symbol, available FROM stocks WHERE symbol=?", (symbol,))
+        stock = cursor.fetchone()
+        if stock is None:
+            await ctx.send(f"No stock with symbol {symbol} found.")
+            return
+
+        # Check if there's enough of the stock available in the user's stash.
+        cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (ctx.author.id, symbol))
+        user_stock = cursor.fetchone()
+        if user_stock is None or user_stock['amount'] < amount:
+            await ctx.send(f"Not enough of {symbol} available in your stash.")
+            return
+
+        # Deduct the stock from the user's stash.
+        new_amount = user_stock['amount'] - amount
+        cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (new_amount, ctx.author.id, symbol))
+
+        # Update the recipient's stocks.
+        cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (user.id, symbol))
+        recipient_stock = cursor.fetchone()
+        if recipient_stock is None:
+            cursor.execute("INSERT INTO user_stocks(user_id, symbol, amount) VALUES(?, ?, ?)", (user.id, symbol, amount))
+        else:
+            new_amount = recipient_stock['amount'] + amount
+            cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (new_amount, user.id, symbol))
+
+        self.conn.commit()
+
+        # Log the stock transfer
+        await log_stock_transfer(ledger_conn, ctx, ctx.author, user, symbol, amount)
+
+        await ctx.send(f"Sent {amount} of {symbol} to {user.name}.")
 
 
     @commands.command(name="add_stock", help="Add a new stock. Provide the stock symbol, name, price, total supply, and available amount.")
@@ -2674,6 +2893,118 @@ class CurrencySystem(commands.Cog):
                 await message.remove_reaction(reaction, user)
 
         await ctx.message.delete()
+
+    async def send_percentage_change_embed(self, ctx, interval, percentage_change):
+        # Create an embed for the percentage change message
+        embed = discord.Embed(
+            title=f"{interval} Percentage Change",
+            description=f"{percentage_change:.2f}%",
+            color=discord.Color.green()
+        )
+
+        # Send the embed message to the channel
+        await ctx.send(embed=embed)
+
+    @commands.command(name="update_etf_value", help="Update the name of the ETF 6 voice channel with its value.")
+    async def update_etf_value(self, ctx):
+        # Explicitly set the locale to use commas as the thousands separator
+        locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+
+        while True:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT s.price
+                FROM stocks AS s
+                INNER JOIN etf_stocks AS e ON s.symbol = e.symbol
+                WHERE e.etf_id = 6
+            """)
+            stock_prices = cursor.fetchall()
+
+            if not stock_prices:
+                await ctx.send("No stocks found for ETF 6.")
+                return
+
+            # Calculate the total value of ETF 6 by summing up the stock prices
+            etf_6_value = sum(price for price, in stock_prices)
+
+            # Format the ETF value with commas
+            etf_6_value_formatted = locale.format_string("%0.2f", etf_6_value, grouping=True)
+
+            # Find the voice channel by its ID
+            voice_channel_id = 1136048044119429160  # Replace with the actual ID
+            voice_channel = ctx.guild.get_channel(voice_channel_id)
+
+            if voice_channel:
+                # Get the old price from the channel name using regular expressions
+                old_name = voice_channel.name
+                old_price_match = re.search(r"Market ([\d,]+\.\d+)", old_name)
+
+                if old_price_match:
+                    old_price_str = old_price_match.group(1).replace(",", "")
+                    try:
+                        old_price = float(old_price_str)
+                    except ValueError:
+                        old_price = None
+                else:
+                    old_price = None
+
+                if old_price is not None:
+                    # Calculate the percentage change
+                    percentage_change = ((etf_6_value - old_price) / old_price) * 100
+
+                    # Create an embed for the message
+                    embed = discord.Embed(
+                        title="Market Value Update",
+                        color=discord.Color.green()
+                    )
+                    embed.add_field(
+                        name="Old Price",
+                        value=f"${old_price:.2f}",
+                        inline=True
+                    )
+                    embed.add_field(
+                        name="New Price",
+                        value=f"${etf_6_value:.2f}",
+                        inline=True
+                    )
+                    embed.add_field(
+                        name="Percentage Change",
+                        value=f"{percentage_change:.2f}%",
+                        inline=False
+                    )
+
+                    # Update the name of the voice channel with the calculated ETF 6 value
+                    new_name = f"Market {etf_6_value_formatted}"
+                    await voice_channel.edit(name=new_name)
+
+                    # Send the embed message
+                    await ctx.send(embed=embed)
+                else:
+                    await ctx.send("Failed to retrieve the old price from the channel name.")
+            else:
+                await ctx.send(f"Voice channel with ID '{voice_channel_id}' not found.")
+
+            # Store the current ETF value in the dictionary
+            StockBot.etf_values["5 minutes"] = StockBot.etf_values["15 minutes"]
+            StockBot.etf_values["15 minutes"] = StockBot.etf_values["30 minutes"]
+            StockBot.etf_values["30 minutes"] = StockBot.etf_values["1 hour"]
+            StockBot.etf_values["1 hour"] = StockBot.etf_values["3 hours"]
+            StockBot.etf_values["3 hours"] = StockBot.etf_values["6 hours"]
+            StockBot.etf_values["6 hours"] = StockBot.etf_values["12 hours"]
+            StockBot.etf_values["12 hours"] = StockBot.etf_values["24 hours"]
+            StockBot.etf_values["24 hours"] = etf_6_value
+
+            # Calculate and print percentage changes for different time intervals
+            current_time = time.time()
+            for interval, old_value in StockBot.etf_values.items():
+                if old_value is not None:
+                    elapsed_time = current_time - (60 * int(interval.split()[0]))
+                    if elapsed_time > 0:
+                        percentage_change = ((etf_6_value - old_value) / old_value) * 100
+                        await self.send_percentage_change_embed(ctx, interval, percentage_change)
+
+            # Wait for 120 seconds before checking again
+            await asyncio.sleep(120)
 
 
 
@@ -3743,12 +4074,6 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, the maximum bet amount is 500,000 coins.")
             return
 
-        if bet > current_balance:
-            # Calculate the missing amount needed to complete the transaction including tax.
-            missing_amount = bet - current_balance
-            await ctx.send(f"{ctx.author.mention}, you do not have enough coins to place the bet. You need {missing_amount:.2f} more coins, including tax, to place this bet.")
-            return
-
         # Define slot machine symbols and their values
         symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "7️⃣"]
         payouts = {"🍒": 5, "🍋": 10, "🍊": 15, "🍇": 20, "🔔": 25, "💎": 50, "7️⃣": 100}
@@ -3757,7 +4082,13 @@ class CurrencySystem(commands.Cog):
         result = [random.choice(symbols) for _ in range(3)]
 
         # Calculate the payout
-        payout_multiplier = payouts[result[0]] if all(symbol == result[0] for symbol in result) else 0
+        if all(symbol == result[0] for symbol in result):
+            payout_multiplier = payouts[result[0]]
+        elif result[0] == result[1] or result[1] == result[2]:
+            payout_multiplier = 2.25  # 2 in a row with 2.25% payout
+        else:
+            payout_multiplier = 0
+
         win_amount = bet * payout_multiplier
 
         # Calculate tax based on the bet amount
@@ -3781,7 +4112,7 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Result", value=" ".join(result), inline=False)
 
         if win_amount > 0:
-            new_balance += win_amount
+            new_balance += Decimal(win_amount)
             update_user_balance(self.conn, user_id, new_balance)
             embed.add_field(name="Congratulations!", value=f"You won {win_amount} coins!", inline=False)
             await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"You won {win_amount} coins", new_balance)
@@ -3791,6 +4122,7 @@ class CurrencySystem(commands.Cog):
 
         embed.set_footer(text=f"Your new balance: {new_balance} coins")
         await ctx.send(embed=embed)
+
 
 
 
