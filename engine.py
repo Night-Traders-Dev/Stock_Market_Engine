@@ -33,7 +33,7 @@ import re
 announcement_channel_ids = [1093540470593962014, 1124784361766650026, 1124414952812326962]
 stockMin = 10
 stockMax = 150000
-dStockLimit = 10000000 #2000000 standard
+dStockLimit = 30000000 #2000000 standard
 dETFLimit = 500000
 MAX_BALANCE = Decimal('100000000000000000')
 sellPressureMin = 0.000011
