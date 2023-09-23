@@ -3,14 +3,17 @@ from discord import Embed, Colour
 from tabulate import tabulate
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from matplotlib.ticker import FuncFormatter
 from discord.utils import get
+from math import ceil, floor
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import decimal
 import sqlite3
 import random
 import discord
 import time
 import asyncio
-import matplotlib.pyplot as plt
 import io
 import json
 import locale
@@ -22,7 +25,7 @@ import math
 import requests
 import typing
 import re
-from math import ceil, floor
+
 
 
 # Hardcoded Variables
@@ -30,14 +33,14 @@ from math import ceil, floor
 announcement_channel_ids = [1093540470593962014, 1124784361766650026, 1124414952812326962]
 stockMin = 10
 stockMax = 150000
-dStockLimit = 10000000 #2000000 standard
+dStockLimit = 30000000
 dETFLimit = 500000
 MAX_BALANCE = Decimal('100000000000000000')
 sellPressureMin = 0.000011
 sellPressureMax = 0.00005
 buyPressureMin = 0.000001
 buyPressureMax = 0.000045
-stockDecayValue = 0.00065 #0.00035 standard
+stockDecayValue = 0.00065
 decayMin = 0.01
 resetCoins = 100
 dailyMin = 10000
@@ -108,6 +111,11 @@ def create_stock_page(stocks):
         embed.add_field(name=stock, value=f"Remaining Shares: {amount}", inline=False)
     return embed
 ##
+
+
+# Function to format y-axis as currency
+def currency_formatter(x, pos):
+    return f"${x:,.2f}"
 
 ## Begin Ledger
 
@@ -2122,10 +2130,214 @@ class CurrencySystem(commands.Cog):
 
 
 
+    @commands.command(name="stock_chart", help="Display a price history chart for a stock.")
+    async def stock_chart(self, ctx, stock_symbol):
+        try:
+            # Connect to the ledger database
+            ledger_conn = sqlite3.connect("p3ledger.db")
+            ledger_cursor = ledger_conn.cursor()
+
+            # Check if the given stock symbol exists
+            ledger_cursor.execute("SELECT symbol FROM stock_transactions WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock')", (stock_symbol,))
+            stock = ledger_cursor.fetchone()
+
+            if stock:
+                # Retrieve buy/sell transactions for the stock from the ledger
+                ledger_cursor.execute("""
+                    SELECT timestamp, action, price
+                    FROM stock_transactions
+                    WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock')
+                    ORDER BY timestamp
+                """, (stock_symbol,))
+                transactions = ledger_cursor.fetchall()
+
+                if transactions:
+                    # Separate buy and sell transactions
+                    buy_prices = []
+                    sell_prices = []
+
+                    for timestamp_str, action, price_str in transactions:
+                        price = float(price_str)
+                        datetime_obj = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # Parse timestamp string
+
+                        if action == 'Buy Stock':
+                            buy_prices.append((datetime_obj, price))
+                        elif action == 'Sell Stock':
+                            sell_prices.append((datetime_obj, price))
+
+                    # Extract datetime objects and prices for buy and sell transactions
+                    buy_timestamps = [entry[0] for entry in buy_prices]
+                    buy_prices = [entry[1] for entry in buy_prices]
+                    sell_timestamps = [entry[0] for entry in sell_prices]
+                    sell_prices = [entry[1] for entry in sell_prices]
+
+                    # Calculate average buy and sell prices
+                    average_buy_price = sum(buy_prices) / len(buy_prices) if buy_prices else 0
+                    average_sell_price = sum(sell_prices) / len(sell_prices) if sell_prices else 0
+
+                    # Determine if the stock is overvalued, undervalued, or fair-valued
+                    if average_sell_price > 0:
+                        price_ratio = average_buy_price / average_sell_price
+                        if price_ratio > 1:
+                            valuation = "Overvalued"
+                        elif price_ratio < 1:
+                            valuation = "Undervalued"
+                        else:
+                            valuation = "Fair-Valued"
+                    else:
+                        valuation = "Fair-Valued"
+
+                    # Create a price history chart
+                    plt.figure(figsize=(10, 6))
+                    plt.plot(buy_timestamps, buy_prices, marker='o', linestyle='-', color='g', label='Buy Price')
+                    plt.plot(sell_timestamps, sell_prices, marker='o', linestyle='-', color='r', label='Sell Price')
+                    plt.title(f"Price History for {stock_symbol}")
+                    plt.xlabel("Timestamp")
+                    plt.ylabel("Price")
+                    plt.grid(True)
+                    plt.legend()
+
+                    # Format the x-axis (timestamp) for better readability
+                    ax = plt.gca()
+                    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))  # Show major ticks every month
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
+
+                    # Rotate the x-axis labels for better readability
+                    plt.xticks(rotation=45)
+
+                    # Add a text box with current and average prices, and valuation
+                    text = (
+                        f"Current Price: {buy_prices[-1]:.2f}\n"
+                        f"Average Buy Price: {average_buy_price:.2f}\n"
+                        f"Average Sell Price: {average_sell_price:.2f}\n"
+                        f"Valuation: {valuation}"
+                    )
+                    plt.text(0.03, 1.01, text, transform=plt.gcf().transFigure, fontsize=10, verticalalignment='top')
+
+                    # Save the chart to a BytesIO object
+                    buffer = io.BytesIO()
+                    plt.savefig(buffer, format='png')
+                    buffer.seek(0)
+
+                    # Send the chart as a Discord message
+                    file = discord.File(buffer, filename='chart.png')
+                    await ctx.send(file=file)
+                else:
+                    await ctx.send("No buy/sell transactions found for this stock.")
+            else:
+                await ctx.send("Stock symbol not found.")
+
+            # Close the database connection
+            ledger_conn.close()
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
 
 
+    @commands.command(name="market_value_chart", help="Display a market value history chart for all stocks.")
+    async def market_value_chart(self, ctx):
+        try:
+            # Connect to the ledger database
+            ledger_conn = sqlite3.connect("p3ledger.db")
+            ledger_cursor = ledger_conn.cursor()
 
+            # Fetch a list of all available stock symbols
+            ledger_cursor.execute("SELECT DISTINCT symbol FROM stock_transactions WHERE action='Buy Stock' OR action='Sell Stock'")
+            all_stock_symbols = [row[0] for row in ledger_cursor.fetchall()]
 
+            market_value_data = []
+
+            for stock_symbol in all_stock_symbols:
+                # Retrieve buy/sell transactions for the stock from the ledger
+                ledger_cursor.execute("""
+                    SELECT timestamp, action, price
+                    FROM stock_transactions
+                    WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock')
+                    ORDER BY timestamp
+                """, (stock_symbol,))
+                transactions = ledger_cursor.fetchall()
+
+                if transactions:
+                    # Separate buy and sell transactions
+                    buy_prices = []
+                    sell_prices = []
+
+                    for timestamp_str, action, price_str in transactions:
+                        price = float(price_str)
+                        datetime_obj = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # Parse timestamp string
+
+                        if action == 'Buy Stock':
+                            buy_prices.append((datetime_obj, price))
+                        elif action == 'Sell Stock':
+                            sell_prices.append((datetime_obj, price))
+
+                    # Extract datetime objects and prices for buy and sell transactions
+                    buy_timestamps = [entry[0] for entry in buy_prices]
+                    buy_prices = [entry[1] for entry in buy_prices]
+                    sell_timestamps = [entry[0] for entry in sell_prices]
+                    sell_prices = [entry[1] for entry in sell_prices]
+
+                    # Calculate average buy and sell prices
+                    average_buy_price = sum(buy_prices) / len(buy_prices) if buy_prices else 0
+                    average_sell_price = sum(sell_prices) / len(sell_prices) if sell_prices else 0
+
+                    # Determine if the stock is overvalued, undervalued, or fair-valued
+                    if average_sell_price > 0:
+                        price_ratio = average_buy_price / average_sell_price
+                        if price_ratio > 1:
+                            valuation = "Overvalued"
+                        elif price_ratio < 1:
+                            valuation = "Undervalued"
+                        else:
+                            valuation = "Fair-Valued"
+                    else:
+                        valuation = "Fair-Valued"
+
+                    # Create a price history chart
+                    plt.figure(figsize=(10, 6))
+                    plt.plot(buy_timestamps, buy_prices, marker='o', linestyle='-', color='g', label='Buy Price')
+                    plt.plot(sell_timestamps, sell_prices, marker='o', linestyle='-', color='r', label='Sell Price')
+                    plt.title(f"Price History for {stock_symbol}")
+                    plt.xlabel("Timestamp")
+                    plt.ylabel("Price")
+                    plt.grid(True)
+                    plt.legend()
+
+                    # Format the x-axis (timestamp) for better readability
+                    ax = plt.gca()
+                    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))  # Show major ticks every month
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
+
+                    # Rotate the x-axis labels for better readability
+                    plt.xticks(rotation=45)
+
+                    # Add a text box with current and average prices, and valuation
+                    text = (
+                        f"Current Price: {buy_prices[-1]:.2f}\n"
+                        f"Average Buy Price: {average_buy_price:.2f}\n"
+                        f"Average Sell Price: {average_sell_price:.2f}\n"
+                        f"Valuation: {valuation}"
+                    )
+                    plt.text(0.03, 1.01, text, transform=plt.gcf().transFigure, fontsize=10, verticalalignment='top')
+
+                    # Save the chart to a BytesIO object
+                    buffer = io.BytesIO()
+                    plt.savefig(buffer, format='png')
+                    buffer.seek(0)
+
+                    # Send the chart as a Discord message
+                    file = discord.File(buffer, filename='chart.png')
+                    await ctx.send(file=file)
+                else:
+                    await ctx.send(f"No buy/sell transactions found for {stock_symbol}.")
+            else:
+                await ctx.send("No stock symbols found.")
+
+            # Close the database connection
+            ledger_conn.close()
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
 
 
 # Stock Market
