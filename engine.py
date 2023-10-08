@@ -1818,6 +1818,81 @@ class CurrencySystem(commands.Cog):
 
 # Debug Start
 
+    @commands.command(name="check_addr", help="Check the financial stats of users associated with the specified address.")
+    async def check_addr(self, ctx, target_address):
+        P3addrConn = sqlite3.connect("P3addr.db")
+
+        # Get the user_id associated with the target address
+        user_id = get_user_id(P3addrConn, target_address)
+
+        if not user_id:
+            await ctx.send("Invalid or unknown P3 address.")
+            return
+
+        conn = sqlite3.connect('currency_system.db')
+        cursor = conn.cursor()
+
+        # Reuse the logic from stats command to get user financial stats
+        try:
+            # Get user balance
+            cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
+            current_balance_row = cursor.fetchone()
+            current_balance = current_balance_row[0] if current_balance_row else 0
+
+            # Calculate total stock value
+            cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=?", (user_id,))
+            user_stocks = cursor.fetchall()
+            total_stock_value = 0
+            for symbol, amount in user_stocks:
+                cursor.execute("SELECT price FROM stocks WHERE symbol=?", (symbol,))
+                stock_price_row = cursor.fetchone()
+                stock_price = stock_price_row[0] if stock_price_row else 0
+                total_stock_value += stock_price * amount
+
+            # Calculate total ETF value
+            cursor.execute("SELECT etf_id, quantity FROM user_etfs WHERE user_id=?", (user_id,))
+            user_etfs = cursor.fetchall()
+            total_etf_value = 0
+            for etf in user_etfs:
+                etf_id = etf[0]
+                quantity = etf[1]
+
+                cursor.execute("SELECT SUM(stocks.price * etf_stocks.quantity) FROM etf_stocks JOIN stocks ON etf_stocks.symbol = stocks.symbol WHERE etf_stocks.etf_id=? GROUP BY etf_stocks.etf_id", (etf_id,))
+                etf_value_row = cursor.fetchone()
+                etf_value = etf_value_row[0] if etf_value_row else 0
+                total_etf_value += (etf_value or 0) * quantity
+
+            # Calculate total value of all funds
+            total_funds_value = current_balance + total_stock_value + total_etf_value
+
+            # Create the embed
+            embed = Embed(title=f"{target_address} Financial Stats", color=Colour.green())
+            embed.add_field(name="Balance", value=f"{current_balance:,.0f} coins", inline=False)
+            embed.add_field(name="Total Stock Value", value=f"{total_stock_value:,.0f} coins", inline=False)
+            embed.add_field(name="Total ETF Value", value=f"{total_etf_value:,.0f} coins", inline=False)
+            embed.add_field(name="Total Funds Value", value=f"{total_funds_value:,.0f} coins", inline=False)
+
+            await ctx.send(embed=embed)
+            # Send the same embed to the ledger channel
+            channel = ctx.guild.get_channel(ledger_channel)
+            if channel:
+                await channel.send(embed=embed)
+
+        except sqlite3.Error as e:
+            # Log error message for debugging
+            print(f"Database error: {e}")
+
+            # Inform the user that an error occurred
+            await ctx.send(f"An error occurred while checking the financial stats. Please try again later.")
+
+        except Exception as e:
+            # Log error message for debugging
+            print(f"An unexpected error occurred: {e}")
+
+            # Inform the user that an error occurred
+            await ctx.send(f"An unexpected error occurred. Please try again later.")
+
+
     @commands.command(name="reset_users")
     @is_allowed_user(930513222820331590, PBot)
     async def reset_users(self, ctx):
@@ -2959,6 +3034,151 @@ class CurrencySystem(commands.Cog):
             last_sell_time[user_id] = current_time
             self.conn.commit()
 
+
+    @commands.command(name="buy_multi_stock", help="Buy multiple stocks from a specified ETF. Provide ETF ID and amount of shares.")
+    @is_allowed_server(P3, SludgeSliders, OM3, PBL, server1)
+    async def buy_multi_stock(self, ctx, etf_id: int, amount: int):
+        user_id = ctx.author.id
+        cursor = self.conn.cursor()
+
+        await ctx.message.delete()
+
+        # Fetch stocks and their price and available supply in the specified ETF
+        cursor.execute("""
+            SELECT s.symbol, s.price, s.available
+            FROM etf_stocks AS e
+            INNER JOIN stocks AS s ON e.symbol = s.symbol
+            WHERE e.etf_id = ?
+        """, (etf_id,))
+        stocks_info = cursor.fetchall()
+
+        if not stocks_info:
+            await ctx.send("Invalid ETF ID.")
+            return
+
+        total_cost = Decimal(0)
+
+        for stock_info in stocks_info:
+            stock_name, price, available_supply = stock_info
+
+            # Get the total amount bought today by the user for this stock
+            cursor.execute("""
+                SELECT COALESCE(SUM(amount), 0) as total_amount
+                FROM user_daily_buys
+                WHERE user_id=? AND symbol=? AND DATE(timestamp)=DATE('now')
+            """, (user_id, stock_name))
+
+            daily_bought_record = cursor.fetchone()
+            daily_bought = daily_bought_record["total_amount"]
+
+            if daily_bought + amount > dStockLimit:
+                remaining_amount = dStockLimit - daily_bought
+
+                await ctx.send(f"{ctx.author.mention}, you have reached your daily buy limit for {stock_name} stocks. "
+                               f"You can buy {remaining_amount} more.")
+                return
+
+            # Your existing buy logic
+            available, _, _ = int(available_supply), Decimal(price), 0
+
+            if amount > available:
+                await ctx.send(f"{ctx.author.mention}, there are only {available} {stock_name} stocks available for purchase.")
+                continue
+
+            cost = price * Decimal(amount)
+            tax_percentage = get_tax_percentage(amount, cost)
+            fee = cost * Decimal(tax_percentage)
+            total_cost += cost + fee
+
+        # Calculate the tax amount based on dynamic factors
+        tax_percentage_total = get_tax_percentage(amount, total_cost)
+        fee_total = total_cost * Decimal(tax_percentage_total)
+        total_cost_with_tax = total_cost + fee_total
+
+        # Check if user has enough balance to buy the stocks
+        current_balance = get_user_balance(self.conn, user_id)
+
+        if total_cost_with_tax > current_balance:
+            # Calculate the missing amount needed to complete the transaction including tax.
+            missing_amount = total_cost - current_balance
+            await ctx.send(f"{ctx.author.mention}, you do not have enough coins to buy these stocks. "
+                           f"You need {missing_amount:.2f} more coins, including tax, to complete this purchase.")
+            return
+
+        new_balance = current_balance - total_cost_with_tax
+
+        # Update user's balance
+        try:
+            update_user_balance(self.conn, user_id, new_balance)
+        except ValueError as e:
+            await ctx.send(f"An error occurred while updating the user balance. Error: {str(e)}")
+            return
+
+        # Update user's stocks for each stock in the ETF
+        for stock_info in stocks_info:
+            stock_name, _, _ = stock_info
+            try:
+                cursor.execute("""
+                    INSERT INTO user_stocks (user_id, symbol, amount)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(user_id, symbol) DO UPDATE SET amount = amount + ?
+                """, (user_id, stock_name, amount, amount))
+            except sqlite3.Error as e:
+                await ctx.send(f"An error occurred while updating user stocks for {stock_name}. Error: {str(e)}")
+                return
+
+        # Update available stocks for each stock in the ETF
+        for stock_info in stocks_info:
+            stock_name, _, _ = stock_info
+            try:
+                cursor.execute("""
+                    UPDATE stocks
+                    SET available = available - ?
+                    WHERE symbol = ?
+                """, (amount, stock_name))
+            except sqlite3.Error as e:
+                await ctx.send(f"An error occurred while updating available stocks for {stock_name}. Error: {str(e)}")
+                return
+
+        # Record this transaction in the user_daily_buys table for each stock in the ETF
+        for stock_info in stocks_info:
+            stock_name, _, _ = stock_info
+            try:
+                cursor.execute("""
+                    INSERT INTO user_daily_buys (user_id, symbol, amount, timestamp)
+                    VALUES (?, ?, ?, datetime('now'))
+                """, (user_id, stock_name, amount))
+            except sqlite3.Error as e:
+                await ctx.send(f"An error occurred while updating daily stock limit for {stock_name}. Error: {str(e)}")
+                return
+
+        # Record the team's transaction for each stock in the ETF
+        cursor.execute("SELECT team_id FROM team_members WHERE user_id=?", (user_id,))
+        team_record = cursor.fetchone()
+        if team_record:
+            team_id = team_record[0]
+            for stock_info in stocks_info:
+                stock_name, _, available_supply = stock_info
+                # Record the team's transaction
+                record_team_transaction(self.conn, team_id, stock_name, amount, available_supply, "buy")
+            # Calculate and update the team's profit/loss
+            calculate_team_profit_loss(self.conn, team_id)
+
+        # Decay other stocks and log the overall transaction
+        for stock_info in stocks_info:
+            stock_name, stock_price, _ = stock_info
+            decay_other_stocks(self.conn, stock_name)
+            await self.increase_price(ctx, stock_name, amount)
+            await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, total_cost, total_cost_with_tax, current_balance, new_balance, stock_price)
+
+        # Commit changes to the database
+        self.conn.commit()
+
+        await ctx.send(f"You have successfully bought {amount} units of stocks from ETF {etf_id}. Your new balance is: {new_balance} coins.")
+
+
+
+
 # Limit Order
 
     @commands.command(name="limit_order", help="Place a limit order to buy or sell stocks.")
@@ -3013,7 +3233,6 @@ class CurrencySystem(commands.Cog):
 
 
 
-
     @commands.command(name="open_orders", help="Show open buy/sell orders.")
     async def open_orders(self, ctx):
         user_id = ctx.author.id
@@ -3021,7 +3240,7 @@ class CurrencySystem(commands.Cog):
 
         # Fetch open buy orders for the user
         cursor.execute("""
-            SELECT symbol, price, quantity
+            SELECT order_id, symbol, price, quantity
             FROM limit_orders
             WHERE user_id=? AND order_type='buy'
         """, (user_id,))
@@ -3029,7 +3248,7 @@ class CurrencySystem(commands.Cog):
 
         # Fetch open sell orders for the user
         cursor.execute("""
-            SELECT symbol, price, quantity
+            SELECT order_id, symbol, price, quantity
             FROM limit_orders
             WHERE user_id=? AND order_type='sell'
         """, (user_id,))
@@ -3047,14 +3266,53 @@ class CurrencySystem(commands.Cog):
         )
 
         if buy_orders:
-            buy_str = "\n".join([f"Buy {order['quantity']} shares of {order['symbol']} at {order['price']} coins each" for order in buy_orders])
+            buy_str = "\n".join([f"Buy {order['quantity']} shares of {order['symbol']} at {order['price']} coins each (ID: {order['order_id']})" for order in buy_orders])
             embed.add_field(name="Buy Orders", value=buy_str, inline=False)
 
         if sell_orders:
-            sell_str = "\n".join([f"Sell {order['quantity']} shares of {order['symbol']} at {order['price']} coins each" for order in sell_orders])
+            sell_str = "\n".join([f"Sell {order['quantity']} shares of {order['symbol']} at {order['price']} coins each (ID: {order['order_id']})" for order in sell_orders])
             embed.add_field(name="Sell Orders", value=sell_str, inline=False)
 
         await ctx.send(embed=embed)
+
+
+    @commands.command(name="close_order", help="Close a sell order and get back the stocks.")
+    async def close_order(self, ctx, order_id: int):
+        user_id = ctx.author.id
+
+        # Check if the order exists and belongs to the user
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT order_id, symbol, price, quantity
+            FROM limit_orders
+            WHERE order_id=? AND user_id=? AND order_type='sell'
+        """, (order_id, user_id))
+        sell_order = cursor.fetchone()
+
+        if not sell_order:
+            await ctx.send(f"{ctx.author.mention}, no matching sell order found or you do not have permission to close this order.")
+            return
+
+        symbol = sell_order["symbol"]
+        price = sell_order["price"]
+        quantity = sell_order["quantity"]
+
+        # Return the stocks to the user
+        try:
+            cursor.execute("""
+                UPDATE user_stocks
+                SET amount = amount + ?
+                WHERE user_id = ? AND symbol = ?
+            """, (quantity, user_id, symbol))
+
+            # Remove the sell order
+            cursor.execute("DELETE FROM limit_orders WHERE order_id=?", (order_id,))
+
+            self.conn.commit()
+            await ctx.send(f"{ctx.author.mention}, your sell order (ID: {order_id}) has been closed, and the stocks have been returned.")
+        except sqlite3.Error as e:
+            await ctx.send(f"{ctx.author.mention}, an error occurred while closing the sell order. Error: {str(e)}")
+
 
 
     @commands.command(name="all_open_orders", help="Show all open buy/sell orders from all users.")
@@ -3089,14 +3347,58 @@ class CurrencySystem(commands.Cog):
         )
 
         if buy_orders:
-            buy_str = "\n".join([f"User {order['user_id']} wants to buy {order['quantity']} shares of {order['symbol']} at {order['price']} coins each" for order in buy_orders])
+            buy_str = "\n".join([f"User {generate_crypto_address(order['user_id'])} wants to buy {order['quantity']} shares of {order['symbol']} at {order['price']} coins each" for order in buy_orders])
             embed.add_field(name="Buy Orders", value=buy_str, inline=False)
 
         if sell_orders:
-            sell_str = "\n".join([f"User {order['user_id']} wants to sell {order['quantity']} shares of {order['symbol']} at {order['price']} coins each" for order in sell_orders])
+            sell_str = "\n".join([f"User {generate_crypto_address(order['user_id'])} wants to sell {order['quantity']} shares of {order['symbol']} at {order['price']} coins each" for order in sell_orders])
             embed.add_field(name="Sell Orders", value=sell_str, inline=False)
 
         await ctx.send(embed=embed)
+
+    @commands.command(name="check_orders", help="Check open buy/sell orders for a specified stock.")
+    async def check_orders(self, ctx, symbol: str):
+        cursor = self.conn.cursor()
+
+        # Fetch open buy orders for the specified stock
+        cursor.execute("""
+            SELECT user_id, price, quantity
+            FROM limit_orders
+            WHERE order_type='buy' AND symbol=?
+            ORDER BY price ASC
+        """, (symbol,))
+        buy_orders = cursor.fetchall()
+
+        # Fetch open sell orders for the specified stock
+        cursor.execute("""
+            SELECT user_id, price, quantity
+            FROM limit_orders
+            WHERE order_type='sell' AND symbol=?
+            ORDER BY price ASC
+        """, (symbol,))
+        sell_orders = cursor.fetchall()
+
+        if not buy_orders and not sell_orders:
+            await ctx.send(f"There are no open buy or sell orders for the stock symbol '{symbol}'.")
+            return
+
+        # Prepare and send the message
+        embed = discord.Embed(
+            title=f"Open Orders for {symbol}",
+            description=f"Open buy/sell orders for {symbol} ordered from lowest to highest price:",
+            color=discord.Color.gold()
+        )
+
+        if buy_orders:
+            buy_str = "\n".join([f"User {generate_crypto_address(order['user_id'])} wants to buy {order['quantity']} shares at {order['price']} coins each" for order in buy_orders])
+            embed.add_field(name="Buy Orders", value=buy_str, inline=False)
+
+        if sell_orders:
+            sell_str = "\n".join([f"User {generate_crypto_address(order['user_id'])} wants to sell {order['quantity']} shares at {order['price']} coins each" for order in sell_orders])
+            embed.add_field(name="Sell Orders", value=sell_str, inline=False)
+
+        await ctx.send(embed=embed)
+
 
     @commands.command(name="buy_order_book", help="Buy stocks from the order book.")
     async def buy_order_book(self, ctx, symbol: str, amount: int):
@@ -3118,11 +3420,11 @@ class CurrencySystem(commands.Cog):
         for order in orders:
             seller_id, order_price, order_quantity = order
 
-            total_cost = order_price * order_quantity
-
             # Check if the buyer has sufficient balance
             cursor.execute("SELECT balance FROM users WHERE user_id=?", (buyer_id,))
             buyer_balance = cursor.fetchone()['balance']
+
+            total_cost = order_price * amount  # Calculate total cost for the requested amount
 
             if total_cost > buyer_balance:
                 await ctx.send(f"{ctx.author.mention}, you do not have sufficient balance to buy these stocks.")
@@ -3506,6 +3808,37 @@ class CurrencySystem(commands.Cog):
 
         # Close the database connection
         conn.close()
+
+
+    @commands.command(name='store_user_addr', help='Store the P3 address of a mentioned user.')
+    async def store_user_addr(self, ctx, target: discord.Member):
+        # Connect to the P3addr.db database
+        conn = sqlite3.connect("P3addr.db")
+
+        # Get the user's ID
+        user_id = str(target.id)
+
+        # Check if the user has already stored an address
+        if has_stored_address(conn, user_id):
+            await ctx.send("You have already stored a P3 address.")
+            conn.close()
+            return
+
+        # Generate a P3 address for the mentioned user
+        p3_address = generate_crypto_address(target.id)
+
+        # Store the P3 address in the database
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO user_addresses (user_id, p3_address) VALUES (?, ?)", (user_id, p3_address))
+        conn.commit()
+
+        await ctx.send(f"P3 address for {target.mention} stored successfully: {p3_address}")
+
+        # Close the database connection
+        conn.close()
+
+
+
 
 # Command to look up user information
     @commands.command(name='whois')
