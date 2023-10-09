@@ -15,9 +15,6 @@ Usage: Give a specified amount of coins to another user.
 Command: daily
 Usage: Claim your daily coins.
 
-Command: distribute_tokens
-Usage: Distribute tokens to all users in the server.
-
 Command: check_addr
 Usage: Check the financial stats of users associated with the specified address.
 
