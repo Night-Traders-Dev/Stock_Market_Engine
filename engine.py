@@ -31,6 +31,7 @@ import hashlib
 
 
 
+
 # Hardcoded Variables
 
 announcement_channel_ids = [1093540470593962014, 1124784361766650026, 1124414952812326962]
@@ -42,7 +43,7 @@ MAX_BALANCE = Decimal('100000000000000000')
 sellPressureMin = 0.00002
 sellPressureMax = 0.0000575
 buyPressureMin = 0.000001
-buyPressureMax = 0.000035
+buyPressureMax = 0.000025
 stockDecayValue = 0.000575 #0.00035 standard
 decayMin = 0.01
 resetCoins = 100
@@ -117,6 +118,96 @@ def create_stock_page(stocks):
     for stock, amount in stocks.items():
         embed.add_field(name=stock, value=f"Remaining Shares: {amount}", inline=False)
     return embed
+
+def create_multipage_embeds(data, title):
+    # Split data into chunks to create multipage embeds
+    chunk_size = 10  # Adjust the chunk size as needed
+    chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]
+
+    # Create multipage embeds
+    pages = []
+    for chunk in chunks:
+        embed = discord.Embed(title=title, color=discord.Color.blue())
+        for action, symbol, total_quantity, total_pre_tax_amount in chunk:
+            embed.add_field(
+                name=f"{action.capitalize()} {symbol}",
+                value=f"Total Quantity: {total_quantity}\nTotal Pre-tax Amount: {total_pre_tax_amount:,.0f} coins",
+                inline=True
+            )
+        pages.append(embed)
+
+    return pages
+
+async def reset_daily_stock_limits(ctx, user_id):
+    # Connect to the currency_system database
+    currency_conn = sqlite3.connect("currency_system.db")
+    cursor = currency_conn.cursor()
+
+    try:
+        # Check if the user has a daily stock buy record for any stock
+        cursor.execute("""
+            SELECT DISTINCT symbol
+            FROM user_daily_buys
+            WHERE user_id=? AND timestamp >= date('now', '-1 day')
+        """, (user_id,))
+        stocks = cursor.fetchall()
+
+        if stocks:
+            # Reset the daily stock buy record for all stocks
+            cursor.execute("""
+                DELETE FROM user_daily_buys
+                WHERE user_id=? AND timestamp >= date('now', '-1 day')
+            """, (user_id,))
+            currency_conn.commit()
+
+            stock_symbols = ', '.join(stock[0] for stock in stocks)
+            await ctx.send(f"Successfully reset daily stock buy limits for the user with ID {user_id} and stocks: {stock_symbols}.")
+        else:
+            await ctx.send(f"This user did not reach the daily stock buy limit for any stocks yet.")
+    except sqlite3.Error as e:
+        await ctx.send(f"An error occurred: {str(e)}")
+    finally:
+        # Close the database connection
+        currency_conn.close()
+
+
+
+async def reset_daily_burn_limits(ctx, user_id):
+    # Connect to the currency_system database
+    currency_conn = sqlite3.connect("currency_system.db")
+    cursor = currency_conn.cursor()
+
+    try:
+        # Check if the user has a burn history record
+        cursor.execute("SELECT * FROM burn_history WHERE user_id=? AND timestamp >= date('now', '-1 day')", (user_id,))
+        burn_history_record = cursor.fetchone()
+
+        if burn_history_record:
+            # Reset the burn history
+            cursor.execute("DELETE FROM burn_history WHERE user_id=?", (user_id,))
+            currency_conn.commit()
+
+            await ctx.send(f"Successfully reset burn limit for the user with ID {user_id}.")
+        else:
+            await ctx.send("This user did not reach the daily burn limit yet.")
+    except sqlite3.Error as e:
+        await ctx.send(f"An error occurred: {str(e)}")
+    finally:
+        # Close the database connection
+        currency_conn.close()
+
+
+def can_burn_stocks(cursor, user_id):
+    # Check if the user can burn stocks based on the daily limit
+    today = datetime.today().date()
+    cursor.execute("SELECT COUNT(*) FROM burn_history WHERE user_id=? AND timestamp >= ?", (user_id, today))
+    daily_burn_count = cursor.fetchone()[0]
+    return daily_burn_count < 5  # Adjust the daily limit as needed
+
+def update_burn_history(cursor, user_id):
+    # Update the user's burn history
+    cursor.execute("INSERT INTO burn_history (user_id, timestamp) VALUES (?, CURRENT_TIMESTAMP)", (user_id,))
+
 ##
 
 
@@ -776,7 +867,34 @@ def setup_database():
                 timestamp DATETIME
             );
         """)
-        print("Tables created successfully")
+        print("Stock Limit created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+
+    try:
+        cursor.execute("""
+
+            CREATE TABLE IF NOT EXISTS burn_history (
+                user_id TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        print("Burn Limit created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
+
+            CREATE TABLE IF NOT EXISTS item_usage (
+                user_id TEXT NOT NULL,
+                item_name TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, item_name)
+            );
+        """)
+        print("Item limit created successfully")
     except sqlite3.Error as e:
         print(f"An error occurred while creating the tables: {str(e)}")
 
@@ -1891,6 +2009,202 @@ class CurrencySystem(commands.Cog):
 
             # Inform the user that an error occurred
             await ctx.send(f"An unexpected error occurred. Please try again later.")
+
+    @commands.command(name="check_addr_stats", help="Check the financial and inventory stats of the specified address.")
+    async def check_addr_stats(self, ctx, target_address):
+        P3addrConn = sqlite3.connect("P3addr.db")
+
+        # Get the user_id associated with the target address
+        user_id = get_user_id(P3addrConn, target_address)
+
+        if not user_id:
+            await ctx.send("Invalid or unknown P3 address.")
+            return
+
+        conn = sqlite3.connect('currency_system.db')
+        cursor = conn.cursor()
+
+        # Reuse the logic to get user financial stats
+        try:
+            # Get user balance
+            cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
+            current_balance_row = cursor.fetchone()
+            current_balance = current_balance_row[0] if current_balance_row else 0
+
+            # Calculate total stock value
+            cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=?", (user_id,))
+            user_stocks = cursor.fetchall()
+            total_stock_value = 0
+            for symbol, amount in user_stocks:
+                cursor.execute("SELECT price FROM stocks WHERE symbol=?", (symbol,))
+                stock_price_row = cursor.fetchone()
+                stock_price = stock_price_row[0] if stock_price_row else 0
+                total_stock_value += stock_price * amount
+
+            # Calculate total ETF value
+            cursor.execute("SELECT etf_id, quantity FROM user_etfs WHERE user_id=?", (user_id,))
+            user_etfs = cursor.fetchall()
+            total_etf_value = 0
+            for etf in user_etfs:
+                etf_id = etf[0]
+                quantity = etf[1]
+
+                cursor.execute("SELECT SUM(stocks.price * etf_stocks.quantity) FROM etf_stocks JOIN stocks ON etf_stocks.symbol = stocks.symbol WHERE etf_stocks.etf_id=? GROUP BY etf_stocks.etf_id", (etf_id,))
+                etf_value_row = cursor.fetchone()
+                etf_value = etf_value_row[0] if etf_value_row else 0
+                total_etf_value += (etf_value or 0) * quantity
+
+            # Calculate total value of all funds
+            total_funds_value = current_balance + total_stock_value + total_etf_value
+
+            # Fetch user's inventory
+            cursor.execute("""
+                SELECT items.item_name, items.item_description, inventory.quantity, items.price
+                FROM inventory
+                JOIN items ON inventory.item_id = items.item_id
+                WHERE user_id=?
+            """, (user_id,))
+            inventory_data = cursor.fetchall()
+
+            # Create the financial stats embed
+            financial_stats_embed = discord.Embed(title=f"{target_address} Financial Stats", color=discord.Color.green())
+            financial_stats_embed.add_field(name="Balance", value=f"{current_balance:,.0f} coins", inline=False)
+            financial_stats_embed.add_field(name="Total Stock Value", value=f"{total_stock_value:,.0f} coins", inline=False)
+            financial_stats_embed.add_field(name="Total ETF Value", value=f"{total_etf_value:,.0f} coins", inline=False)
+            financial_stats_embed.add_field(name="Total Funds Value", value=f"{total_funds_value:,.0f} coins", inline=False)
+
+            # Create the inventory embed
+            inventory_embed = discord.Embed(title="Inventory", color=discord.Color.blue())
+
+            total_value = 0  # Initialize total value
+
+            for item in inventory_data:
+                item_name = item[0]
+                item_description = item[1] or "No description available"
+                quantity = item[2]
+                item_price = Decimal(item[3])  # Convert the item price to Decimal
+
+                # Calculate the total value for the item
+                item_value = item_price * quantity
+
+                total_value += item_value  # Accumulate the total value
+
+                # Format the values with commas
+                formatted_quantity = "{:,}".format(quantity)
+                formatted_item_value = "{:,.2f}".format(item_value)
+
+                inventory_embed.add_field(name=item_name, value=f"Description: {item_description}\nQuantity: {formatted_quantity}\nValue: {formatted_item_value} coins", inline=False)
+
+            # Format the total inventory value with commas
+            formatted_total_value = "{:,.2f}".format(total_value)
+
+            # Add the total value of the inventory to the embed
+            inventory_embed.add_field(name="Total Inventory Value", value=f"{formatted_total_value} coins", inline=False)
+
+            # Send the financial stats embed
+            await ctx.send(embed=financial_stats_embed)
+
+            # Send the inventory embed
+            await ctx.send(embed=inventory_embed)
+
+            # Send the same financial stats embed to the ledger channel
+            channel = ctx.guild.get_channel(ledger_channel)
+            if channel:
+                await channel.send(embed=financial_stats_embed)
+
+        except sqlite3.Error as e:
+            # Log error message for debugging
+            print(f"Database error: {e}")
+
+            # Inform the user that an error occurred
+            await ctx.send(f"An error occurred while checking the financial and inventory stats. Please try again later.")
+
+        except Exception as e:
+            # Log error message for debugging
+            print(f"An unexpected error occurred: {e}")
+
+            # Inform the user that an unexpected error occurred
+            await ctx.send(f"An unexpected error occurred. Please try again later.")
+        finally:
+            # Close the database connections
+            P3addrConn.close()
+            conn.close()
+
+
+    @commands.command(name="addr_metric", help="Show metrics for a P3 address.")
+    async def addr_metric(self, ctx, target_address):
+        # Connect to P3 address database
+        P3addrConn = sqlite3.connect("P3addr.db")
+
+        # Get user_id associated with the target address
+        user_id = get_user_id(P3addrConn, target_address)
+
+        if not user_id:
+            await ctx.send("Invalid or unknown P3 address.")
+            return
+
+        # Connect to ledger database
+        ledger_conn = sqlite3.connect("p3ledger.db")
+        ledger_cursor = ledger_conn.cursor()
+
+        # Connect to currency system database
+        currency_conn = sqlite3.connect("currency_system.db")
+        currency_cursor = currency_conn.cursor()
+
+        try:
+            # Get total buy and sell value and amounts of stocks and ETFs
+            ledger_cursor.execute("""
+                SELECT action, symbol, SUM(quantity) AS total_quantity, SUM(pre_tax_amount) AS total_pre_tax_amount
+                FROM stock_transactions
+                WHERE user_id=?
+                GROUP BY action, symbol
+            """, (user_id,))
+            stock_metrics = ledger_cursor.fetchall()
+
+            ledger_cursor.execute("""
+                SELECT action, symbol, SUM(quantity) AS total_quantity, SUM(pre_tax_amount) AS total_pre_tax_amount
+                FROM stock_transactions
+                WHERE user_id=?
+                GROUP BY action, symbol
+            """, (user_id,))
+            etf_metrics = ledger_cursor.fetchall()
+
+            # Create an embed for displaying metrics
+            embed = discord.Embed(title=f"Metrics for {target_address}", color=discord.Color.blue())
+
+            # Display stock metrics
+            stock_pages = create_multipage_embeds(stock_metrics, "Stock Metrics")
+            for page in stock_pages:
+                await ctx.send(embed=page)
+
+            # Display ETF metrics
+            etf_pages = create_multipage_embeds(etf_metrics, "ETF Metrics")
+            for page in etf_pages:
+                await ctx.send(embed=page)
+
+        except sqlite3.Error as e:
+            # Log error message for debugging
+            print(f"Database error: {e}")
+
+            # Inform the user that an error occurred
+            await ctx.send(f"An error occurred while fetching metrics. Please try again later.")
+
+        except Exception as e:
+            # Log error message for debugging
+            print(f"An unexpected error occurred: {e}")
+
+            # Inform the user that an unexpected error occurred
+            await ctx.send(f"An unexpected error occurred. Please try again later.")
+
+        finally:
+            # Close the database connections
+            P3addrConn.close()
+            ledger_conn.close()
+            currency_conn.close()
+
+
+
+
 
 
     @commands.command(name="reset_users")
@@ -3760,9 +4074,8 @@ class CurrencySystem(commands.Cog):
         crypto_address = generate_crypto_address(discord_user_id)
 
         # Create an embed to display the information
-        embed = discord.Embed(title="Your Crypto Address", color=0x00ff00)
-        embed.add_field(name="Discord User ID", value=str(discord_user_id), inline=False)
-        embed.add_field(name="Generated Crypto Address", value=crypto_address, inline=False)
+        embed = discord.Embed(title="Your P3 Address", color=0x00ff00)
+        embed.add_field(name="Personal P3 Address", value=crypto_address, inline=False)
 
         # Send the embed as a reply
         await ctx.send(embed=embed)
@@ -4861,7 +5174,87 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"You have successfully sold all units of ETFs {sold_etf_list}. Your new balance is: {new_balance} coins.")
 
 
+    @commands.command(name="reset_stock_limit", help="Reset a user's daily stock buy limit based on P3 address.")
+    @is_allowed_user(930513222820331590, PBot)
+    async def reset_stock_limit(self, ctx, target_address: str, stock_symbol: str):
+        # Connect to the P3addr.db database
+        p3addr_conn = sqlite3.connect("P3addr.db")
 
+        # Get the user_id associated with the target address
+        user_id = get_user_id(p3addr_conn, target_address)
+
+        if not user_id:
+            await ctx.send("Invalid or unknown P3 address.")
+            return
+
+        # Connect to the currency_system database
+        currency_conn = sqlite3.connect("currency_system.db")
+        cursor = currency_conn.cursor()
+
+        try:
+            # Check if the user has a daily stock buy record
+            cursor.execute("""
+                SELECT *
+                FROM user_daily_buys
+                WHERE user_id=? AND symbol=? AND timestamp >= date('now', '-1 day')
+            """, (user_id, stock_symbol))
+            stock_limit_record = cursor.fetchone()
+
+            if stock_limit_record:
+                # Reset the daily stock buy record
+                cursor.execute("""
+                    DELETE FROM user_daily_buys
+                    WHERE user_id=? AND symbol=?
+                """, (user_id, stock_symbol))
+                currency_conn.commit()
+
+                await ctx.send(f"Successfully reset daily stock buy limit for the user with P3 address {target_address} and stock {stock_symbol}.")
+            else:
+                await ctx.send(f"This user did not reach the daily stock buy limit for {stock_symbol} yet.")
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
+        finally:
+            # Close the database connections
+            p3addr_conn.close()
+            currency_conn.close()
+
+
+    @commands.command(name="reset_burn_limit", help="Reset a user's daily burn stock limit based on P3 address.")
+    @is_allowed_user(930513222820331590, PBot)
+    async def reset_burn_limit(self, ctx, target_address: str):
+        # Connect to the P3addr.db database
+        p3addr_conn = sqlite3.connect("P3addr.db")
+
+        # Get the user_id associated with the target address
+        user_id = get_user_id(p3addr_conn, target_address)
+
+        if not user_id:
+            await ctx.send("Invalid or unknown P3 address.")
+            return
+
+        # Connect to the currency_system database
+        currency_conn = sqlite3.connect("currency_system.db")
+        cursor = currency_conn.cursor()
+
+        try:
+            # Check if the user has a burn history record
+            cursor.execute("SELECT * FROM burn_history WHERE user_id=? AND timestamp >= date('now', '-1 day')", (user_id,))
+            burn_history_record = cursor.fetchone()
+
+            if burn_history_record:
+                # Reset the burn history
+                cursor.execute("DELETE FROM burn_history WHERE user_id=?", (user_id,))
+                currency_conn.commit()
+
+                await ctx.send(f"Successfully reset burn limit for the user with P3 address {target_address}.")
+            else:
+                await ctx.send("This user did not reach the daily burn limit yet.")
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
+        finally:
+            # Close the database connections
+            p3addr_conn.close()
+            currency_conn.close()
 
 
     @commands.command(name="admin_close_etf", help="Admin command to close all user positions for a specified ETF.")
@@ -5109,6 +5502,72 @@ class CurrencySystem(commands.Cog):
 
         await ctx.send(embed=embed)
 
+    @commands.command(name="use", help="Use a usable item to reset limits (e.g., MarketBadge or FireStarter).")
+    async def use_item(self, ctx, item_name: str):
+        user_id = ctx.author.id
+
+        # Connect to the currency_system database
+        currency_conn = sqlite3.connect("currency_system.db")
+        cursor = currency_conn.cursor()
+
+        try:
+            # Check if the item exists and is usable
+            cursor.execute("SELECT * FROM items WHERE item_name=? AND is_usable=1", (item_name,))
+            item = cursor.fetchone()
+
+            if not item:
+                await ctx.send(f"The item '{item_name}' either does not exist or is not usable.")
+                return
+
+            # Check if the user has the item in their inventory
+            cursor.execute("""
+                SELECT i.quantity, i.item_id
+                FROM inventory i
+                JOIN items it ON i.item_id = it.item_id
+                WHERE i.user_id=? AND it.item_name=? AND i.quantity > 0
+            """, (user_id, item_name))
+            item_info = cursor.fetchone()
+
+            if not item_info:
+                await ctx.send(f"You do not have any {item_name} in your inventory.")
+                return
+
+            item_quantity, item_id = item_info
+
+            # Check if the user has already used the item today
+            cursor.execute("""
+                SELECT timestamp
+                FROM item_usage
+                WHERE user_id=? AND item_name=? AND timestamp >= date('now', 'start of day')
+            """, (user_id, item_name))
+            last_usage = cursor.fetchone()
+
+            if last_usage:
+                await ctx.send(f"You have already used {item_name} today. You can use it again tomorrow.")
+                return
+
+            # Perform actions based on the item
+            if item_name == "MarketBadge":
+                # Reset daily stock buy limits
+                await reset_daily_stock_limits(ctx, user_id)
+            elif item_name == "FireStarter":
+                # Reset daily burn limits
+                await reset_daily_burn_limits(ctx, user_id)
+
+            # Update item quantity after use
+            cursor.execute("UPDATE inventory SET quantity = ? WHERE user_id = ? AND item_id = ?", (item_quantity - 1, user_id, item_id))
+
+            # Log item usage
+            cursor.execute("INSERT INTO item_usage (user_id, item_name) VALUES (?, ?)", (user_id, item_name))
+            currency_conn.commit()
+
+            await ctx.send(f"You have used {item_name} to reset your limits for today.")
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
+        finally:
+            # Close the database connection
+            currency_conn.close()
 
 
     @commands.command(name="buy_item", help="Buy an item from the marketplace.")
@@ -5149,6 +5608,21 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, an error occurred while updating the user balance. Error: {str(e)}")
             return
 
+        # Check if the item is one of the restricted items
+        if item_name in ["FireStarter", "MarketBadge"]:
+            # Check if the user is attempting to buy more than one
+            if quantity > 1:
+                await ctx.send(f"{ctx.author.mention}, you can only buy one {item_name} at a time.")
+                return
+
+            # Check if the user already has the item in their inventory
+            cursor.execute("SELECT quantity FROM inventory WHERE user_id=? AND item_id=?", (user_id, item_id))
+            existing_quantity = cursor.fetchone()
+
+            if existing_quantity is not None and existing_quantity[0] >= 1:
+                await ctx.send(f"{ctx.author.mention}, you can only have 1 {item_name} in your inventory.")
+                return
+
         # Update the user's inventory
         try:
             cursor.execute("""
@@ -5176,6 +5650,7 @@ class CurrencySystem(commands.Cog):
         await ctx.send(f"{ctx.author.mention}, you have successfully bought {quantity} {item_name}. Your new balance is: {new_balance} coins.")
 
 
+
     @commands.command(name="sell_item", help="Sell an item from your inventory.")
     async def sell_item(self, ctx, item_name: str, quantity: int):
         user_id = ctx.author.id
@@ -5201,6 +5676,12 @@ class CurrencySystem(commands.Cog):
 
         # Calculate the total sale amount
         total_sale_amount = Decimal(item_price) * Decimal(quantity)
+        # Calculate the tax amount based on dynamic factors
+        tax_percentage = get_tax_percentage(quantity, total_sale_amount)  # Custom function to determine the tax percentage based on quantity and cost
+        fee = total_sale_amount * Decimal(tax_percentage)
+        total_sale_amount = total_sale_amount - fee
+        total_cost = total_sale_amount
+        tax_amount = fee
 
         # Update user's balance
         current_balance = get_user_balance(self.conn, user_id)
@@ -5224,12 +5705,12 @@ class CurrencySystem(commands.Cog):
             cursor.execute("""
                 INSERT INTO transactions (user_id, item_id, quantity, total_cost, tax_amount)
                 VALUES (?, ?, ?, ?, ?)
-            """, (user_id, item_id, quantity, total_sale_amount, Decimal(0)))
+            """, (user_id, item_id, quantity, total_sale_amount, Decimal(fee)))
         except sqlite3.Error as e:
             await ctx.send(f"{ctx.author.mention}, an error occurred while recording the transaction. Error: {str(e)}")
             return
 
-        await log_item_transaction(self.conn, ctx, "Sell", item_name, quantity, total_sale_amount, Decimal(0), new_balance)
+        await log_item_transaction(self.conn, ctx, "Sell", item_name, quantity, total_sale_amount, Decimal(fee), new_balance)
         self.conn.commit()
 
         await ctx.send(f"{ctx.author.mention}, you have successfully sold {quantity} {item_name}. Your new balance is: {new_balance} coins.")
@@ -6089,6 +6570,11 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"You do not have enough {stock_name} stocks to burn.")
             return
 
+        # Check the user's burn history
+        if not can_burn_stocks(cursor, user_id):
+            await ctx.send("You have reached the daily limit(5) for stock burns. Please wait until tomorrow.")
+            return
+
         # Get the price before burning
         price_before_burn = Decimal(stock[2])
 
@@ -6110,9 +6596,15 @@ class CurrencySystem(commands.Cog):
 
         # Log the stock burn transaction
         await log_burn_stocks(ledger_conn, ctx, stock_name, amount, price_before_burn, price_after_burn)
+
+        # Update the user's burn history
+        update_burn_history(cursor, user_id)
+
         self.conn.commit()
 
         await ctx.send(f"Burned {amount} {stock_name} stocks, reducing the total supply.")
+
+
 
     @commands.command(name="simulate_burn", help="Simulate burning a certain amount of stocks to reduce total supply.")
     async def simulate_burn(self, ctx, stock_name: str, amount: int):
