@@ -74,6 +74,7 @@ jacob = 930513222820331590
 PBot = 1092870544988319905
 
 
+
 #Ledger
 ledger_channel = 1161680453841993839
 #servers
@@ -136,6 +137,25 @@ def create_multipage_embeds(data, title):
         pages.append(embed)
 
     return pages
+
+async def check_and_notify_address(ctx):
+    # Connect to the P3addr.db database
+    conn = sqlite3.connect("P3addr.db")
+
+    # Get the user's ID
+    user_id = str(ctx.author.id)
+
+    # Check if the user has already stored an address
+    if has_stored_address(conn, user_id):
+        await ctx.send("You have already stored a P3 address.")
+        conn.close()
+        return
+
+    # Notify the user to store an address
+    await ctx.send("You have not stored a P3 address. Please use `!store_addr` to store your P3 address.")
+
+    # Close the database connection
+    conn.close()
 
 async def reset_daily_stock_limits(ctx, user_id):
     # Connect to the currency_system database
@@ -1103,8 +1123,9 @@ def update_user_balance(conn, user_id, new_balance):
         new_balance = Decimal(new_balance)
 
         # Check if new_balance exceeds the maximum allowed
-        if new_balance > MAX_BALANCE:
+        if user_id != PBot and new_balance > MAX_BALANCE:
             raise ValueError(f"User balance exceeds the maximum allowed balance of {MAX_BALANCE} µPPN.")
+
 
         cursor = conn.cursor()
         cursor.execute("""
@@ -1215,8 +1236,8 @@ def get_tax_percentage(quantity: int, cost: Decimal) -> float:
 # End Economy Engine
 
 async def update_market_etf_price(bot, conn):
-    guild_id = 1121529633448394973 # Hardcoded guild ID
-    channel_id = 1136048044119429160  # Hardcoded channel ID
+    guild_id = 1087147399371292732 # Hardcoded guild ID
+    channel_id = 1161706930981589094  # Hardcoded channel ID
     guild = ctx.bot.get_guild(GUILD_ID)
     channel = get(guild.voice_channels, id=channel_id)
 
@@ -1291,6 +1312,10 @@ async def delete_expired_tickets(conn):
     cursor.execute("DELETE FROM raffle_tickets WHERE week < ?", (week,))
     conn.commit()
 
+
+
+##Black Jack Logic
+
 class CurrencySystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -1299,7 +1324,166 @@ class CurrencySystem(commands.Cog):
         self.conn = setup_database()
         self.lock = asyncio.Lock()
         self.claimed_users = set()  # Set to store claimed user IDs
+        self.update_topstocks.start()
+        self.check_stock_prices.start()
+#        self.update_top_wealth.start()
 
+
+    @tasks.loop(seconds=10)
+    async def check_stock_prices(self):
+        channel_id = 1161680453841993839  # Replace with your channel ID
+        channel = self.bot.get_channel(channel_id)
+
+        if channel:
+            cursor = self.conn.cursor()
+
+            # Get the list of stocks
+            cursor.execute("SELECT symbol, price FROM stocks")
+            stocks = cursor.fetchall()
+
+            for symbol, current_price in stocks:
+                # Simulate price changes (replace this with actual logic to get real-time prices)
+                old_price = current_price * 0.95  # Simulate a 5% decrease in price
+
+                # Check for a significant price change
+                price_change_percentage = ((current_price - old_price) / old_price) * 100
+
+                if abs(price_change_percentage) >= 10:
+                    # Create an embed with information about the price change
+                    embed = discord.Embed(
+                        title=f"Price Change Alert for {symbol}",
+                        color=discord.Color.red() if price_change_percentage < 0 else discord.Color.green()
+                    )
+                    embed.add_field(name="Current Price", value=f"{current_price:.2f}")
+                    embed.add_field(name="Old Price", value=f"{old_price:.2f}")
+                    embed.add_field(name="Change", value=f"{price_change_percentage:.2f}%")
+
+                    # Send the embed to the channel
+                    await channel.send(embed=embed)
+
+            cursor.close()
+
+    @tasks.loop(minutes=3)
+    async def update_top_wealth(self, ctx):
+        try:
+            channel_id = 1161735935944306808 # Replace with your actual channel ID
+            message_id = 1161736160998072400 # Replace with your actual message ID
+            channel = self.bot.get_channel(channel_id)
+
+            if channel:
+                cursor = self.conn.cursor()
+
+                # Get the top 10 wealthiest users, sorting them by total wealth
+                cursor.execute("""
+                    SELECT users.user_id,
+                           (users.balance + IFNULL(total_stock_value, 0) + IFNULL(total_etf_value, 0)) AS total_wealth
+                    FROM users
+                    LEFT JOIN (
+                        SELECT user_id, SUM(stocks.price * user_stocks.amount) AS total_stock_value
+                        FROM user_stocks
+                        LEFT JOIN stocks ON user_stocks.symbol = stocks.symbol
+                        GROUP BY user_id
+                    ) AS user_stock_data ON users.user_id = user_stock_data.user_id
+                    LEFT JOIN (
+                        SELECT user_id, SUM(etf_value * user_etfs.quantity) AS total_etf_value
+                        FROM user_etfs
+                        LEFT JOIN (
+                            SELECT etf_stocks.etf_id, SUM(stocks.price * etf_stocks.quantity) AS etf_value
+                            FROM etf_stocks
+                            LEFT JOIN stocks ON etf_stocks.symbol = stocks.symbol
+                            GROUP BY etf_stocks.etf_id
+                        ) AS etf_data ON user_etfs.etf_id = etf_data.etf_id
+                        GROUP BY user_id
+                    ) AS user_etf_data ON users.user_id = user_etf_data.user_id
+                    ORDER BY total_wealth DESC
+                    LIMIT 10
+                """)
+
+                top_users = cursor.fetchall()
+
+                if not top_users:
+                    return  # No users found
+
+                embed = discord.Embed(title="Top 10 Wealthiest Users", color=discord.Color.gold())
+
+                for user_id, total_wealth in top_users:
+                    username = self.get_username(ctx, user_id)
+                    P3Addr = generate_crypto_address(user_id)
+
+                    # Format wealth in shorthand
+                    wealth_shorthand = self.format_value(total_wealth)
+
+                    embed.add_field(name=P3Addr, value=wealth_shorthand, inline=False)
+
+                # Find and edit the existing message by ID
+                existing_message = await channel.fetch_message(message_id)
+                if existing_message:
+                    try:
+                        await existing_message.edit(embed=embed)
+                    except discord.errors.NotFound:
+                        # If the message is not found, handle accordingly
+                        print("Message not found.")
+                else:
+                    # If the message is not found, handle accordingly
+                    print("Message not found.")
+
+        except sqlite3.Error as e:
+            # Log error message for debugging
+            print(f"Database error: {e}")
+
+        except Exception as e:
+            # Log error message for debugging
+            print(f"An unexpected error occurred: {e}")
+
+
+    @tasks.loop(minutes=3)
+    async def update_topstocks(self):
+        try:
+            channel_id = 1161735935944306808 # Replace with your actual channel ID
+            message_id = 1161736160998072400  # Replace with your actual message ID
+            channel = self.bot.get_channel(channel_id)
+
+            if channel:
+                cursor = self.conn.cursor()
+
+                # Get the top 5 highest price stocks with available quantities
+                cursor.execute("SELECT symbol, price, available FROM stocks ORDER BY price DESC LIMIT 5")
+                top_high_stocks = cursor.fetchall()
+
+                # Get the top 5 lowest price stocks with available quantities
+                cursor.execute("SELECT symbol, price, available FROM stocks ORDER BY price ASC LIMIT 5")
+                top_low_stocks = cursor.fetchall()
+
+                # Create the embed
+                embed = discord.Embed(title='Top 5 Highest and Lowest Price Stocks', color=discord.Color.blue())
+
+                # Add fields for the top 5 highest price stocks
+                for i, (symbol, price, available) in enumerate(top_high_stocks, start=1):
+                    embed.add_field(name=f"High #{i}: {symbol}", value=f"Price: {price:,.2f} µPPN\nAvailable: {available}", inline=False)
+
+                # Add fields for the top 5 lowest price stocks
+                for i, (symbol, price, available) in enumerate(top_low_stocks, start=1):
+                    embed.add_field(name=f"Low #{i}: {symbol}", value=f"Price: {price:,.2f} µPPN\nAvailable: {available}", inline=False)
+
+                # Find and edit the existing message by ID
+                existing_message = await channel.fetch_message(message_id)
+                if existing_message:
+                    try:
+                        await existing_message.edit(embed=embed)
+                    except discord.errors.NotFound:
+                        # If the message is not found, handle accordingly
+                        print("Message not found.")
+                else:
+                    # If the message is not found, handle accordingly
+                    print("Message not found.")
+
+        except sqlite3.Error as e:
+            # Log error message for debugging
+            print(f"Database error: {e}")
+
+        except Exception as e:
+            # Log error message for debugging
+            print(f"An unexpected error occurred: {e}")
 
     def get_user_stock_amount(self, user_id, stock_name):
         cursor = self.conn.cursor()
@@ -1598,7 +1782,6 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="metrics", help="View system metrics")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1161678765894664323)
     async def view_metrics(self, ctx):
         cursor = self.conn.cursor()
 
@@ -1652,7 +1835,6 @@ class CurrencySystem(commands.Cog):
 # Currency Tools
 
     @commands.command(name="reset_game", help="Reset all user stocks and ETFs to 0 and set the balance to 100.00")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1161678765894664323)
     @is_allowed_user(930513222820331590, PBot)
     async def reset_game(self, ctx):
         cursor = self.conn.cursor()
@@ -1677,7 +1859,6 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="revert_all_stocks", help="Revert all user-held stocks and place them back into the stock market for all users.")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1161678765894664323)
     @is_allowed_user(930513222820331590, PBot)
     async def revert_all_stocks(self, ctx):
         cursor = self.conn.cursor()
@@ -1811,7 +1992,6 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="daily", help="Claim your daily µPPN.")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, server1, 1161678765894664323)
     async def daily(self, ctx):
         async with self.lock:  # Use the asynchronous lock
             user_id = ctx.author.id
@@ -2187,7 +2367,6 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="backup_database")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1161678765894664323)
     @is_allowed_user(930513222820331590, PBot)
     async def backup_database(self, ctx):
         try:
@@ -2209,7 +2388,6 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"An error occurred while creating the database backup: {e}")
 
     @commands.command(name="restore_backup")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1161678765894664323)
     @is_allowed_user(930513222820331590, PBot)
     async def restore_database(self, ctx):
         try:
@@ -2517,7 +2695,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="stock_chart", help="Display a price history chart with technical indicators for a stock.")
-    async def stock_chart(self, ctx, stock_symbol):
+    async def stock_chart(self, ctx, stock_symbol, time_period=None, rsi_period=None, sma_period=None, ema_period=None):
         try:
             # Connect to the currency_system database
             currency_conn = sqlite3.connect("currency_system.db")
@@ -2563,6 +2741,31 @@ class CurrencySystem(commands.Cog):
                     sell_timestamps = [entry[0] for entry in sell_prices]
                     sell_prices = [entry[1] for entry in sell_prices]
 
+                    # Use default values if the user doesn't provide specific information
+                    if not time_period:
+                        time_period = "3months"
+
+                    if not rsi_period:
+                        rsi_period = 14
+
+                    if not sma_period:
+                        sma_period = 50
+
+                    if not ema_period:
+                        ema_period = 50
+
+                    # Filter transactions based on the specified time period
+                    start_date = datetime.now() - timedelta(days=90)  # Default to the last 3 months
+                    if time_period == "1week":
+                        start_date = datetime.now() - timedelta(weeks=1)
+                    elif time_period == "1month":
+                        start_date = datetime.now() - timedelta(weeks=4)
+                    elif time_period == "3months":
+                        start_date = datetime.now() - timedelta(weeks=12)
+
+                    buy_prices, buy_timestamps = zip(*[(p, t) for p, t in zip(buy_prices, buy_timestamps) if t >= start_date])
+                    sell_prices, sell_timestamps = zip(*[(p, t) for p, t in zip(sell_prices, sell_timestamps) if t >= start_date])
+
                     # Calculate average buy and sell prices
                     average_buy_price = sum(buy_prices) / len(buy_prices) if buy_prices else 0
                     average_sell_price = sum(sell_prices) / len(sell_prices) if sell_prices else 0
@@ -2580,7 +2783,6 @@ class CurrencySystem(commands.Cog):
                         valuation = "Fair-Valued"
 
                     # Calculate RSI
-                    rsi_period = min(14, len(buy_prices))  # You can adjust the period as needed
                     if len(buy_prices) >= rsi_period:
                         rsi = talib.RSI(np.array(buy_prices), timeperiod=rsi_period)
                         rsi_timestamps = buy_timestamps[-len(rsi):]  # Match RSI timestamps
@@ -2589,7 +2791,6 @@ class CurrencySystem(commands.Cog):
                         rsi_timestamps = []
 
                     # Calculate Simple Moving Average (SMA)
-                    sma_period = min(50, len(buy_prices))  # Adjust the period as needed
                     if len(buy_prices) >= sma_period:
                         sma = talib.SMA(np.array(buy_prices), timeperiod=sma_period)
                         sma_timestamps = buy_timestamps[-len(sma):]  # Match SMA timestamps
@@ -2598,7 +2799,6 @@ class CurrencySystem(commands.Cog):
                         sma_timestamps = []
 
                     # Calculate Exponential Moving Average (EMA)
-                    ema_period = min(50, len(buy_prices))  # Adjust the period as needed
                     if len(buy_prices) >= ema_period:
                         ema = talib.EMA(np.array(buy_prices), timeperiod=ema_period)
                         ema_timestamps = buy_timestamps[-len(ema):]  # Match EMA timestamps
@@ -2870,7 +3070,6 @@ class CurrencySystem(commands.Cog):
 # Stock Market
 # Buy Stock
     @commands.command(name="buy", aliases=["buy_stock"], help="Buy stocks. Provide the stock name and amount.")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, server1, 1161678765894664323)
     async def buy(self, ctx, stock_name: str, amount: int):
         buyer_id = ctx.author.id
         user_id = ctx.author.id
@@ -3066,7 +3265,6 @@ class CurrencySystem(commands.Cog):
 
 # Sell Stock
     @commands.command(name="sell", aliases=["sell_stock"], help="Sell stocks. Provide the stock name and amount.")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, server1, 1161678765894664323)
     async def sell(self, ctx, stock_name: str, amount: int):
         user_id = ctx.author.id
 
@@ -3136,7 +3334,6 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="buyMulti", aliases=["buy_multi"], help="Buy stocks for all stocks in the market. Provide the amount to buy.")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, server1, 1161678765894664323)
     async def buy_multi(self, ctx, amount: int):
         user_id = ctx.author.id
 
@@ -3279,7 +3476,6 @@ class CurrencySystem(commands.Cog):
             self.conn.commit()
 
     @commands.command(name="sellMulti", aliases=["sell_multi"], help="Sell stocks for all stocks in the market. Provide the amount to sell.")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, server1, 1161678765894664323)
     async def sell_multi(self, ctx, amount: int):
         user_id = ctx.author.id
         current_time = datetime.now()
@@ -3365,7 +3561,6 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="buy_multi_stock", help="Buy multiple stocks from a specified ETF. Provide ETF ID and amount of shares.")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, server1, 1161678765894664323)
     async def buy_multi_stock(self, ctx, etf_id: int, amount: int):
         user_id = ctx.author.id
         cursor = self.conn.cursor()
@@ -4381,7 +4576,6 @@ class CurrencySystem(commands.Cog):
 # Stock Engine
 
     @commands.command(name="change_prices")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1161678765894664323)
     @is_allowed_user(930513222820331590, PBot)
     async def change_prices(self, ctx):
         cursor = self.conn.cursor()
@@ -4490,7 +4684,6 @@ class CurrencySystem(commands.Cog):
         await ctx.send(f"The price of {stock_name} has increased to {new_price}.")
 
     @commands.command(name="decrease_price")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1161678765894664323)
     @is_allowed_user(930513222820331590, PBot)
     async def decrease_price(self, ctx, stock_name: str, amount: float):
         cursor = self.conn.cursor()
@@ -4827,7 +5020,7 @@ class CurrencySystem(commands.Cog):
         # Send the embed message to the channel
         await ctx.send(embed=embed)
 
-    @commands.command(name="update_etf_value", help="Update the name of the ETF 6 voice channel with its value.")
+    @commands.command(name="market_polling_6", help="Update the name of the ETF 6 voice channel with its value.")
     async def update_etf_value(self, ctx):
         # Explicitly set the locale to use commas as the thousands separator
         locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
@@ -4853,7 +5046,7 @@ class CurrencySystem(commands.Cog):
             etf_6_value_formatted = locale.format_string("%0.2f", etf_6_value, grouping=True)
 
             # Find the voice channel by its ID
-            voice_channel_id = 1136048044119429160  # Replace with the actual ID
+            voice_channel_id = 1161706930981589094  # Replace with the actual ID
             voice_channel = ctx.guild.get_channel(voice_channel_id)
 
             if voice_channel:
@@ -4932,7 +5125,6 @@ class CurrencySystem(commands.Cog):
 
 # Buy/Sell ETFs
     @commands.command(name="buy_etf", help="Buy an ETF. Provide the ETF ID and quantity.")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, server1, 1161678765894664323)
     async def buy_etf(self, ctx, etf_id: int, quantity: int):
         user_id = ctx.author.id
         cursor = self.conn.cursor()
@@ -5329,7 +5521,6 @@ class CurrencySystem(commands.Cog):
 
 ## Begin Lottery
     @commands.command(name="buy_tickets", help="Buy raffle tickets.")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1078544683971661944)
     async def buy_tickets(self, ctx, quantity: int):
         await ctx.message.delete()
         if quantity <= 0:
@@ -6133,7 +6324,6 @@ class CurrencySystem(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name="simulate_sell")
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1161678765894664323)
     async def simulate_sell(self, ctx, stock_name: str, amount: float):
         cursor = self.conn.cursor()
 
@@ -6169,7 +6359,6 @@ class CurrencySystem(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='roulette', help='Play roulette. Choose a color (red/black/green) or a number (0-36) or "even"/"odd" and your bet amount.')
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1161678765894664323)
     async def roulette(self, ctx, choice: str, bet: int):
         user_id = ctx.author.id
         current_balance = get_user_balance(self.conn, user_id)
@@ -6231,7 +6420,6 @@ class CurrencySystem(commands.Cog):
             await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You lost {total_cost} µPPN", new_balance)
 
     @commands.command(name='coinflip', help='Flip a coin and bet on heads or tails.')
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1161678765894664323)
     async def coinflip(self, ctx, choice: str, bet: int):
         user_id = ctx.author.id
         current_balance = get_user_balance(self.conn, user_id)
@@ -6280,7 +6468,6 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name='slotmachine', aliases=['slots'], help='Play the slot machine. Bet an amount up to 500,000 µPPN.')
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1161678765894664323)
     async def slotmachine(self, ctx, bet: int):
         user_id = ctx.author.id
         current_balance = get_user_balance(self.conn, user_id)
@@ -6344,11 +6531,46 @@ class CurrencySystem(commands.Cog):
         await ctx.send(embed=embed)
 
 
+    @commands.command(name='start_blackjack', aliases=['bj'], help='Start a Blackjack game. Usage: !start_blackjack <bet>')
+    async def start_blackjack(self, ctx, bet: int):
+        player = ctx.author.id
 
+        if player in self.games:
+            await ctx.send("You're already in a game! Finish that one before starting a new one.")
+            return
+
+        # Check if the player has enough balance to place the bet
+        user_balance = 1000  # Replace with your logic to get the user's balance
+        if bet <= 0 or bet > user_balance:
+            await ctx.send(f"Invalid bet. Please bet between 1 and {user_balance} µPPN.")
+            return
+
+        # Start a new Blackjack game
+        self.games[player] = BlackjackGame([player])
+        self.games[player].bets[player] = bet
+
+        # Deal initial cards
+        for _ in range(2):
+            self.games[player].deal_card(player)
+            self.games[player].deal_card('dealer')
+
+        # Player turns
+        result = await self.games[player].player_turn(player, ctx)
+        if result == 'timeout':
+            del self.games[player]
+            return
+
+        # Dealer turn
+        self.games[player].dealer_turn(ctx)
+
+        # Determine the winner
+        self.games[player].determine_winner(ctx)
+
+        # Clean up the game
+        del self.games[player]
 
 
     @commands.command(name='simulate_roulette', help='Simulate a roulette bet to see the amount in taxes it would cost, and how much you would win/lose.')
-    @is_allowed_server(P3, SludgeSliders, OM3, PBL, 1161678765894664323)
     async def simulate_roulette(self, ctx, bet: int):
         user_id = ctx.author.id
         current_balance = get_user_balance(self.conn, user_id)  # Placeholder function for fetching user's balance
