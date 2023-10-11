@@ -1325,30 +1325,41 @@ class CurrencySystem(commands.Cog):
         self.lock = asyncio.Lock()
         self.claimed_users = set()  # Set to store claimed user IDs
         self.update_topstocks.start()
-        self.check_stock_prices.start()
-#        self.update_top_wealth.start()
+        self.check_market_prices.start()
+        self.current_prices_stocks = {}  # Dictionary to store current prices for stocks
+        self.old_prices_stocks = {}  # Dictionary to store old prices for stocks
+        self.current_prices_etfs = {}  # Dictionary to store current values for ETFs
+        self.old_prices_etfs = {}  # Dictionary to store old values for ETFs
 
 
-    @tasks.loop(seconds=10)
-    async def check_stock_prices(self):
+
+    @tasks.loop(seconds=60)
+    async def check_market_prices(self):
         channel_id = 1161680453841993839  # Replace with your channel ID
         channel = self.bot.get_channel(channel_id)
 
         if channel:
             cursor = self.conn.cursor()
 
-            # Get the list of stocks
+            # Check stocks
             cursor.execute("SELECT symbol, price FROM stocks")
             stocks = cursor.fetchall()
 
             for symbol, current_price in stocks:
-                # Simulate price changes (replace this with actual logic to get real-time prices)
-                old_price = current_price * 0.95  # Simulate a 5% decrease in price
+                # Get the old price from the dictionary or set it to the current price if not present
+                old_price = self.old_prices_stocks.get(symbol, current_price)
+
+                # Update the old price in the dictionary
+                self.old_prices_stocks[symbol] = current_price
 
                 # Check for a significant price change
                 price_change_percentage = ((current_price - old_price) / old_price) * 100
 
+                # Update the current price in the dictionary
+                self.current_prices_stocks[symbol] = current_price
+
                 if abs(price_change_percentage) >= 10:
+                    print(f"Symbol: {symbol}, Current Price: {current_price:.2f}, Old Price: {old_price:.2f}, Change: {price_change_percentage:.2f}%")
                     # Create an embed with information about the price change
                     embed = discord.Embed(
                         title=f"Price Change Alert for {symbol}",
@@ -1357,6 +1368,44 @@ class CurrencySystem(commands.Cog):
                     embed.add_field(name="Current Price", value=f"{current_price:.2f}")
                     embed.add_field(name="Old Price", value=f"{old_price:.2f}")
                     embed.add_field(name="Change", value=f"{price_change_percentage:.2f}%")
+
+                    # Send the embed to the channel
+                    await channel.send(embed=embed)
+
+            # Check ETFs
+            cursor.execute("SELECT etf_id, name FROM etfs")
+            etfs = cursor.fetchall()
+
+            for etf_id, etf_name in etfs:
+                # Get stocks associated with the ETF
+                cursor.execute("SELECT symbol, quantity FROM etf_stocks WHERE etf_id=?", (etf_id,))
+                stocks = cursor.fetchall()
+
+                # Calculate the value of the ETF
+                etf_value = sum(self.current_prices_stocks.get(symbol, 0) * quantity for symbol, quantity in stocks)
+
+                # Get the old value from the dictionary or set it to the current value if not present
+                old_etf_value = self.old_prices_etfs.get(etf_id, etf_value)
+
+                # Update the old value in the dictionary
+                self.old_prices_etfs[etf_id] = etf_value
+
+                # Check for a significant value change
+                etf_value_change_percentage = ((etf_value - old_etf_value) / old_etf_value) * 100
+
+                # Update the current value in the dictionary
+                self.current_prices_etfs[etf_id] = etf_value
+
+                if abs(etf_value_change_percentage) >= 10:
+                    print(f"ETF ID: {etf_id}, Current Value: {etf_value:.2f}, Old Value: {old_etf_value:.2f}, Change: {etf_value_change_percentage:.2f}%")
+                    # Create an embed with information about the value change
+                    embed = discord.Embed(
+                        title=f"Value Change Alert for ETF {etf_name}",
+                        color=discord.Color.red() if etf_value_change_percentage < 0 else discord.Color.green()
+                    )
+                    embed.add_field(name="Current Value", value=f"{etf_value:.2f}")
+                    embed.add_field(name="Old Value", value=f"{old_etf_value:.2f}")
+                    embed.add_field(name="Change", value=f"{etf_value_change_percentage:.2f}%")
 
                     # Send the embed to the channel
                     await channel.send(embed=embed)
