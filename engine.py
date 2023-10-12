@@ -6,6 +6,9 @@ from decimal import Decimal, InvalidOperation
 from matplotlib.ticker import FuncFormatter
 from discord.utils import get
 from math import ceil, floor
+from sqlite3.dbapi2 import Connection, Cursor
+from contextlib import contextmanager
+from functools import partial
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
@@ -1319,18 +1322,42 @@ async def delete_expired_tickets(conn):
 class CurrencySystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.ctx = None
         self.last_claimed = {}
         self.short_targets = {}
         self.conn = setup_database()
         self.lock = asyncio.Lock()
         self.claimed_users = set()  # Set to store claimed user IDs
         self.update_topstocks.start()
+#        self.update_topwealth.start = partial(self.update_topwealth.start, ctx)
         self.check_market_prices.start()
         self.current_prices_stocks = {}  # Dictionary to store current prices for stocks
         self.old_prices_stocks = {}  # Dictionary to store old prices for stocks
         self.current_prices_etfs = {}  # Dictionary to store current values for ETFs
         self.old_prices_etfs = {}  # Dictionary to store old values for ETFs
+        self.connection_pool = sqlite3.connect("currency_system.db", check_same_thread=False)
 
+    def setup(self, ctx):
+        self.ctx = ctx  # Set the context when setting up the Cog
+
+    @contextmanager
+    def get_cursor(self):
+        connection = sqlite3.connect("currency_system.db")
+        cursor = connection.cursor()
+        try:
+            yield cursor
+        finally:
+            connection.commit()
+            connection.close()
+
+    def get_connection(self) -> Connection:
+        return self.connection_pool
+
+
+    def close_connection(self, commit=True):
+        if commit:
+            self.connection_pool.commit()
+        self.get_connection().close()
 
 
     @tasks.loop(seconds=60)
@@ -1412,17 +1439,18 @@ class CurrencySystem(commands.Cog):
 
             cursor.close()
 
-    @tasks.loop(minutes=3)
-    async def update_top_wealth(self, ctx):
+    @tasks.loop(minutes=1)  # Adjust the loop interval as needed
+    async def update_topwealth(self):
         try:
-            channel_id = 1161735935944306808 # Replace with your actual channel ID
-            message_id = 1161736160998072400 # Replace with your actual message ID
+            channel_id = 1161738095746625697  # Replace with your actual channel ID
+            message_id = 1161774598963081236  # Replace with your actual message ID
             channel = self.bot.get_channel(channel_id)
+            print(f'Updating top_wealth')
 
             if channel:
                 cursor = self.conn.cursor()
 
-                # Get the top 10 wealthiest users, sorting them by total wealth
+                # Get the top 10 wealthiest users
                 cursor.execute("""
                     SELECT users.user_id,
                            (users.balance + IFNULL(total_stock_value, 0) + IFNULL(total_etf_value, 0)) AS total_wealth
@@ -1450,10 +1478,8 @@ class CurrencySystem(commands.Cog):
 
                 top_users = cursor.fetchall()
 
-                if not top_users:
-                    return  # No users found
-
-                embed = discord.Embed(title="Top 10 Wealthiest Users", color=discord.Color.gold())
+                # Create the embed
+                embed = discord.Embed(title='Top 10 Wealthiest Users', color=discord.Color.gold())
 
                 for user_id, total_wealth in top_users:
                     username = self.get_username(ctx, user_id)
@@ -1485,7 +1511,7 @@ class CurrencySystem(commands.Cog):
             print(f"An unexpected error occurred: {e}")
 
 
-    @tasks.loop(minutes=3)
+    @tasks.loop(minutes=1)
     async def update_topstocks(self):
         try:
             channel_id = 1161735935944306808 # Replace with your actual channel ID
@@ -1622,6 +1648,17 @@ class CurrencySystem(commands.Cog):
 
         self.conn.commit()
         return True
+
+    @commands.command(name='servers', help='Check how many servers the bot is in.')
+    async def servers(self, ctx):
+        server_list = "\n".join([guild.name for guild in self.bot.guilds])
+        server_count = len(self.bot.guilds)
+
+        if server_count == 0:
+            await ctx.send("I am not in any servers.")
+        else:
+            await ctx.send(f"I am in {server_count} server(s):\n{server_list}")
+
 
 #Game Help
 
@@ -5761,27 +5798,27 @@ class CurrencySystem(commands.Cog):
     async def use_item(self, ctx, item_name: str):
         user_id = ctx.author.id
 
-        # Connect to the currency_system database
-        currency_conn = sqlite3.connect("currency_system.db")
-        cursor = currency_conn.cursor()
-
         try:
             # Check if the item exists and is usable
-            cursor.execute("SELECT * FROM items WHERE item_name=? AND is_usable=1", (item_name,))
-            item = cursor.fetchone()
+            item = None
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT * FROM items WHERE item_name=? AND is_usable=1", (item_name,))
+                item = cursor.fetchone()
 
             if not item:
                 await ctx.send(f"The item '{item_name}' either does not exist or is not usable.")
                 return
 
             # Check if the user has the item in their inventory
-            cursor.execute("""
-                SELECT i.quantity, i.item_id
-                FROM inventory i
-                JOIN items it ON i.item_id = it.item_id
-                WHERE i.user_id=? AND it.item_name=? AND i.quantity > 0
-            """, (user_id, item_name))
-            item_info = cursor.fetchone()
+            item_info = None
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT i.quantity, i.item_id
+                    FROM inventory i
+                    JOIN items it ON i.item_id = it.item_id
+                    WHERE i.user_id=? AND it.item_name=? AND i.quantity > 0
+                """, (user_id, item_name))
+                item_info = cursor.fetchone()
 
             if not item_info:
                 await ctx.send(f"You do not have any {item_name} in your inventory.")
@@ -5790,16 +5827,29 @@ class CurrencySystem(commands.Cog):
             item_quantity, item_id = item_info
 
             # Check if the user has already used the item today
-            cursor.execute("""
-                SELECT timestamp
-                FROM item_usage
-                WHERE user_id=? AND item_name=? AND timestamp >= date('now', 'start of day')
-            """, (user_id, item_name))
-            last_usage = cursor.fetchone()
+            last_usage_date = None
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT MAX(timestamp)
+                    FROM item_usage
+                    WHERE user_id=? AND item_name=?
+                """, (user_id, item_name))
+                last_usage_date = cursor.fetchone()
 
-            if last_usage:
-                await ctx.send(f"You have already used {item_name} today. You can use it again tomorrow.")
-                return
+            if last_usage_date:
+                # Extract the timestamp string
+                last_usage_date_str = last_usage_date[0]
+
+                # Convert the timestamp string to a datetime object
+                last_usage_datetime = datetime.strptime(last_usage_date_str, '%Y-%m-%d %H:%M:%S')
+
+                # Calculate the time difference
+                time_difference = datetime.now() - last_usage_datetime
+
+                # Check if the last usage was within the last 24 hours
+                if time_difference.total_seconds() < 24 * 60 * 60:
+                    await ctx.send(f"You have already used {item_name} today. You can use it again tomorrow.")
+                    return
 
             # Perform actions based on the item
             if item_name == "MarketBadge":
@@ -5810,19 +5860,24 @@ class CurrencySystem(commands.Cog):
                 await reset_daily_burn_limits(ctx, user_id)
 
             # Update item quantity after use
-            cursor.execute("UPDATE inventory SET quantity = ? WHERE user_id = ? AND item_id = ?", (item_quantity - 1, user_id, item_id))
+            with self.get_cursor() as cursor:
+                cursor.execute("UPDATE inventory SET quantity = ? WHERE user_id = ? AND item_id = ?", (item_quantity - 1, user_id, item_id))
 
-            # Log item usage
-            cursor.execute("INSERT INTO item_usage (user_id, item_name) VALUES (?, ?)", (user_id, item_name))
-            currency_conn.commit()
+            # Log item usage with the current date and time
+            current_date_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO item_usage (user_id, item_name, timestamp)
+                    VALUES (?, ?, ?)
+                """, (user_id, item_name, current_date_time))
 
             await ctx.send(f"You have used {item_name} to reset your limits for today.")
 
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred: {str(e)}")
-        finally:
-            # Close the database connection
-            currency_conn.close()
+
+
+
 
 
     @commands.command(name="buy_item", help="Buy an item from the marketplace.")
