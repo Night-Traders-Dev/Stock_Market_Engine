@@ -5221,7 +5221,7 @@ class CurrencySystem(commands.Cog):
         cursor.execute("SELECT COALESCE(SUM(quantity), 0) FROM user_etfs WHERE user_id=? AND etf_id=?", (user_id, etf_id))
         current_holding = cursor.fetchone()[0]
 
-        if current_holding >= dETFLimit:
+        if current_holding + quantity >= dETFLimit:
             await ctx.send("Reached Max ETF Limit")
             return
 
@@ -5794,6 +5794,17 @@ class CurrencySystem(commands.Cog):
 
         await ctx.send(embed=embed)
 
+    @commands.command(name="initialize_dates", help="Initialize all users' dates to the default.")
+    async def initialize_dates(self, ctx):
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("UPDATE item_usage SET timestamp = '2000-01-01 00:00:00'")
+            await ctx.send("All users' dates have been initialized to the default.")
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
+
+
+
     @commands.command(name="use", help="Use a usable item to reset limits (e.g., MarketBadge or FireStarter).")
     async def use_item(self, ctx, item_name: str):
         user_id = ctx.author.id
@@ -5836,20 +5847,24 @@ class CurrencySystem(commands.Cog):
                 """, (user_id, item_name))
                 last_usage_date = cursor.fetchone()
 
-            if last_usage_date:
+            if last_usage_date and last_usage_date[0]:
                 # Extract the timestamp string
                 last_usage_date_str = last_usage_date[0]
 
                 # Convert the timestamp string to a datetime object
                 last_usage_datetime = datetime.strptime(last_usage_date_str, '%Y-%m-%d %H:%M:%S')
+            else:
+                # Initialize with a very old date to ensure it doesn't block new users
+                last_usage_datetime = datetime(2000, 1, 1)
 
-                # Calculate the time difference
-                time_difference = datetime.now() - last_usage_datetime
+            # Calculate the time difference
+            time_difference = datetime.now() - last_usage_datetime
 
-                # Check if the last usage was within the last 24 hours
-                if time_difference.total_seconds() < 24 * 60 * 60:
-                    await ctx.send(f"You have already used {item_name} today. You can use it again tomorrow.")
-                    return
+            # Check if the last usage was within the last 24 hours
+            if time_difference.total_seconds() < 24 * 60 * 60:
+                await ctx.send(f"You have already used {item_name} today. You can use it again tomorrow.")
+                return
+
 
             # Perform actions based on the item
             if item_name == "MarketBadge":
@@ -7032,6 +7047,73 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"Successfully matched with swap order {order_id}.")
         else:
             await ctx.send("The specified order does not exist or is not open.")
+
+## Server stats
+
+    @commands.command(name="server_stats", help="Display server statistics.")
+    async def server_stats(self, ctx):
+        # Get the amount of servers the bot is a member of
+        server_count = len(self.bot.guilds)
+
+        # Get the amount of users with stored P3 addresses
+        address_count = await self.get_user_count()
+
+        # Get the size of currency_system.db, p3ledger.db, and P3addr.db
+        db_sizes = {
+            "currency_system.db": self.get_file_size("currency_system.db"),
+            "p3ledger.db": self.get_file_size("p3ledger.db"),
+            "P3addr.db": self.get_file_size("P3addr.db"),
+        }
+
+        # Get the number of lines in cogs/currency_system_cog.py
+        cog_lines = self.get_file_lines("cogs/currency_system_cog.py")
+
+        # Create and send an embed with the information
+        embed = discord.Embed(title="Server Statistics", color=discord.Color.green())
+        embed.add_field(name="Servers", value=server_count)
+        embed.add_field(name="P3 Addresses", value=address_count)
+        embed.add_field(name="Lines in currency_system", value=cog_lines)
+        for db_name, db_size in db_sizes.items():
+            embed.add_field(name=f"Size of {db_name}", value=db_size)
+
+        await ctx.send(embed=embed)
+
+    async def get_user_count(self):
+        try:
+            P3conn = sqlite3.connect("P3addr.db")
+            cursor = P3conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM user_addresses")
+            count = cursor.fetchone()[0]
+            return count
+        except Exception as e:
+            print(f"Error getting user count: {e}")
+            return "Error"
+
+    def get_file_size(self, filename):
+        try:
+            size = os.path.getsize(filename)
+            return self.format_size(size)
+        except Exception as e:
+            print(f"Error getting file size for {filename}: {e}")
+            return "Error"
+
+    def format_size(self, size):
+        # Format size in a human-readable format
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024.0:
+                break
+            size /= 1024.0
+        return f"{size:.2f} {unit}"
+
+    def get_file_lines(self, filename):
+        try:
+            with open(filename, 'r', encoding='utf-8') as file:
+                lines = file.readlines()
+                return len(lines)
+        except Exception as e:
+            print(f"Error getting file lines for {filename}: {e}")
+            return "Error"
+
 
 async def setup(bot):
     await bot.add_cog(CurrencySystem(bot))
