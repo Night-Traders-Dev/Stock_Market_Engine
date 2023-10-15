@@ -1,5 +1,6 @@
 from discord.ext import commands, tasks
 from discord import Embed, Colour
+#from cookies_discord_components import ComponentsBot, Button, ButtonStyle
 from tabulate import tabulate
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -11,6 +12,7 @@ from contextlib import contextmanager
 from functools import partial
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import mplfinance as mpf
 import numpy as np
 import decimal
 import sqlite3
@@ -35,6 +37,7 @@ import hashlib
 
 
 
+
 # Hardcoded Variables
 
 announcement_channel_ids = [1093540470593962014, 1124784361766650026, 1124414952812326962]
@@ -49,7 +52,7 @@ sellPressureMin = 0.00002
 sellPressureMax = 0.0000575
 buyPressureMin = 0.000001
 buyPressureMax = 0.000025
-stockDecayValue = 0.000575 #0.00035 standard
+stockDecayValue = 0.0003500 #0.00035 standard
 decayMin = 0.01
 resetµPPN = 100
 dailyMin = 10000
@@ -59,7 +62,10 @@ maxTax = 0.50
 last_buy_time = {}
 last_sell_time = {}
 
+## One-time pass roles
 
+bronze_pass = 1162473766656413987
+role_discount = 0.05
 
 etf_values = {
     "5 minutes": None,
@@ -219,12 +225,16 @@ async def reset_daily_burn_limits(ctx, user_id):
         currency_conn.close()
 
 
-def can_burn_stocks(cursor, user_id):
+def can_burn_stocks(ctx, cursor, user_id):
     # Check if the user can burn stocks based on the daily limit
+    member = ctx.guild.get_member(user_id)
     today = datetime.today().date()
     cursor.execute("SELECT COUNT(*) FROM burn_history WHERE user_id=? AND timestamp >= ?", (user_id, today))
     daily_burn_count = cursor.fetchone()[0]
-    return daily_burn_count < 5  # Adjust the daily limit as needed
+    if has_role(member, bronze_pass):
+        return daily_burn_count < 10  # Adjust the daily limit as needed
+    else:
+        return daily_burn_count < 5
 
 def update_burn_history(cursor, user_id):
     # Update the user's burn history
@@ -1200,6 +1210,11 @@ def get_user_balance(conn, user_id):
     raise ValueError("Invalid balance format in the database.")
 
 
+def has_role(user, role_id):
+    """Check if the user has a specific role."""
+    return any(role.id == role_id for role in user.roles)
+
+
 def get_tax_percentage(quantity: int, cost: Decimal) -> float:
     base_tax = 0.025
     random_factor = random.uniform(0.01115, 0.03654)  # Randomly fluctuate tax by 1-5%
@@ -1329,6 +1344,7 @@ class CurrencySystem(commands.Cog):
         self.lock = asyncio.Lock()
         self.claimed_users = set()  # Set to store claimed user IDs
         self.update_topstocks.start()
+#        self.update_etf_value_task.start()
 #        self.update_topwealth.start = partial(self.update_topwealth.start, ctx)
         self.check_market_prices.start()
         self.current_prices_stocks = {}  # Dictionary to store current prices for stocks
@@ -1336,6 +1352,8 @@ class CurrencySystem(commands.Cog):
         self.current_prices_etfs = {}  # Dictionary to store current values for ETFs
         self.old_prices_etfs = {}  # Dictionary to store old values for ETFs
         self.connection_pool = sqlite3.connect("currency_system.db", check_same_thread=False)
+        self.last_job_times = {}
+
 
     def setup(self, ctx):
         self.ctx = ctx  # Set the context when setting up the Cog
@@ -1360,7 +1378,108 @@ class CurrencySystem(commands.Cog):
         self.get_connection().close()
 
 
-    @tasks.loop(seconds=60)
+    @tasks.loop(seconds=120)  # Adjust the interval as needed
+    async def update_etf_value_task(self):
+        # The logic from your original update_etf_value method goes here
+        user = self.bot.get_user(self.bot.owner_id)
+        ctx = await self.bot.get_context(930513222820331590)
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT s.price
+            FROM stocks AS s
+            INNER JOIN etf_stocks AS e ON s.symbol = e.symbol
+            WHERE e.etf_id = 6
+        """)
+        stock_prices = cursor.fetchall()
+
+        if not stock_prices:
+            await ctx.send("No stocks found for ETF 6.")
+            return
+
+        # Calculate the total value of ETF 6 by summing up the stock prices
+        etf_6_value = sum(price for price, in stock_prices)
+
+        # Format the ETF value with commas
+        etf_6_value_formatted = locale.format_string("%0.2f", etf_6_value, grouping=True)
+
+        # Find the voice channel by its ID
+        voice_channel_id = 1161706930981589094  # Replace with the actual ID
+        voice_channel = ctx.guild.get_channel(voice_channel_id)
+
+        if voice_channel:
+            # Get the old price from the channel name using regular expressions
+            old_name = voice_channel.name
+            old_price_match = re.search(r"Market ([\d,]+\.\d+)", old_name)
+
+            if old_price_match:
+                old_price_str = old_price_match.group(1).replace(",", "")
+                try:
+                    old_price = float(old_price_str)
+                except ValueError:
+                    old_price = None
+            else:
+                old_price = None
+
+            if old_price is not None:
+                # Calculate the percentage change
+                percentage_change = ((etf_6_value - old_price) / old_price) * 100
+
+                # Create an embed for the message
+                embed = discord.Embed(
+                    title="Market Value Update",
+                    color=discord.Color.green()
+                )
+                embed.add_field(
+                    name="Old Price",
+                    value=f"${old_price:.2f}",
+                    inline=True
+                )
+                embed.add_field(
+                    name="New Price",
+                    value=f"${etf_6_value:.2f}",
+                    inline=True
+                )
+                embed.add_field(
+                    name="Percentage Change",
+                    value=f"{percentage_change:.2f}%",
+                    inline=False
+                )
+
+                # Update the name of the voice channel with the calculated ETF 6 value
+                new_name = f"Market {etf_6_value_formatted}"
+                await voice_channel.edit(name=new_name)
+
+                # Send the embed message
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send("Failed to retrieve the old price from the channel name.")
+        else:
+            await ctx.send(f"Voice channel with ID '{voice_channel_id}' not found.")
+
+        # Store the current ETF value in the dictionary
+        StockBot.etf_values["5 minutes"] = StockBot.etf_values["15 minutes"]
+        StockBot.etf_values["15 minutes"] = StockBot.etf_values["30 minutes"]
+        StockBot.etf_values["30 minutes"] = StockBot.etf_values["1 hour"]
+        StockBot.etf_values["1 hour"] = StockBot.etf_values["3 hours"]
+        StockBot.etf_values["3 hours"] = StockBot.etf_values["6 hours"]
+        StockBot.etf_values["6 hours"] = StockBot.etf_values["12 hours"]
+        StockBot.etf_values["12 hours"] = StockBot.etf_values["24 hours"]
+        StockBot.etf_values["24 hours"] = etf_6_value
+
+        # Calculate and print percentage changes for different time intervals
+        current_time = time.time()
+        for interval, old_value in StockBot.etf_values.items():
+            if old_value is not None:
+                elapsed_time = current_time - (60 * int(interval.split()[0]))
+                if elapsed_time > 0:
+                    percentage_change = ((etf_6_value - old_value) / old_value) * 100
+                    await self.send_percentage_change_embed(ctx, interval, percentage_change)
+
+        # Wait for 120 seconds before checking again
+        await asyncio.sleep(120)
+
+
+    @tasks.loop(seconds=300)
     async def check_market_prices(self):
         channel_id = 1161680453841993839  # Replace with your channel ID
         channel = self.bot.get_channel(channel_id)
@@ -1740,6 +1859,14 @@ class CurrencySystem(commands.Cog):
 
 
 # Bot to Channel
+    @commands.command(name="update", help="Reload the current cog.")
+    async def update_cog(self, ctx):
+        try:
+            await self.bot.reload_extension("currency_system_cog")  # Replace "your_cog_module" with the actual module name of your cog
+            await ctx.send("Stock Market Bot successfully updated.")
+        except commands.ExtensionError as e:
+            await ctx.send(f"An error occurred while updating the cog: {e}")
+
 
 
     @commands.command(name='announce', help='Send an announcement to a specific channel.')
@@ -2808,7 +2935,8 @@ class CurrencySystem(commands.Cog):
                 transactions = ledger_cursor.fetchall()
 
                 if transactions:
-                    # Separate buy and sell transactions
+
+            # Separate buy and sell transactions
                     buy_prices = []
                     sell_prices = []
 
@@ -2826,10 +2954,24 @@ class CurrencySystem(commands.Cog):
                     buy_prices = [entry[1] for entry in buy_prices]
                     sell_timestamps = [entry[0] for entry in sell_prices]
                     sell_prices = [entry[1] for entry in sell_prices]
+                    # Define a dictionary for time periods
+                    time_periods = {
+                        "1h": timedelta(hours=1),
+                        "4h": timedelta(hours=4),
+                        "1d": timedelta(days=1),
+                        "1w": timedelta(weeks=1),
+                        "2w": timedelta(weeks=2),
+                        "3w": timedelta(weeks=3),
+                        "4w": timedelta(weeks=4),
+                        "1m": timedelta(weeks=4),
+                        "2m": timedelta(weeks=8),
+                        "6m": timedelta(weeks=24),
+                        # Add more as needed
+                    }
 
                     # Use default values if the user doesn't provide specific information
                     if not time_period:
-                        time_period = "3months"
+                        time_period = "4w"
 
                     if not rsi_period:
                         rsi_period = 14
@@ -2841,13 +2983,7 @@ class CurrencySystem(commands.Cog):
                         ema_period = 50
 
                     # Filter transactions based on the specified time period
-                    start_date = datetime.now() - timedelta(days=90)  # Default to the last 3 months
-                    if time_period == "1week":
-                        start_date = datetime.now() - timedelta(weeks=1)
-                    elif time_period == "1month":
-                        start_date = datetime.now() - timedelta(weeks=4)
-                    elif time_period == "3months":
-                        start_date = datetime.now() - timedelta(weeks=12)
+                    start_date = datetime.now() - time_periods.get(time_period, timedelta(hours=1))  # Default to 1 week if not found
 
                     buy_prices, buy_timestamps = zip(*[(p, t) for p, t in zip(buy_prices, buy_timestamps) if t >= start_date])
                     sell_prices, sell_timestamps = zip(*[(p, t) for p, t in zip(sell_prices, sell_timestamps) if t >= start_date])
@@ -2901,31 +3037,38 @@ class CurrencySystem(commands.Cog):
                         upper, middle, lower = None, None, None  # Insufficient data for Bollinger Bands
                         bb_timestamps = []
 
-                    # Create a price history chart with all indicators
-                    plt.figure(figsize=(10, 6))
-                    plt.plot(buy_timestamps, buy_prices, marker='o', linestyle='-', color='g', label='Buy Price')
-                    plt.plot(sell_timestamps, sell_prices, marker='o', linestyle='-', color='r', label='Sell Price')
-                    if rsi is not None:
-                        plt.plot(rsi_timestamps, rsi, color='orange', label=f'RSI ({rsi_period}-period)')
+                    # Create a price history chart with all indicators and a separate RSI chart
+                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), gridspec_kw={'height_ratios': [3, 1]})
+
+                    # Calculate average line
+                    average_prices = [(t, (b + s) / 2) for t, b, s in zip(buy_timestamps, buy_prices, sell_prices)]
+                    average_timestamps, average_prices = zip(*average_prices)
+
+                    # Plot the average line on the price history chart
+                    ax1.plot(average_timestamps, average_prices, linestyle='-', color='black', label='Average Price')
                     if sma is not None:
-                        plt.plot(sma_timestamps, sma, color='purple', label=f'SMA ({sma_period}-period)')
+                        ax1.plot(sma_timestamps, sma, color='purple', label=f'SMA ({sma_period}-period)')
                     if ema is not None:
-                        plt.plot(ema_timestamps, ema, color='blue', label=f'EMA ({ema_period}-period)')
+                        ax1.plot(ema_timestamps, ema, color='blue', label=f'EMA ({ema_period}-period)')
                     if upper is not None and lower is not None:
-                        plt.fill_between(bb_timestamps, upper, lower, color='lightgray', alpha=0.5, label='Bollinger Bands')
-                    plt.title(f"Price History for {stock_symbol}")
-                    plt.xlabel("Timestamp")
-                    plt.ylabel("Price")
-                    plt.grid(True)
-                    plt.legend()
+                            ax1.fill_between(bb_timestamps, upper, lower, color='lightgray', alpha=0.5, label='Bollinger Bands')
 
-                    # Format the x-axis (timestamp) for better readability
-                    ax = plt.gca()
-                    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))  # Show major ticks every month
-                    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
+                    ax1.set_title(f"Price History for {stock_symbol}")
+                    ax1.set_ylabel("Price")
+                    ax1.grid(True)
+                    ax1.legend()
+                    ax1.tick_params(axis='x', rotation=45)
 
-                    # Rotate the x-axis labels for better readability
-                    plt.xticks(rotation=45)
+                    # Plot RSI on the separate RSI chart
+                    if rsi is not None:
+                        ax2.plot(rsi_timestamps, rsi, color='orange', label=f'RSI ({rsi_period}-period)')
+                        ax2.set_title(f"RSI Chart for {stock_symbol}")
+                        ax2.set_ylabel("RSI")
+                        ax2.grid(True)
+                        ax2.legend()
+                        ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=1))  # Show major ticks every month
+                        ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
+                        ax2.tick_params(axis='x', rotation=45)
 
                     # Save the chart to a BytesIO object
                     buffer = io.BytesIO()
@@ -2952,208 +3095,20 @@ class CurrencySystem(commands.Cog):
 
                     # Send the embed as a Discord message
                     await ctx.send(embed=embed)
-                else:
-                    await ctx.send("No buy/sell transactions found for this stock.")
-                # Close the ledger database connection
-                ledger_conn.close()
-            else:
-                await ctx.send("Stock symbol not found.")
 
-            # Close the currency_system database connection
-            currency_conn.close()
+                    # Close the ledger database connection
+                    ledger_conn.close()
 
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred: {str(e)}")
 
 
-    @commands.command(name="compare_charts", help="Compare price history charts with RSI for two stocks.")
-    async def compare_charts(self, ctx, stock_symbol1, stock_symbol2):
-        try:
-            # Connect to the currency_system database
-            currency_conn = sqlite3.connect("currency_system.db")
-            currency_cursor = currency_conn.cursor()
-
-            # Check if the given stock symbols exist
-            currency_cursor.execute("SELECT symbol, price FROM stocks WHERE symbol=?", (stock_symbol1,))
-            stock1 = currency_cursor.fetchone()
-            currency_cursor.execute("SELECT symbol, price FROM stocks WHERE symbol=?", (stock_symbol2,))
-            stock2 = currency_cursor.fetchone()
-
-            if stock1 and stock2:
-                stock_symbol1, current_price1 = stock1
-                stock_symbol2, current_price2 = stock2
-
-                # Connect to the ledger database
-                ledger_conn = sqlite3.connect("p3ledger.db")
-                ledger_cursor = ledger_conn.cursor()
-
-                # Retrieve buy/sell transactions for the first stock from the ledger
-                ledger_cursor.execute("""
-                    SELECT timestamp, action, price
-                    FROM stock_transactions
-                    WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock')
-                    ORDER BY timestamp
-                """, (stock_symbol1,))
-                transactions1 = ledger_cursor.fetchall()
-
-                # Retrieve buy/sell transactions for the second stock from the ledger
-                ledger_cursor.execute("""
-                    SELECT timestamp, action, price
-                    FROM stock_transactions
-                    WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock')
-                    ORDER BY timestamp
-                """, (stock_symbol2,))
-                transactions2 = ledger_cursor.fetchall()
-
-                if transactions1 and transactions2:
-                    # Separate buy and sell transactions for the first stock
-                    buy_prices1 = []
-                    sell_prices1 = []
-
-                    for timestamp_str, action, price_str in transactions1:
-                        price = float(price_str)
-                        datetime_obj = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # Parse timestamp string
-
-                        if action == 'Buy Stock':
-                            buy_prices1.append((datetime_obj, price))
-                        elif action == 'Sell Stock':
-                            sell_prices1.append((datetime_obj, price))
-
-                    # Separate buy and sell transactions for the second stock
-                    buy_prices2 = []
-                    sell_prices2 = []
-
-                    for timestamp_str, action, price_str in transactions2:
-                        price = float(price_str)
-                        datetime_obj = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # Parse timestamp string
-
-                        if action == 'Buy Stock':
-                            buy_prices2.append((datetime_obj, price))
-                        elif action == 'Sell Stock':
-                            sell_prices2.append((datetime_obj, price))
-
-                    # Extract datetime objects and prices for buy and sell transactions for both stocks
-                    buy_timestamps1 = [entry[0] for entry in buy_prices1]
-                    buy_prices1 = [entry[1] for entry in buy_prices1]
-                    sell_timestamps1 = [entry[0] for entry in sell_prices1]
-                    sell_prices1 = [entry[1] for entry in sell_prices1]
-
-                    buy_timestamps2 = [entry[0] for entry in buy_prices2]
-                    buy_prices2 = [entry[1] for entry in buy_prices2]
-                    sell_timestamps2 = [entry[0] for entry in sell_prices2]
-                    sell_prices2 = [entry[1] for entry in sell_prices2]
-
-                    # Calculate average buy and sell prices for both stocks
-                    average_buy_price1 = sum(buy_prices1) / len(buy_prices1) if buy_prices1 else 0
-                    average_sell_price1 = sum(sell_prices1) / len(sell_prices1) if sell_prices1 else 0
-
-                    average_buy_price2 = sum(buy_prices2) / len(buy_prices2) if buy_prices2 else 0
-                    average_sell_price2 = sum(sell_prices2) / len(sell_prices2) if sell_prices2 else 0
-
-                    # Determine if the first stock is overvalued, undervalued, or fair-valued
-                    if average_sell_price1 > 0:
-                        price_ratio1 = average_buy_price1 / average_sell_price1
-                        if price_ratio1 > 1:
-                            valuation1 = "Overvalued"
-                        elif price_ratio1 < 1:
-                            valuation1 = "Undervalued"
-                        else:
-                            valuation1 = "Fair-Valued"
-                    else:
-                        valuation1 = "Fair-Valued"
-
-                    # Determine if the second stock is overvalued, undervalued, or fair-valued
-                    if average_sell_price2 > 0:
-                        price_ratio2 = average_buy_price2 / average_sell_price2
-                        if price_ratio2 > 1:
-                            valuation2 = "Overvalued"
-                        elif price_ratio2 < 1:
-                            valuation2 = "Undervalued"
-                        else:
-                            valuation2 = "Fair-Valued"
-                    else:
-                        valuation2 = "Fair-Valued"
-
-                    # Calculate RSI for both stocks
-                    rsi_period = min(14, len(buy_prices1), len(buy_prices2))  # You can adjust the period as needed
-                    if len(buy_prices1) >= rsi_period and len(buy_prices2) >= rsi_period:
-                        rsi1 = talib.RSI(np.array(buy_prices1), timeperiod=rsi_period)
-                        rsi2 = talib.RSI(np.array(buy_prices2), timeperiod=rsi_period)
-                        rsi_timestamps1 = buy_timestamps1[-len(rsi1):]  # Match RSI timestamps
-                        rsi_timestamps2 = buy_timestamps2[-len(rsi2):]  # Match RSI timestamps
-                    else:
-                        rsi1 = None  # Insufficient data for RSI
-                        rsi2 = None  # Insufficient data for RSI
-                        rsi_timestamps1 = []
-                        rsi_timestamps2 = []
-
-                    # Create a price history chart with RSI for both stocks
-                    plt.figure(figsize=(10, 6))
-                    plt.plot(buy_timestamps1, buy_prices1, marker='o', linestyle='-', color='g', label=f'{stock_symbol1} Buy Price')
-                    plt.plot(sell_timestamps1, sell_prices1, marker='o', linestyle='-', color='r', label=f'{stock_symbol1} Sell Price')
-                    if rsi1 is not None:
-                        plt.plot(rsi_timestamps1, rsi1, color='orange', label=f'{stock_symbol1} RSI ({rsi_period}-period)')
-                    plt.plot(buy_timestamps2, buy_prices2, marker='o', linestyle='-', color='b', label=f'{stock_symbol2} Buy Price')
-                    plt.plot(sell_timestamps2, sell_prices2, marker='o', linestyle='-', color='purple', label=f'{stock_symbol2} Sell Price')
-                    if rsi2 is not None:
-                        plt.plot(rsi_timestamps2, rsi2, color='pink', label=f'{stock_symbol2} RSI ({rsi_period}-period)')
-                    plt.title(f"Price History and RSI Comparison")
-                    plt.xlabel("Timestamp")
-                    plt.ylabel("Price / RSI")
-                    plt.grid(True)
-                    plt.legend()
-
-                    # Format the x-axis (timestamp) for better readability
-                    ax = plt.gca()
-                    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))  # Show major ticks every month
-                    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
-
-                    # Rotate the x-axis labels for better readability
-                    plt.xticks(rotation=45)
-
-                    # Save the chart to a BytesIO object
-                    buffer = io.BytesIO()
-                    plt.savefig(buffer, format='png')
-                    buffer.seek(0)
-
-                    # Send the chart as a Discord message
-                    file = discord.File(buffer, filename='chart.png')
-                    await ctx.send(file=file)
-
-                    # Create an embed with information
-                    embed = discord.Embed(title=f"Stock Comparison Information")
-                    embed.add_field(name=f"{stock_symbol1} Current Price", value=f"{current_price1:.2f}")
-                    embed.add_field(name=f"{stock_symbol1} Average Buy Price", value=f"{average_buy_price1:.2f}")
-                    embed.add_field(name=f"{stock_symbol1} Average Sell Price", value=f"{average_sell_price1:.2f}")
-                    embed.add_field(name=f"{stock_symbol1} Valuation", value=valuation1)
-                    if rsi1 is not None:
-                        embed.add_field(name=f"{stock_symbol1} RSI", value=f"{rsi1[-1]:.2f}")
-                    embed.add_field(name=f"{stock_symbol2} Current Price", value=f"{current_price2:.2f}")
-                    embed.add_field(name=f"{stock_symbol2} Average Buy Price", value=f"{average_buy_price2:.2f}")
-                    embed.add_field(name=f"{stock_symbol2} Average Sell Price", value=f"{average_sell_price2:.2f}")
-                    embed.add_field(name=f"{stock_symbol2} Valuation", value=valuation2)
-                    if rsi2 is not None:
-                        embed.add_field(name=f"{stock_symbol2} RSI", value=f"{rsi2[-1]:.2f}")
-                    embed.set_footer(text="Data may not be real-time")
-
-                    # Send the embed as a Discord message
-                    await ctx.send(embed=embed)
-                else:
-                    await ctx.send("No buy/sell transactions found for one or both of the stocks.")
-                # Close the ledger database connection
-                ledger_conn.close()
-            else:
-                await ctx.send("One or both stock symbols not found.")
-
-            # Close the currency_system database connection
-            currency_conn.close()
-
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred: {str(e)}")
 
 
 
 # Stock Market
+
+
 # Buy Stock
     @commands.command(name="buy", aliases=["buy_stock"], help="Buy stocks. Provide the stock name and amount.")
     async def buy(self, ctx, stock_name: str, amount: int):
@@ -3161,6 +3116,10 @@ class CurrencySystem(commands.Cog):
         user_id = ctx.author.id
 
         cursor = self.conn.cursor()
+
+        if amount == 0:
+            await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
+            return
 
         # Retrieve stock information
         cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
@@ -3204,6 +3163,8 @@ class CurrencySystem(commands.Cog):
         cursor.execute("SELECT user_id, price, quantity FROM limit_orders WHERE symbol=? ORDER BY price ASC, quantity ASC", (stock_name,))
         orders = cursor.fetchall()
 
+        total_amount_bought = 0  # Track the total amount bought to check against the requested amount
+
         for order in orders:
             seller_id, order_price, order_quantity = order
 
@@ -3213,47 +3174,111 @@ class CurrencySystem(commands.Cog):
 
                 if amount >= order_quantity:
                     # Execute the order from the order book
-                    await self.buy_order_book(ctx, stock_name, order_quantity)
 
-                    # Update the remaining amount to buy
-                    amount -= order_quantity
+                    # Update buyer's balance
+                    cursor.execute("SELECT balance FROM users WHERE user_id=?", (buyer_id,))
+                    buyer_balance = cursor.fetchone()['balance']
+
+                    total_cost = order_price * order_quantity  # Calculate total cost for the requested amount
+
+                    if total_cost > buyer_balance:
+                        await ctx.send(f"{ctx.author.mention}, you do not have sufficient balance to buy these stocks.")
+                        return
+
+                    # Update buyer's stocks
+                    cursor.execute("""
+                        INSERT INTO user_stocks (user_id, symbol, amount)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(user_id, symbol) DO UPDATE SET amount = amount + ?
+                    """, (buyer_id, stock_name, order_quantity, order_quantity))
+
+                    # Update seller's balance
+                    cursor.execute("SELECT balance FROM users WHERE user_id=?", (seller_id,))
+                    seller_balance = cursor.fetchone()['balance']
+                    new_seller_balance = seller_balance + total_cost
+                    update_user_balance(self.conn, seller_id, new_seller_balance)
+
+                    # Update order book
+                    new_quantity = order_quantity - amount
+                    if new_quantity == 0:
+                        cursor.execute("DELETE FROM limit_orders WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
+                                       (seller_id, stock_name, order_price, order_quantity))
+                    else:
+                        cursor.execute("UPDATE limit_orders SET quantity=? WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
+                                       (new_quantity, seller_id, stock_name, order_price, order_quantity))
+
+                    total_amount_bought += order_quantity  # Update the total amount bought
+
+                    self.conn.commit()
+
+                    formatted_buyer_balance = f"{buyer_balance:.2f}"
+                    await log_transaction(ledger_conn, ctx, "Buy Order Book", stock_name, order_quantity, total_cost, total_cost, buyer_balance, formatted_buyer_balance, order_price)
+
+                    # Notify the seller in DM
+                    seller = self.bot.get_user(seller_id)
+                    if seller:
+                        try:
+                            await seller.send(f"Your sell order for {order_quantity} stocks of '{stock_name}' at {order_price:.2f} each has been filled. "
+                                              f"Total: {total_cost:.2f} µPPN. New balance: {new_seller_balance:.2f} µPPN.")
+                        except discord.errors.Forbidden:
+                            print(f"Unable to send a message to the seller with ID {seller_id}. They may have blocked DMs or disabled them.")
+
+                    await ctx.send(f"{ctx.author.mention}, you have bought {order_quantity} stocks of '{stock_name}' from the order book. Your new balance is: {formatted_buyer_balance} µPPN.")
+
+                    amount -= order_quantity  # Subtract the bought quantity from the requested amount
 
                 else:
                     # Execute a partial order from the order book
-                    await self.buy_order_book(ctx, stock_name, amount)
-                    amount = 0  # No remaining amount to buy
 
-                # Update the buyer's balance and stocks
-                new_balance_order = get_user_balance(self.conn, buyer_id) - Decimal(total_cost_order)
-                update_user_balance(self.conn, buyer_id, new_balance_order)
+                    # Update buyer's balance
+                    cursor.execute("SELECT balance FROM users WHERE user_id=?", (buyer_id,))
+                    buyer_balance = cursor.fetchone()['balance']
 
-                # Update the seller's balance
-                cursor.execute("SELECT balance FROM users WHERE user_id=?", (seller_id,))
-                seller_balance_order = cursor.fetchone()['balance']
-                new_seller_balance_order = seller_balance_order + total_cost_order
-                update_user_balance(self.conn, seller_id, new_seller_balance_order)
+                    total_cost = order_price * amount  # Calculate total cost for the requested amount
 
-                # Update order book
-                new_quantity_order = order_quantity - amount
-                if new_quantity_order == 0:
+                    if total_cost > buyer_balance:
+                        await ctx.send(f"{ctx.author.mention}, you do not have sufficient balance to buy these stocks.")
+                        return
+
+                    # Update buyer's stocks
+                    cursor.execute("""
+                        INSERT INTO user_stocks (user_id, symbol, amount)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(user_id, symbol) DO UPDATE SET amount = amount + ?
+                    """, (buyer_id, stock_name, amount, amount))
+
+                    # Update seller's balance
+                    cursor.execute("SELECT balance FROM users WHERE user_id=?", (seller_id,))
+                    seller_balance = cursor.fetchone()['balance']
+                    new_seller_balance = seller_balance + total_cost
+                    update_user_balance(self.conn, seller_id, new_seller_balance)
+
+                    # Update order book
                     cursor.execute("DELETE FROM limit_orders WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
                                    (seller_id, stock_name, order_price, order_quantity))
-                else:
-                    cursor.execute("UPDATE limit_orders SET quantity=? WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
-                                   (new_quantity_order, seller_id, stock_name, order_price, order_quantity))
 
-                self.conn.commit()
+                    total_amount_bought += amount  # Update the total amount bought
 
-                # Notify the seller in DM
-                seller = self.bot.get_user(seller_id)
-                if seller:
-                    await seller.send(f"Your sell order for {order_quantity} stocks of '{stock_name}' at {order_price:.2f} each has been filled. "
-                                      f"Total: {total_cost_order:.2f} µPPN. New balance: {new_seller_balance_order:.2f} µPPN.")
+                    self.conn.commit()
 
-                break  # Exit the loop after processing the order
+                    formatted_buyer_balance = f"{buyer_balance:.2f}"
+                    await log_transaction(ledger_conn, ctx, "Buy Order Book", stock_name, amount, total_cost, total_cost, buyer_balance, formatted_buyer_balance, order_price)
+
+                    # Notify the seller in DM
+                    seller = self.bot.get_user(seller_id)
+                    if seller:
+                        try:
+                            await seller.send(f"Your sell order for {amount} stocks of '{stock_name}' at {order_price:.2f} each has been partially filled. "
+                                              f"Total: {total_cost:.2f} µPPN. New balance: {new_seller_balance:.2f} µPPN.")
+                        except discord.errors.Forbidden:
+                            print(f"Unable to send a message to the seller with ID {seller_id}. They may have blocked DMs or disabled them.")
+
+                    await ctx.send(f"{ctx.author.mention}, you have bought {amount} stocks of '{stock_name}' from the order book. Your new balance is: {formatted_buyer_balance} µPPN.")
+
+                    break  # Exit the loop after processing the order
 
         # Proceed with the market buy if there's still remaining amount to buy
-        if amount > 0:
+        if amount > 0 and total_amount_bought == 0:
             cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
             stock = cursor.fetchone()
             if stock is None:
@@ -3338,14 +3363,14 @@ class CurrencySystem(commands.Cog):
             # Calculate and update the team's profit/loss
             calculate_team_profit_loss(self.conn, team_id)
 
-
         decay_other_stocks(self.conn, stock_name)
         await self.increase_price(ctx, stock_name, amount)
-        await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, price)
         self.conn.commit()
-
-#        await update_market_etf_price(bot, conn)
-        await ctx.send(f"{ctx.author.mention}, you have bought {amount} {stock_name} stocks. Your new balance is: {new_balance} µPPN.")
+        if amount == 0:
+            print(f'Fix for 0 amount buy after order book')
+        else:
+            await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, price)
+            await ctx.send(f"{ctx.author.mention}, you have bought {amount} {stock_name} stocks. Your new balance is: {new_balance} µPPN.")
 
 
 
@@ -3353,6 +3378,7 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="sell", aliases=["sell_stock"], help="Sell stocks. Provide the stock name and amount.")
     async def sell(self, ctx, stock_name: str, amount: int):
         user_id = ctx.author.id
+        member = ctx.guild.get_member(user_id)
 
         await ctx.message.delete()
         cursor = self.conn.cursor()
@@ -3372,6 +3398,8 @@ class CurrencySystem(commands.Cog):
         price = Decimal(stock[2])
         earnings = price * Decimal(amount)
         tax_percentage = get_tax_percentage(amount, earnings)  # Custom function to determine the tax percentage based on quantity and earnings
+        if has_role(member, bronze_pass) and tax_rate >= 0.15:
+            tax_percentage -= role_discount
         fee = earnings * Decimal(tax_percentage)
         total_earnings = earnings - fee
 
@@ -3384,35 +3412,90 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, an error occurred while updating the user balance. Error: {str(e)}")
             return
 
-        cursor.execute("""
-            UPDATE user_stocks
-            SET amount = amount - ?
-            WHERE user_id = ? AND symbol = ?
-        """, (amount, user_id, stock_name))
+        # Check for buy orders in the order book
+        cursor.execute("SELECT user_id, price, quantity FROM limit_orders WHERE symbol=? ORDER BY price DESC, quantity DESC", (stock_name,))
+        orders = cursor.fetchall()
 
-        cursor.execute("""
-            UPDATE stocks
-            SET available = available + ?
-            WHERE symbol = ?
-        """, (amount, stock_name))
-        decay_other_stocks(self.conn, stock_name)
+        for order in orders:
+            buyer_id, order_price, order_quantity = order
 
-        # Check if the user is part of a trading team
-        cursor.execute("SELECT team_id FROM team_members WHERE user_id=?", (user_id,))
-        team_record = cursor.fetchone()
-        if team_record:
-            team_id = team_record[0]
-            # Record the team's transaction
-            record_team_transaction(self.conn, team_id, stock_name, amount, price, "sell")
-            # Calculate and update the team's profit/loss
-            calculate_team_profit_loss(self.conn, team_id)
+            if order_price >= price:
+                # Execute the order from the order book
 
-        await self.decrease_price(ctx, stock_name, amount)
-        await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price)
-        self.conn.commit()
+                # Update seller's balance
+                cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
+                seller_balance = cursor.fetchone()['balance']
+                new_seller_balance = seller_balance + total_earnings
+                update_user_balance(self.conn, user_id, new_seller_balance)
 
-#        await update_market_etf_price(bot, conn)
-        await ctx.send(f"{ctx.author.mention}, you have sold {amount} {stock_name} stocks. Your new balance is: {new_balance} µPPN.")
+                # Update buyer's stocks
+                cursor.execute("""
+                    INSERT INTO user_stocks (user_id, symbol, amount)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(user_id, symbol) DO UPDATE SET amount = amount + ?
+                """, (buyer_id, stock_name, order_quantity, order_quantity))
+
+                # Update order book
+                new_quantity = order_quantity - amount
+                if new_quantity == 0:
+                    cursor.execute("DELETE FROM limit_orders WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
+                                   (buyer_id, stock_name, order_price, order_quantity))
+                else:
+                    cursor.execute("UPDATE limit_orders SET quantity=? WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
+                                   (new_quantity, buyer_id, stock_name, order_price, order_quantity))
+
+                self.conn.commit()
+
+                formatted_seller_balance = f"{new_seller_balance:.2f}"
+                await log_transaction(ledger_conn, ctx, "Sell Order Book", stock_name, order_quantity, total_earnings, total_earnings, seller_balance, formatted_seller_balance, price)
+
+                # Notify the buyer in DM
+                buyer = self.bot.get_user(buyer_id)
+                if buyer:
+                    try:
+                        await buyer.send(f"Your buy order for {order_quantity} stocks of '{stock_name}' at {order_price:.2f} each has been filled. "
+                                         f"Total: {total_earnings:.2f} µPPN. New balance: {formatted_seller_balance} µPPN.")
+                    except discord.errors.Forbidden:
+                        print(f"Unable to send a message to the buyer with ID {buyer_id}. They may have blocked DMs or disabled them.")
+
+                await ctx.send(f"{ctx.author.mention}, you have sold {amount} stocks of '{stock_name}' to a buy order from the order book. Your new balance is: {formatted_seller_balance} µPPN.")
+
+                amount -= order_quantity  # Subtract the sold quantity from the requested amount
+
+                if amount == 0:
+                    # If the requested amount is fully sold, exit the loop
+                    break
+
+        # Proceed with the sell order if there's still remaining amount to sell
+        if amount > 0:
+            cursor.execute("""
+                UPDATE user_stocks
+                SET amount = amount - ?
+                WHERE user_id = ? AND symbol = ?
+            """, (amount, user_id, stock_name))
+
+            cursor.execute("""
+                UPDATE stocks
+                SET available = available + ?
+                WHERE symbol = ?
+            """, (amount, stock_name))
+            decay_other_stocks(self.conn, stock_name)
+
+            # Check if the user is part of a trading team
+            cursor.execute("SELECT team_id FROM team_members WHERE user_id=?", (user_id,))
+            team_record = cursor.fetchone()
+            if team_record:
+                team_id = team_record[0]
+                # Record the team's transaction
+                record_team_transaction(self.conn, team_id, stock_name, amount, price, "sell")
+                # Calculate and update the team's profit/loss
+                calculate_team_profit_loss(self.conn, team_id)
+
+            await self.decrease_price(ctx, stock_name, amount)
+            await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price)
+            self.conn.commit()
+
+            await ctx.send(f"{ctx.author.mention}, you have sold {amount} stocks of '{stock_name}'. Your new balance is: {new_balance} µPPN.")
 
 
 # Buy/Sell Multi
@@ -4010,12 +4093,19 @@ class CurrencySystem(commands.Cog):
         await ctx.send(embed=embed)
 
 
+# Buy stocks from the order book
     @commands.command(name="buy_order_book", help="Buy stocks from the order book.")
+    @is_allowed_user(930513222820331590)
     async def buy_order_book(self, ctx, symbol: str, amount: int):
         buyer_id = ctx.author.id
         await ctx.message.delete()
 
         cursor = self.conn.cursor()
+
+
+        if amount == 0:
+            await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
+            return
 
         # Check if the symbol is valid
         cursor.execute("SELECT user_id, price, quantity FROM limit_orders WHERE symbol=? ORDER BY price ASC, quantity ASC", (symbol,))
@@ -4038,6 +4128,22 @@ class CurrencySystem(commands.Cog):
 
             if total_cost > buyer_balance:
                 await ctx.send(f"{ctx.author.mention}, you do not have sufficient balance to buy these stocks.")
+                return
+
+            # Check if the daily stock limit is reached
+            cursor.execute("""
+                SELECT SUM(amount)
+                FROM user_daily_buys
+                WHERE user_id=? AND symbol=? AND DATE(timestamp)=DATE('now')
+            """, (buyer_id, symbol))
+
+            daily_bought_record = cursor.fetchone()
+            daily_bought = daily_bought_record[0] if daily_bought_record and daily_bought_record[0] is not None else 0
+
+            if daily_bought + amount > dStockLimit:
+                remaining_amount = dStockLimit - daily_bought
+                await ctx.send(f"{ctx.author.mention}, you have reached your daily buy limit for {symbol} stocks. "
+                               f"You can buy {remaining_amount} more after 24 hours.")
                 return
 
             # Check if there is enough quantity in the order
@@ -4074,13 +4180,17 @@ class CurrencySystem(commands.Cog):
 
                 formatted_buyer_balance = f"{new_buyer_balance:.2f}"
                 await log_transaction(ledger_conn, ctx, "Buy Order Book", symbol, amount, total_cost, total_cost, buyer_balance, new_buyer_balance, order_price)
-                await ctx.send(f"{ctx.author.mention}, you have bought {amount} stocks of '{symbol}' from the order book. Your new balance is: {formatted_buyer_balance} µPPN.")
 
                 # Notify the seller in DM
                 seller = self.bot.get_user(seller_id)
                 if seller:
-                    await seller.send(f"Your sell order for {amount} stocks of '{symbol}' at {order_price:.2f} each has been filled. "
-                                      f"Total: {total_cost:.2f} µPPN. New balance: {new_seller_balance:.2f} µPPN.")
+                    try:
+                        await seller.send(f"Your sell order for {amount} stocks of '{symbol}' at {order_price:.2f} each has been filled. "
+                                          f"Total: {total_cost:.2f} µPPN. New balance: {new_seller_balance:.2f} µPPN.")
+                    except discord.errors.Forbidden:
+                        print(f"Unable to send a message to the seller with ID {seller_id}. They may have blocked DMs or disabled them.")
+
+                await ctx.send(f"{ctx.author.mention}, you have bought {amount} stocks of '{symbol}' from the order book. Your new balance is: {formatted_buyer_balance} µPPN.")
 
                 break  # Exit the loop after processing the order
             else:
@@ -4116,7 +4226,6 @@ class CurrencySystem(commands.Cog):
         if total_amount_bought < amount:
             await ctx.send(f"{ctx.author.mention}, your order could not be fulfilled completely. "
                            f"Only {total_amount_bought} stocks of '{symbol}' could be bought.")
-
 
 
 
@@ -4299,7 +4408,7 @@ class CurrencySystem(commands.Cog):
 
         embed = discord.Embed(
             title="Treasure Chest",
-            description=f"React with 💰 to claim your potential reward of 5m to 500m shares of {stock_symbol}! 🎉",
+            description=f"React with 💰 to claim your potential reward of {treasureMin} to {treasureMax} shares of {stock_symbol}! 🎉",
             color=0xFFD700,
         )
         message = await ctx.send(embed=embed)
@@ -5279,6 +5388,7 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="sell_etf", help="Sell an ETF. Provide the ETF ID and quantity.")
     async def sell_etf(self, ctx, etf_id: int, quantity: int):
         user_id = ctx.author.id
+        member = ctx.guild.get_member(user_id)
         cursor = self.conn.cursor()
 
         await ctx.message.delete()
@@ -5302,6 +5412,8 @@ class CurrencySystem(commands.Cog):
 
         # Calculate the tax amount based on dynamic factors
         tax_percentage = get_tax_percentage(quantity, total_sale_amount)  # Custom function to determine the tax percentage based on quantity and total_sale_amount
+        if has_role(member, bronze_pass) and tax_rate >= 0.15:
+            tax_percentage -= role_discount
         fee = total_sale_amount * Decimal(tax_percentage)
         total_sale_amount_with_tax = total_sale_amount - fee
 
@@ -5511,6 +5623,50 @@ class CurrencySystem(commands.Cog):
             p3addr_conn.close()
             currency_conn.close()
 
+    @commands.command(name="reset_stock_limit_all", help="Reset a user's daily stock buy limit based on P3 address.")
+    @is_allowed_user(930513222820331590, PBot)
+    async def reset_stock_limit(self, ctx, target_address: str):
+        # Connect to the P3addr.db database
+        p3addr_conn = sqlite3.connect("P3addr.db")
+
+        # Get the user_id associated with the target address
+        user_id = get_user_id(p3addr_conn, target_address)
+
+        if not user_id:
+            await ctx.send("Invalid or unknown P3 address.")
+            return
+
+        # Connect to the currency_system database
+        currency_conn = sqlite3.connect("currency_system.db")
+        cursor = currency_conn.cursor()
+
+        try:
+            # Check if the user has any daily stock buy records
+            cursor.execute("""
+                SELECT *
+                FROM user_daily_buys
+                WHERE user_id=? AND timestamp >= date('now', '-1 day')
+            """, (user_id,))
+            stock_limit_records = cursor.fetchall()
+
+            if stock_limit_records:
+                # Reset all daily stock buy records for the user
+                cursor.execute("""
+                    DELETE FROM user_daily_buys
+                    WHERE user_id=?
+                """, (user_id,))
+                currency_conn.commit()
+
+                await ctx.send(f"Successfully reset daily stock buy limit for the user with P3 address {target_address}.")
+            else:
+                await ctx.send("This user did not reach the daily stock buy limit for any stocks yet.")
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
+        finally:
+            # Close the database connections
+            p3addr_conn.close()
+            currency_conn.close()
+
 
     @commands.command(name="reset_burn_limit", help="Reset a user's daily burn stock limit based on P3 address.")
     @is_allowed_user(930513222820331590, PBot)
@@ -5647,7 +5803,7 @@ class CurrencySystem(commands.Cog):
 
 # Lottery Tools
 
-    @commands.command(name="draw_winner", help="Draw a winner for the raffle.")
+    @commands.command(name="draw_winner", help="🎉 Draw a winner for the raffle! 🎉")
     @is_allowed_user(930513222820331590, PBot)
     async def draw_winner(self, ctx):
         cursor = self.conn.cursor()
@@ -5667,17 +5823,18 @@ class CurrencySystem(commands.Cog):
             if accumulated_tickets >= winner_ticket:
                 winner = await self.bot.fetch_user(user_id)
                 if winner:
-                    channel = ctx.guild.get_channel(1087743565016346634)
+                    channel = ctx.guild.get_channel(1162447728190693466)
                     # Add a countdown before announcing the winner
-                    count = 5
-                    message = await ctx.send(f"Drawing winner in {count}...")
+                    count = 10
+                    message = await ctx.send(f"🎉 Drawing winner in {count}... 🎉")
                     for i in range(count, 0, -1):
-                        await message.edit(content=f"Drawing winner in {i}...")
+                        await message.edit(content=f"🎉 Drawing winner in {i}... 🎉")
                         await asyncio.sleep(1)
-                    await ctx.send(f"The winner is {winner.mention}! Congratulations! Please head over to {channel.name} to claim your prize.")
+                    await ctx.send(f"🎉 The winner is {winner.mention}! Congratulations! 🎉 Please head over to {channel.mention} to claim your prize.")
                 else:
-                    await ctx.send(f"Error..Report..{channel.name}")
+                    await ctx.send(f"⚠️ Error.. Report to {channel.mention} ⚠️")
                 break
+
 
     @commands.command(name="clear_tickets")
     @is_allowed_user(930513222820331590, PBot)
@@ -5687,22 +5844,6 @@ class CurrencySystem(commands.Cog):
         self.conn.commit()
 
         await ctx.send(f"All raffle tickets have been deleted.")
-
-
-    @commands.command(name="give_tickets")
-    @is_allowed_user(930513222820331590, PBot)
-    async def give_tickets(self, ctx, user: discord.Member, amount: int):
-        if quantity < 1:
-            await ctx.send("Quantity must be at least 1.")
-            return
-
-        ticketBal = await get_ticket_data(self.conn, user.id)
-        total_tickets = sum(quantity for _, quantity in ticketBal)
-        timestamp = int(time.time())
-        finalAmount = amount + total_tickets
-        await update_ticket_data(self.conn, user.id, finalAmount, timestamp)
-
-        await ctx.send(f"Gave {quantity} raffle ticket(s) to {user.mention}.")
 
 
 
@@ -5979,6 +6120,7 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="sell_item", help="Sell an item from your inventory.")
     async def sell_item(self, ctx, item_name: str, quantity: int):
         user_id = ctx.author.id
+        member = ctx.guild.get_member(user_id)
         cursor = self.conn.cursor()
 
         # Check if the item exists in the marketplace
@@ -6003,6 +6145,8 @@ class CurrencySystem(commands.Cog):
         total_sale_amount = Decimal(item_price) * Decimal(quantity)
         # Calculate the tax amount based on dynamic factors
         tax_percentage = get_tax_percentage(quantity, total_sale_amount)  # Custom function to determine the tax percentage based on quantity and cost
+        if has_role(member, bronze_pass) and tax_rate >= 0.15:
+            tax_percentage -= role_discount
         fee = total_sale_amount * Decimal(tax_percentage)
         total_sale_amount = total_sale_amount - fee
         total_cost = total_sale_amount
@@ -6876,7 +7020,7 @@ class CurrencySystem(commands.Cog):
             return
 
         # Check the user's burn history
-        if not can_burn_stocks(cursor, user_id):
+        if not can_burn_stocks(ctx, cursor, user_id):
             await ctx.send("You have reached the daily limit(5) for stock burns. Please wait until tomorrow.")
             return
 
@@ -7114,6 +7258,64 @@ class CurrencySystem(commands.Cog):
             print(f"Error getting file lines for {filename}: {e}")
             return "Error"
 
+
+    @commands.command(name="job", help="Work and earn rewards every four hours!")
+    async def job(self, ctx):
+        user_id = ctx.author.id
+        member = ctx.guild.get_member(user_id)
+        cooldown_key = f"job_cooldown:{user_id}"
+
+        if has_role(member, bronze_pass) or has_role(member, 1161679929163915325):
+            # Check if the user is on cooldown
+            last_job_time_str = self.last_job_times.get(user_id)
+            if last_job_time_str:
+                last_job_time = last_job_time_str
+                cooldown_time = timedelta(hours=4)
+                remaining_cooldown = last_job_time + cooldown_time - datetime.utcnow()
+
+                if remaining_cooldown.total_seconds() > 0:
+                    await ctx.send(f"You can work again in {remaining_cooldown}.")
+                    return
+
+            # Fetch the list of available stocks
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT symbol FROM stocks WHERE available > 0")
+            available_stocks = [stock['symbol'] for stock in cursor.fetchall()]
+
+            if not available_stocks:
+                await ctx.send("No stocks are available for rewards at the moment. Try again later.")
+                return
+
+            # Reward the user
+            if random.choice([True, False]):  # 50% chance of not getting any reward
+                tokens_reward = random.randint(100, 100000000)
+                stocks_reward_symbol = random.choice(available_stocks)
+                stocks_reward_amount = random.randint(1, 10000000)
+
+                # Update user balance
+                current_balance = get_user_balance(self.conn, user_id)
+                new_balance = current_balance + tokens_reward
+                update_user_balance(self.conn, user_id, new_balance)
+
+                # Update user stocks
+                cursor.execute("UPDATE stocks SET available = available - ? WHERE symbol=?", (stocks_reward_amount, stocks_reward_symbol))
+                cursor.execute("INSERT INTO user_stocks (user_id, symbol, amount) VALUES (?, ?, ?) ON CONFLICT(user_id, symbol) DO UPDATE SET amount = amount + ?",
+                               (user_id, stocks_reward_symbol, stocks_reward_amount, stocks_reward_amount))
+
+                # Log the transfer
+                await log_transfer(ledger_conn, ctx, self.bot.user, user_id, user_id, tokens_reward)
+                await log_stock_transfer(ledger_conn, ctx, self.bot.user, ctx.author, stocks_reward_symbol, stocks_reward_amount)
+
+                message = f"🛠️ You've worked hard and earned {tokens_reward} µPPN and {stocks_reward_amount} shares of {stocks_reward_symbol}! 🚀"
+            else:
+                message = "😴 You worked, but it seems luck wasn't on your side this time. Try again later!"
+
+            # Set the cooldown for the user
+            self.last_job_times[user_id] = datetime.utcnow()
+
+            await ctx.send(message)
+        else:
+            await ctx.send(f'Must have at least the Bronze Pass to use this command, check out the Discord Store Page to Purchase')
 
 async def setup(bot):
     await bot.add_cog(CurrencySystem(bot))
