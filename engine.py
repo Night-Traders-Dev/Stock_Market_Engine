@@ -52,13 +52,15 @@ sellPressureMin = 0.00002
 sellPressureMax = 0.00005
 buyPressureMin = 0.0000015
 buyPressureMax = 0.0000275
-stockDecayValue = 0.00035 #0.00035 standard
+stockDecayValue = 0.00065 #0.00035 standard
 decayMin = 0.01
 resetµPPN = 100
 dailyMin = 10000
 dailyMax = 50000
 ticketPrice = 100
 maxTax = 0.50
+minBet = 10000
+maxBet = 500000000
 last_buy_time = {}
 last_sell_time = {}
 
@@ -1250,14 +1252,14 @@ async def send_etfs_embed(ctx, etfs_data):
 def update_user_balance(conn, user_id, new_balance):
     try:
         if not isinstance(user_id, int) or new_balance is None:
-            raise ValueError(f"Invalid user_id or new_balance value. user_id: {user_id}, new_balance: {new_balance}")
+            raise ValueError(f"Invalid user_id or new_balance value. user_id: {user_id}, new_balance: {new_balance:,.2f}")
 
         # Ensure that new_balance is a Decimal
         new_balance = Decimal(new_balance)
 
         # Check if new_balance exceeds the maximum allowed
         if user_id != PBot and user_id != jacob and new_balance > MAX_BALANCE:
-            raise ValueError(f"User balance exceeds the maximum allowed balance of {MAX_BALANCE} µPPN.")
+            raise ValueError(f"User balance exceeds the maximum allowed balance of {MAX_BALANCE:,.2f} µPPN.")
 
 
         cursor = conn.cursor()
@@ -1348,10 +1350,10 @@ def get_tax_percentage(quantity: int, cost: Decimal) -> float:
 
     # Check if today is Monday
     if datetime.now().weekday() == 0:  # Monday is 0, Tuesday is 1, etc.
-        max_tax_rate = 0.10  # Set maximum tax to 10% on Mondays
+        max_tax_rate = 0.15  # Set maximum tax to 10% on Mondays
     else:
         # Formulaic approach for max_tax_rate based on logarithmic progression
-        max_tax_rate = 0.5 / (1 + math.exp(float(cost) / -500000000))
+        max_tax_rate = 0.45 / (1 + math.exp(float(cost) / -500000000))
 
     # Formulaic approach (based on logarithmic progression)
     quantity_multiplier = 0.001 * (quantity ** 0.5)
@@ -1551,17 +1553,17 @@ class CurrencySystem(commands.Cog):
                 )
                 embed.add_field(
                     name="Old Price",
-                    value=f"${old_price:.2f}",
+                    value=f"${old_price:,.2f}",
                     inline=True
                 )
                 embed.add_field(
                     name="New Price",
-                    value=f"${etf_6_value:.2f}",
+                    value=f"${etf_6_value:,.2f}",
                     inline=True
                 )
                 embed.add_field(
                     name="Percentage Change",
-                    value=f"{percentage_change:.2f}%",
+                    value=f"{percentage_change:,.2f}%",
                     inline=False
                 )
 
@@ -1625,15 +1627,15 @@ class CurrencySystem(commands.Cog):
                 self.current_prices_stocks[symbol] = current_price
 
                 if abs(price_change_percentage) >= 25:
-                    print(f"Symbol: {symbol}, Current Price: {current_price:.2f}, Old Price: {old_price:.2f}, Change: {price_change_percentage:.2f}%")
+                    print(f"Symbol: {symbol}, Current Price: {current_price:,.2f}, Old Price: {old_price:,.2f}, Change: {price_change_percentage:,.2f}%")
                     # Create an embed with information about the price change
                     embed = discord.Embed(
                         title=f"Price Change Alert for {symbol}",
                         color=discord.Color.red() if price_change_percentage < 0 else discord.Color.green()
                     )
-                    embed.add_field(name="Current Price", value=f"{current_price:.2f}")
-                    embed.add_field(name="Old Price", value=f"{old_price:.2f}")
-                    embed.add_field(name="Change", value=f"{price_change_percentage:.2f}%")
+                    embed.add_field(name="Current Price", value=f"{current_price:,.2f}")
+                    embed.add_field(name="Old Price", value=f"{old_price:,.2f}")
+                    embed.add_field(name="Change", value=f"{price_change_percentage:,.2f}%")
 
                     # Send the embed to the channel
                     await channel.send(embed=embed)
@@ -1663,15 +1665,15 @@ class CurrencySystem(commands.Cog):
                 self.current_prices_etfs[etf_id] = etf_value
 
                 if abs(etf_value_change_percentage) >= 10:
-                    print(f"ETF ID: {etf_id}, Current Value: {etf_value:.2f}, Old Value: {old_etf_value:.2f}, Change: {etf_value_change_percentage:.2f}%")
+                    print(f"ETF ID: {etf_id}, Current Value: {etf_value:,.2f}, Old Value: {old_etf_value:,.2f}, Change: {etf_value_change_percentage:,.2f}%")
                     # Create an embed with information about the value change
                     embed = discord.Embed(
                         title=f"Value Change Alert for ETF {etf_name}",
                         color=discord.Color.red() if etf_value_change_percentage < 0 else discord.Color.green()
                     )
-                    embed.add_field(name="Current Value", value=f"{etf_value:.2f}")
-                    embed.add_field(name="Old Value", value=f"{old_etf_value:.2f}")
-                    embed.add_field(name="Change", value=f"{etf_value_change_percentage:.2f}%")
+                    embed.add_field(name="Current Value", value=f"{etf_value:,.2f}")
+                    embed.add_field(name="Old Value", value=f"{old_etf_value:,.2f}")
+                    embed.add_field(name="Change", value=f"{etf_value_change_percentage:,.2f}%")
 
                     # Send the embed to the channel
                     await channel.send(embed=embed)
@@ -1773,11 +1775,11 @@ class CurrencySystem(commands.Cog):
 
                 # Add fields for the top 5 highest price stocks
                 for i, (symbol, price, available) in enumerate(top_high_stocks, start=1):
-                    embed.add_field(name=f"High #{i}: {symbol}", value=f"Price: {price:,.2f} µPPN\nAvailable: {available}", inline=False)
+                    embed.add_field(name=f"High #{i}: {symbol}", value=f"Price: {price:,.2f} µPPN\nAvailable: {available:,}", inline=False)
 
                 # Add fields for the top 5 lowest price stocks
                 for i, (symbol, price, available) in enumerate(top_low_stocks, start=1):
-                    embed.add_field(name=f"Low #{i}: {symbol}", value=f"Price: {price:,.2f} µPPN\nAvailable: {available}", inline=False)
+                    embed.add_field(name=f"Low #{i}: {symbol}", value=f"Price: {price:,.2f} µPPN\nAvailable: {available:,}", inline=False)
 
                 # Find and edit the existing message by ID
                 existing_message = await channel.fetch_message(message_id)
@@ -2104,15 +2106,15 @@ class CurrencySystem(commands.Cog):
 
     def format_value(self, value):
         if value >= 10 ** 15:
-            return f"{value / 10 ** 15:.2f}Q"
+            return f"{value / 10 ** 15:,.2f}Q"
         elif value >= 10 ** 12:
-            return f"{value / 10 ** 12:.2f}T"
+            return f"{value / 10 ** 12:,.2f}T"
         elif value >= 10 ** 9:
-            return f"{value / 10 ** 9:.2f}B"
+            return f"{value / 10 ** 9:,.2f}B"
         elif value >= 10 ** 6:
-            return f"{value / 10 ** 6:.2f}M"
+            return f"{value / 10 ** 6:,.2f}M"
         else:
-            return f"{value:.2f}"
+            return f"{value:,.2f}"
 ## End Wealth Functions
 
 
@@ -2281,7 +2283,7 @@ class CurrencySystem(commands.Cog):
         await log_transfer(ledger_conn, ctx, ctx.author.name, recipient.name, recipient.id, amount)
 
 
-        await ctx.send(f"{ctx.author.mention}, you have successfully given {amount} µPPN to {recipient.mention}.")
+        await ctx.send(f"{ctx.author.mention}, you have successfully given {amount:,.2f} µPPN to {recipient.mention}.")
 
     @commands.command(name="give_addr", help="Give a specified amount of µPPN to another user.")
     async def give_addr(self, ctx, target, amount: int):
@@ -2321,7 +2323,7 @@ class CurrencySystem(commands.Cog):
         # Log the transfer
         await log_transfer(ledger_conn, ctx, ctx.author.name, target, user_id, amount)
 
-        await ctx.send(f"{ctx.author.mention}, you have successfully given {amount} µPPN to {target}.")
+        await ctx.send(f"{ctx.author.mention}, you have successfully given {amount:,.2f} µPPN to {target}.")
 
 
 
@@ -2338,7 +2340,7 @@ class CurrencySystem(commands.Cog):
                 current_balance = get_user_balance(self.conn, user_id)
                 new_balance = current_balance + amount
                 update_user_balance(self.conn, user_id, new_balance)
-                await ctx.send(f"{ctx.author.mention}, you have claimed {amount} µPPN. Your new balance is: {new_balance} µPPN.")
+                await ctx.send(f"{ctx.author.mention}, you have claimed {amount:,.2f} µPPN. Your new balance is: {new_balance} µPPN.")
                 self.last_claimed[user_id] = current_time  # Update the last claimed time
             else:
                 time_left = 86400 - (current_time - self.last_claimed[user_id]).total_seconds()
@@ -2379,7 +2381,7 @@ class CurrencySystem(commands.Cog):
         current_balance = get_user_balance(self.conn, user_id)
         new_balance = current_balance + amount
         update_user_balance(self.conn, user_id, new_balance)
-        await ctx.send(f"{ctx.author.mention}, you have added {amount} µPPN. Your new balance is: {new_balance} µPPN.")
+        await ctx.send(f"{ctx.author.mention}, you have added {amount:,.2f} µPPN. Your new balance is: {new_balance} µPPN.")
 
 
 
@@ -2806,7 +2808,7 @@ class CurrencySystem(commands.Cog):
         )
         embed.add_field(name="Total Buys💵", value=f"{formatted_total_buys} µPPN ({total_quantity_buys:,} buys📈)", inline=False)
         embed.add_field(name="Total Sells💵", value=f"{formatted_total_sells} µPPN ({total_quantity_sells:,} sells📉)", inline=False)
-        embed.add_field(name="Average Price", value=f"{average_price:.2f} µPPN🔁", inline=False)
+        embed.add_field(name="Average Price", value=f"{average_price:,.2f} µPPN🔁", inline=False)
         embed.add_field(name="Valuation", value=valuation_label, inline=False)
 
         await ctx.send(embed=embed)
@@ -3195,16 +3197,16 @@ class CurrencySystem(commands.Cog):
 
                     # Create an embed with information
                     embed = discord.Embed(title=f"Stock Information for {stock_symbol}")
-                    embed.add_field(name="Current Price", value=f"{current_price:.2f}")
-                    embed.add_field(name="Average Buy Price", value=f"{average_buy_price:.2f}")
-                    embed.add_field(name="Average Sell Price", value=f"{average_sell_price:.2f}")
+                    embed.add_field(name="Current Price", value=f"{current_price:,.2f}")
+                    embed.add_field(name="Average Buy Price", value=f"{average_buy_price:,.2f}")
+                    embed.add_field(name="Average Sell Price", value=f"{average_sell_price:,.2f}")
                     embed.add_field(name="Valuation", value=valuation)
                     if rsi is not None:
-                        embed.add_field(name="RSI", value=f"{rsi[-1]:.2f}")
+                        embed.add_field(name="RSI", value=f"{rsi[-1]:,.2f}")
                     if sma is not None:
-                        embed.add_field(name="SMA", value=f"{sma[-1]:.2f}")
+                        embed.add_field(name="SMA", value=f"{sma[-1]:,.2f}")
                     if ema is not None:
-                        embed.add_field(name="EMA", value=f"{ema[-1]:.2f}")
+                        embed.add_field(name="EMA", value=f"{ema[-1]:,.2f}")
                     embed.set_footer(text="Data may not be real-time")
 
                     # Send the embed as a Discord message
@@ -3233,6 +3235,13 @@ class CurrencySystem(commands.Cog):
 
         cursor = self.conn.cursor()
 
+
+        # Check if the stock_name is "TitanForge" and set a different limit
+        if stock_name.lower() == "titanforge":
+            stock_limit = float('inf')  # Infinite limit for TitanForge
+        else:
+            stock_limit = dStockLimit
+
         if amount == 0:
             await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
             return
@@ -3258,8 +3267,9 @@ class CurrencySystem(commands.Cog):
         daily_bought = daily_bought_record[0] if daily_bought_record and daily_bought_record[0] is not None else 0
         last_purchase_time = daily_bought_record[1] if daily_bought_record and daily_bought_record[1] is not None else None
 
-        if daily_bought + amount > dStockLimit:
-            remaining_amount = dStockLimit - daily_bought
+
+        if daily_bought + amount > stock_limit:
+            remaining_amount = stock_limit - daily_bought
 
             # Calculate the time remaining until they can buy again
             if last_purchase_time:
@@ -3327,15 +3337,15 @@ class CurrencySystem(commands.Cog):
 
                     self.conn.commit()
 
-                    formatted_buyer_balance = f"{buyer_balance:.2f}"
+                    formatted_buyer_balance = f"{buyer_balance:,.2f}"
                     await log_transaction(ledger_conn, ctx, "Buy Order Book", stock_name, order_quantity, total_cost, total_cost, buyer_balance, formatted_buyer_balance, order_price)
 
                     # Notify the seller in DM
                     seller = self.bot.get_user(seller_id)
                     if seller:
                         try:
-                            await seller.send(f"Your sell order for {order_quantity} stocks of '{stock_name}' at {order_price:.2f} each has been filled. "
-                                              f"Total: {total_cost:.2f} µPPN. New balance: {new_seller_balance:.2f} µPPN.")
+                            await seller.send(f"Your sell order for {order_quantity} stocks of '{stock_name}' at {order_price:,.2f} each has been filled. "
+                                              f"Total: {total_cost:,.2f} µPPN. New balance: {new_seller_balance:,.2f} µPPN.")
                         except discord.errors.Forbidden:
                             print(f"Unable to send a message to the seller with ID {seller_id}. They may have blocked DMs or disabled them.")
 
@@ -3377,19 +3387,19 @@ class CurrencySystem(commands.Cog):
 
                     self.conn.commit()
 
-                    formatted_buyer_balance = f"{buyer_balance:.2f}"
+                    formatted_buyer_balance = f"{buyer_balance:,.2f}"
                     await log_transaction(ledger_conn, ctx, "Buy Order Book", stock_name, amount, total_cost, total_cost, buyer_balance, formatted_buyer_balance, order_price)
 
                     # Notify the seller in DM
                     seller = self.bot.get_user(seller_id)
                     if seller:
                         try:
-                            await seller.send(f"Your sell order for {amount} stocks of '{stock_name}' at {order_price:.2f} each has been partially filled. "
-                                              f"Total: {total_cost:.2f} µPPN. New balance: {new_seller_balance:.2f} µPPN.")
+                            await seller.send(f"Your sell order for {amount:,.2f} stocks of '{stock_name}' at {order_price:,.2f} each has been partially filled. "
+                                              f"Total: {total_cost:,.2f} µPPN. New balance: {new_seller_balance:,.2f} µPPN.")
                         except discord.errors.Forbidden:
                             print(f"Unable to send a message to the seller with ID {seller_id}. They may have blocked DMs or disabled them.")
 
-                    await ctx.send(f"{ctx.author.mention}, you have bought {amount} stocks of '{stock_name}' from the order book. Your new balance is: {formatted_buyer_balance} µPPN.")
+                    await ctx.send(f"{ctx.author.mention}, you have bought {amount:,.2f} stocks of '{stock_name}' from the order book. Your new balance is: {formatted_buyer_balance} µPPN.")
 
                     break  # Exit the loop after processing the order
 
@@ -3417,7 +3427,7 @@ class CurrencySystem(commands.Cog):
             return
 
         cost = price * Decimal(amount)
-        tax_percentage = 0.1
+        tax_percentage = 0.15
         fee = cost * Decimal(tax_percentage)
         total_cost = cost + fee
 
@@ -3426,7 +3436,7 @@ class CurrencySystem(commands.Cog):
         if total_cost > current_balance:
             # Calculate the missing amount needed to complete the transaction including tax.
             missing_amount = total_cost - current_balance
-            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy these stocks. You need {missing_amount:.2f} more µPPN, including tax, to complete this purchase.")
+            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy these stocks. You need {missing_amount:,.2f} more µPPN, including tax, to complete this purchase.")
             return
 
         # Update the user's balance
@@ -3487,7 +3497,7 @@ class CurrencySystem(commands.Cog):
             print(f'Fix for 0 amount buy after order book')
         else:
             await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, price)
-            await ctx.send(f"{ctx.author.mention}, you have bought {amount} {stock_name} stocks. Your new balance is: {new_balance} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, you have bought {amount} {stock_name} stocks. Your new balance is: {new_balance:,.2f} µPPN.")
 
 
 
@@ -3563,19 +3573,19 @@ class CurrencySystem(commands.Cog):
 
                 self.conn.commit()
 
-                formatted_seller_balance = f"{new_seller_balance:.2f}"
+                formatted_seller_balance = f"{new_seller_balance:,.2f}"
                 await log_transaction(ledger_conn, ctx, "Sell Order Book", stock_name, order_quantity, total_earnings, total_earnings, seller_balance, formatted_seller_balance, price)
 
                 # Notify the buyer in DM
                 buyer = self.bot.get_user(buyer_id)
                 if buyer:
                     try:
-                        await buyer.send(f"Your buy order for {order_quantity} stocks of '{stock_name}' at {order_price:.2f} each has been filled. "
-                                         f"Total: {total_earnings:.2f} µPPN. New balance: {formatted_seller_balance} µPPN.")
+                        await buyer.send(f"Your buy order for {order_quantity:,.2f} stocks of '{stock_name}' at {order_price:,.2f} each has been filled. "
+                                         f"Total: {total_earnings:,.2f} µPPN. New balance: {formatted_seller_balance} µPPN.")
                     except discord.errors.Forbidden:
                         print(f"Unable to send a message to the buyer with ID {buyer_id}. They may have blocked DMs or disabled them.")
 
-                await ctx.send(f"{ctx.author.mention}, you have sold {amount} stocks of '{stock_name}' to a buy order from the order book. Your new balance is: {formatted_seller_balance} µPPN.")
+                await ctx.send(f"{ctx.author.mention}, you have sold {amount:,.2f} stocks of '{stock_name}' to a buy order from the order book. Your new balance is: {formatted_seller_balance} µPPN.")
 
                 amount -= order_quantity  # Subtract the sold quantity from the requested amount
 
@@ -3611,8 +3621,8 @@ class CurrencySystem(commands.Cog):
             await self.decrease_price(ctx, stock_name, amount)
             await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price)
             self.conn.commit()
-
-            await ctx.send(f"{ctx.author.mention}, you have sold {amount} stocks of '{stock_name}'. Your new balance is: {new_balance} µPPN.")
+            await self.blueChipBooster(ctx)
+            await ctx.send(f"{ctx.author.mention}, you have sold {amount:,.2f} stocks of '{stock_name}'. Your new balance is: {new_balance:,.2f} µPPN.")
 
 
 # Buy/Sell Multi
@@ -3686,11 +3696,11 @@ class CurrencySystem(commands.Cog):
                     time_remaining_str = "24 hours"
 
                 await ctx.send(f"{ctx.author.mention}, you have reached your daily buy limit for {stock_name} stocks. "
-                               f"You can buy {remaining_amount} more after {time_remaining_str}.")
+                               f"You can buy {remaining_amount:,.2f} more after {time_remaining_str}.")
                 continue
 
             if amount > available:
-                await ctx.send(f"{ctx.author.mention}, there are only {available} {stock_name} stocks available for purchase.")
+                await ctx.send(f"{ctx.author.mention}, there are only {available:,.2f} {stock_name} stocks available for purchase.")
                 continue
 
             cost = price * Decimal(amount)
@@ -3703,8 +3713,8 @@ class CurrencySystem(commands.Cog):
             if total_cost > current_balance:
                 # Calculate the missing amount needed to complete the transaction including tax.
                 missing_amount = total_cost - current_balance
-                await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy {amount} {stock_name} stocks. "
-                               f"You need {missing_amount:.2f} more µPPN, including tax, to complete this purchase.")
+                await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy {amount:,.2f} {stock_name} stocks. "
+                               f"You need {missing_amount:,.2f} more µPPN, including tax, to complete this purchase.")
                 continue
 
             # Update the user's balance
@@ -3781,7 +3791,7 @@ class CurrencySystem(commands.Cog):
     async def send_purchase_summary(self, ctx, total_spent, price_changes):
         # Create an embed with total spent and price changes
         embed = discord.Embed(title="Purchase Summary", color=0x00ff00)
-        embed.add_field(name="Total Spent", value=f"{total_spent:.2f} µPPN", inline=False)
+        embed.add_field(name="Total Spent", value=f"{total_spent:,.2f} µPPN", inline=False)
 
         # List to store individual pages
         pages = []
@@ -3794,16 +3804,16 @@ class CurrencySystem(commands.Cog):
             percent_change = (price_change / old_price) * 100
 
             # Add information to the current page
-            embed.add_field(name=f"{stock_name} Price Change", value=f"Old Price: {old_price:.2f} µPPN\n"
-                                                                     f"New Price: {new_price:.2f} µPPN\n"
-                                                                     f"Change: {price_change:.2f} µPPN\n"
-                                                                     f"Percent Change: {percent_change:.2f}%", inline=False)
+            embed.add_field(name=f"{stock_name} Price Change", value=f"Old Price: {old_price:,.2f} µPPN\n"
+                                                                     f"New Price: {new_price:,.2f} µPPN\n"
+                                                                     f"Change: {price_change:,.2f} µPPN\n"
+                                                                     f"Percent Change: {percent_change:,.2f}%", inline=False)
 
             # If the current embed size exceeds the maximum, start a new page
             if len(embed) > 5800:
                 pages.append(embed)
                 embed = discord.Embed(title="Purchase Summary", color=0x00ff00)
-                embed.add_field(name="Total Spent", value=f"{total_spent:.2f} µPPN", inline=False)
+                embed.add_field(name="Total Spent", value=f"{total_spent:,.2f} µPPN", inline=False)
 
         # Add the last page to the list
         pages.append(embed)
@@ -3965,7 +3975,7 @@ class CurrencySystem(commands.Cog):
             # Calculate the missing amount needed to complete the transaction including tax.
             missing_amount = total_cost - current_balance
             await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy these stocks. "
-                           f"You need {missing_amount:.2f} more µPPN, including tax, to complete this purchase.")
+                           f"You need {missing_amount:,.2f} more µPPN, including tax, to complete this purchase.")
             return
 
         new_balance = current_balance - total_cost_with_tax
@@ -4348,15 +4358,15 @@ class CurrencySystem(commands.Cog):
 
                 self.conn.commit()
 
-                formatted_buyer_balance = f"{new_buyer_balance:.2f}"
+                formatted_buyer_balance = f"{new_buyer_balance:,.2f}"
                 await log_transaction(ledger_conn, ctx, "Buy Order Book", symbol, amount, total_cost, total_cost, buyer_balance, new_buyer_balance, order_price)
 
                 # Notify the seller in DM
                 seller = self.bot.get_user(seller_id)
                 if seller:
                     try:
-                        await seller.send(f"Your sell order for {amount} stocks of '{symbol}' at {order_price:.2f} each has been filled. "
-                                          f"Total: {total_cost:.2f} µPPN. New balance: {new_seller_balance:.2f} µPPN.")
+                        await seller.send(f"Your sell order for {amount} stocks of '{symbol}' at {order_price:,.2f} each has been filled. "
+                                          f"Total: {total_cost:,.2f} µPPN. New balance: {new_seller_balance:,.2f} µPPN.")
                     except discord.errors.Forbidden:
                         print(f"Unable to send a message to the seller with ID {seller_id}. They may have blocked DMs or disabled them.")
 
@@ -4432,7 +4442,7 @@ class CurrencySystem(commands.Cog):
 
             # Add stocks to the embed for this page
             for stock in user_stocks[start_idx:end_idx]:
-                embed.add_field(name=stock['symbol'], value=f"Amount: {stock['amount']}", inline=True)
+                embed.add_field(name=stock['symbol'], value=f"Amount: {stock['amount']:,}", inline=True)
 
             embeds.append(embed)
 
@@ -4482,7 +4492,7 @@ class CurrencySystem(commands.Cog):
         end_index = start_index + items_per_page
 
         for stock in stocks[start_index:end_index]:
-            stock_info = f"{stock[0]}: {stock[1]} (Price: {stock[2]:.6f})"
+            stock_info = f"{stock[0]}: {stock[1]:,} (Price: {stock[2]:,.2f})"
             embed.add_field(name="Stock", value=stock_info, inline=False)
 
         message = await ctx.send(embed=embed)
@@ -4543,11 +4553,11 @@ class CurrencySystem(commands.Cog):
 
             # Add fields for the top 5 highest price stocks
             for i, (symbol, price, available) in enumerate(top_high_stocks, start=1):
-                embed.add_field(name=f"High #{i}: {symbol}", value=f"Price: {price:,.2f} µPPN\nAvailable: {available}", inline=False)
+                embed.add_field(name=f"High #{i}: {symbol}", value=f"Price: {price:,.2f} µPPN\nAvailable: {available:,}", inline=False)
 
             # Add fields for the top 5 lowest price stocks
             for i, (symbol, price, available) in enumerate(top_low_stocks, start=1):
-                embed.add_field(name=f"Low #{i}: {symbol}", value=f"Price: {price:,.2f} µPPN\nAvailable: {available}", inline=False)
+                embed.add_field(name=f"Low #{i}: {symbol}", value=f"Price: {price:,.2f} µPPN\nAvailable: {available:,}", inline=False)
 
             await ctx.send(embed=embed)
 
@@ -5076,7 +5086,7 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="blueChipBooster")
     @is_allowed_user(930513222820331590, PBot)
     async def blueChipBooster(self, ctx):
-        boosterAmount = 25000000
+        boosterAmount = 45000000
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM stocks WHERE symbol=?", ("BlueChipOG",))
         stock = cursor.fetchone()
@@ -5104,7 +5114,7 @@ class CurrencySystem(commands.Cog):
     @is_allowed_user(930513222820331590, PBot)
     async def goldReserveBooster(self, ctx, boosterAmount: float):
         if boosterAmount >= 500000000:
-            boosterAmount = (boosterAmount * 0.5)
+            boosterAmount = (boosterAmount * 0.5 * 0.25 * 0.26 * 0.5)
         else:
             boosterAmount = 25000000
         stock_name = "P3:Gold-Reserve"
@@ -5132,7 +5142,7 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="treasureBooster")
     @is_allowed_user(930513222820331590, PBot)
     async def treasureBooster(self, ctx):
-        boosterAmount = 25000000
+        boosterAmount = 75000000
         stock_name = "P3:Treasure_Chest"
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
@@ -5180,6 +5190,75 @@ class CurrencySystem(commands.Cog):
 
         self.conn.commit()
 
+    @commands.command(name="casinoTool")
+    @is_allowed_user(930513222820331590, PBot)
+    async def casinoTool(self, ctx, resultWin: bool):
+        stock_name = "P3:Casino"
+        cursor = self.conn.cursor()
+
+        # Retrieve current supply amounts
+        cursor.execute("SELECT total_supply, available FROM stocks WHERE symbol=?", (stock_name,))
+        supply_info = cursor.fetchone()
+        if supply_info is None:
+            await ctx.send(f"This stock does not exist.")
+            return
+
+        total_supply, current_supply = supply_info
+
+        booster_amount = None
+        supply_boost = None
+
+        if resultWin:
+            booster_amount = 50000000
+            supply_boost = 15000000
+        else:
+            booster_amount = 15000000
+            supply_boost = 50000000
+
+        # Apply booster amount to total and available supply
+        total_supply += supply_boost
+        current_supply += supply_boost
+
+        # Update the stock supply
+        await self.set_stock_supply(ctx, stock_name, total_supply, current_supply)
+
+        # Update the stock price
+        stock = cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,)).fetchone()
+        if stock:
+            current_price = float(stock[2])
+            price_increase = random.uniform(buyPressureMin * booster_amount, min(buyPressureMax * booster_amount, 1000000 - current_price))
+            new_price = min(current_price + price_increase, stockMax)
+
+            cursor.execute("""
+                UPDATE stocks
+                SET price = ?
+                WHERE symbol = ?
+            """, (new_price, stock_name))
+
+            self.conn.commit()
+
+            # Send an embed to the ledger channel
+            guild_id = 1161678765894664323
+            ledger_channel_id = 1161680453841993839  # Replace with the actual ID of your ledger channel
+            ledger_channel = ctx.guild.get_channel(ledger_channel_id)
+
+            if ledger_channel:
+                embed = discord.Embed(
+                    title=f"Shares Unlocked for {stock_name}",
+                    description=f"{supply_boost} shares have been unlocked for {stock_name}.",
+                    color=discord.Color.green()
+                )
+                embed.add_field(name="Current Price", value=f"{new_price:,.2f} µPPN", inline=False)
+                embed.add_field(name="Total Supply", value=f"{total_supply:,.2f} shares", inline=True)
+                embed.add_field(name="Available Supply", value=f"{current_supply:,.2f} shares", inline=True)
+
+                await ledger_channel.send(embed=embed)
+
+            await ctx.send(f"{supply_boost:,.2f} Shares unlocked for {stock_name}")
+
+
+
+
     @commands.command(name="increase_price")
     @is_allowed_user(930513222820331590, PBot)
     async def increase_price(self, ctx, stock_name: str, amount: float):
@@ -5204,7 +5283,7 @@ class CurrencySystem(commands.Cog):
 
         self.conn.commit()
 
-        await ctx.send(f"The price of {stock_name} has increased to {new_price}.")
+        await ctx.send(f"The price of {stock_name} has increased to {new_price:,.2f}.")
 
     @commands.command(name="increase_price_non_verbose")
     @is_allowed_user(930513222820331590, PBot)
@@ -5256,7 +5335,7 @@ class CurrencySystem(commands.Cog):
 
         self.conn.commit()
 
-        await ctx.send(f"The price of {stock_name} has decreased to {new_price:.8f}.")
+        await ctx.send(f"The price of {stock_name} has decreased to {new_price:,.2f}.")
 
 
 #ETF Tools and Engine
@@ -5503,7 +5582,7 @@ class CurrencySystem(commands.Cog):
                 symbol = stock[0]
                 price = stock[1]
                 available = stock[2]
-                embed.add_field(name=symbol, value=f"${price:.2f} - {available} available", inline=False)
+                embed.add_field(name=symbol, value=f"${price:,.2f} - {available} available", inline=False)
             if len(stock_chunks) > 1:
                 embed.set_footer(text=f"Page {i}/{len(stock_chunks)}")
             embeds.append(embed)
@@ -5512,7 +5591,7 @@ class CurrencySystem(commands.Cog):
         total_etf_value = etf_price
 
         # Add a field to the last embed with the total ETF value
-        embeds[-1].add_field(name="Total ETF Value", value=f"${total_etf_value:.2f}", inline=False)
+        embeds[-1].add_field(name="Total ETF Value", value=f"${total_etf_value:,.2f}", inline=False)
 
         # Send the first embed and set up pagination if needed
         message = await ctx.send(embed=embeds[0])
@@ -5544,7 +5623,7 @@ class CurrencySystem(commands.Cog):
         # Create an embed for the percentage change message
         embed = discord.Embed(
             title=f"{interval} Percentage Change",
-            description=f"{percentage_change:.2f}%",
+            description=f"{percentage_change:,.2f}%",
             color=discord.Color.green()
         )
 
@@ -5605,17 +5684,17 @@ class CurrencySystem(commands.Cog):
                     )
                     embed.add_field(
                         name="Old Price",
-                        value=f"${old_price:.2f}",
+                        value=f"${old_price:,.2f}",
                         inline=True
                     )
                     embed.add_field(
                         name="New Price",
-                        value=f"${etf_6_value:.2f}",
+                        value=f"${etf_6_value:,.2f}",
                         inline=True
                     )
                     embed.add_field(
                         name="Percentage Change",
-                        value=f"{percentage_change:.2f}%",
+                        value=f"{percentage_change:,.2f}%",
                         inline=False
                     )
 
@@ -5698,7 +5777,7 @@ class CurrencySystem(commands.Cog):
         if total_cost_with_tax > current_balance:
             # Calculate the missing amount needed to complete the transaction including tax.
             missing_amount = total_cost - current_balance
-            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy this etf. You need {missing_amount:.2f} more µPPN, including tax, to complete this purchase.")
+            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy this etf. You need {missing_amount:,.2f} more µPPN, including tax, to complete this purchase.")
             return
 
         new_balance = current_balance - total_cost_with_tax
@@ -5809,6 +5888,8 @@ class CurrencySystem(commands.Cog):
             # Check if the user already holds any units of the specified ETF
             cursor.execute("SELECT quantity FROM user_etfs WHERE user_id=? AND etf_id=?", (user_id, etf_id))
             current_holding = cursor.fetchone()
+            if etf_id == 10:
+                await self.whaleBooster(ctx)
 
             if current_holding is None or current_holding[0] <= 0:
                 current_quantity = 0
@@ -5883,6 +5964,8 @@ class CurrencySystem(commands.Cog):
             # Check if the user holds any units of the specified ETF
             cursor.execute("SELECT quantity FROM user_etfs WHERE user_id=? AND etf_id=?", (user_id, etf_id))
             current_holding = cursor.fetchone()
+            if etf_id == 10:
+                await self.whaleBooster(ctx)
 
             if current_holding is None or current_holding[0] <= 0:
                 await ctx.send(f"You don't have any units of ETF {etf_id} to sell.")
@@ -6645,7 +6728,7 @@ class CurrencySystem(commands.Cog):
         cursor.execute("UPDATE items SET price=? WHERE item_id=?", (new_price, item_id))
         self.conn.commit()
 
-        await ctx.send(f"The price of the item '{item_name}' has been adjusted from {old_price:.2f} to {new_price:.2f}.")
+        await ctx.send(f"The price of the item '{item_name}' has been adjusted from {old_price:,.2f} to {new_price:,.2f}.")
 
 
     @commands.command(name="add_item", help="Add an item to the marketplace.")
@@ -6692,7 +6775,7 @@ class CurrencySystem(commands.Cog):
         try:
             cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance_str, user_id))
             self.conn.commit()
-            await ctx.send(f"The balance for user with ID {user_id} has been adjusted to {new_balance:.2f} µPPN.")
+            await ctx.send(f"The balance for user with ID {user_id} has been adjusted to {new_balance:,.2f} µPPN.")
         except Exception as e:
             await ctx.send(f"An error occurred while adjusting the balance: {str(e)}")
 
@@ -6924,14 +7007,12 @@ class CurrencySystem(commands.Cog):
                     await ctx.send("Invalid total supply value. The total supply must be non-negative.")
                     return
                 cursor.execute("UPDATE stocks SET total_supply = ? WHERE symbol = ?", (total_supply, stock_name))
-                await ctx.send(f"The total supply for {stock_name} has been set to {total_supply}.")
 
             if available_supply is not None:
                 if available_supply < 0:
                     await ctx.send("Invalid available supply value. The available supply must be non-negative.")
                     return
                 cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (available_supply, stock_name))
-                await ctx.send(f"The available supply for {stock_name} has been set to {available_supply}.")
 
             self.conn.commit()
 
@@ -7003,7 +7084,7 @@ class CurrencySystem(commands.Cog):
 
         # Calculate Subtotal, Tax, and Total
         subtotal = stock_price * amount
-        tax_percentage = 0.1
+        tax_percentage = 0.15
         tax = subtotal * tax_percentage
         total = subtotal + tax
 
@@ -7017,11 +7098,11 @@ class CurrencySystem(commands.Cog):
             color=discord.Color.green()
         )
 
-        embed.add_field(name="Stock Price", value=f"{stock_price:.2f} µPPN", inline=True)
-        embed.add_field(name="Subtotal", value=f"{subtotal:.2f} µPPN", inline=True)
-        embed.add_field(name=f"Tax (at {tax_percentage*100:.1f}%)", value=f"{tax:.2f} µPPN", inline=True)
-        embed.add_field(name="Total", value=f"{total:.2f} µPPN", inline=True)
-        embed.add_field(name="Potential Stock Price After Buy", value=f"{potential_stock_price:.2f} µPPN", inline=False)
+        embed.add_field(name="Stock Price", value=f"{stock_price:,.2f} µPPN", inline=True)
+        embed.add_field(name="Subtotal", value=f"{subtotal:,.2f} µPPN", inline=True)
+        embed.add_field(name=f"Tax (at {tax_percentage*100:.1f}%)", value=f"{tax:,.2f} µPPN", inline=True)
+        embed.add_field(name="Total", value=f"{total:,.2f} µPPN", inline=True)
+        embed.add_field(name="Potential Stock Price After Buy", value=f"{potential_stock_price:,.2f} µPPN", inline=False)
 
         await ctx.send(embed=embed)
 
@@ -7052,11 +7133,11 @@ class CurrencySystem(commands.Cog):
 
         # Embed creation
         embed = discord.Embed(title=f"Simulated Sell of {stock_name}", color=0x00FF00)
-        embed.add_field(name="Stock Price", value=f"{stock_price:.2f} µPPN", inline=True)
-        embed.add_field(name="Subtotal", value=f"{subtotal:.2f} µPPN", inline=True)
-        embed.add_field(name=f"Tax (at {tax_percentage*100:.1f}%)", value=f"{tax:.2f} µPPN", inline=True)
-        embed.add_field(name="Total After Tax", value=f"{total:.2f} µPPN", inline=True)
-        embed.add_field(name="Potential Stock Price After Sale", value=f"{potential_stock_price:.2f} µPPN", inline=True)
+        embed.add_field(name="Stock Price", value=f"{stock_price:,.2f} µPPN", inline=True)
+        embed.add_field(name="Subtotal", value=f"{subtotal:,.2f} µPPN", inline=True)
+        embed.add_field(name=f"Tax (at {tax_percentage*100:.1f}%)", value=f"{tax:,.2f} µPPN", inline=True)
+        embed.add_field(name="Total After Tax", value=f"{total:,.2f} µPPN", inline=True)
+        embed.add_field(name="Potential Stock Price After Sale", value=f"{potential_stock_price:,.2f} µPPN", inline=True)
 
         await ctx.send(embed=embed)
 
@@ -7069,16 +7150,18 @@ class CurrencySystem(commands.Cog):
         # Check if bet amount is positive
         if bet <= 0:
             await ctx.send(f"{ctx.author.mention}, bet amount must be a positive number.")
+
+        if bet < minBet:
+            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} µPPN.")
             return
 
-        if bet > 500000:
-            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is 500,000 µPPN.")
+        if bet > maxBet:
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} µPPN.")
             return
-
         if bet > current_balance:
             # Calculate the missing amount needed to complete the transaction including tax.
             missing_amount = bet - current_balance
-            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to place the bet. You need {missing_amount:.2f} more µPPN, including tax, to place this bet.")
+            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to place the bet. You need {missing_amount:,.2f} more µPPN, including tax, to place this bet.")
             return
 
         # Initialize roulette wheel as numbers 0-36 with their associated colors
@@ -7117,9 +7200,11 @@ class CurrencySystem(commands.Cog):
             update_user_balance(self.conn, user_id, new_balance)
             await ctx.send(f"{ctx.author.mention}, congratulations! The ball landed on {spin_result} ({spin_color}). You won {win_amount} µPPN. Your new balance is {new_balance}.")
             await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You won {win_amount} µPPN", new_balance)
+            await self.casinoTool(ctx, True)
         else:
             await ctx.send(f"{ctx.author.mention}, the ball landed on {spin_result} ({spin_color}). You lost {total_cost} µPPN including tax. Your new balance is {new_balance}.")
             await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You lost {total_cost} µPPN", new_balance)
+            await self.casinoTool(ctx, False)
 
     @commands.command(name='coinflip', help='Flip a coin and bet on heads or tails.')
     async def coinflip(self, ctx, choice: str, bet: int):
@@ -7131,14 +7216,18 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, bet amount must be a positive number.")
             return
 
-        if bet > 500000:
-            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is 500,000 µPPN.")
+        if bet < minBet:
+            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} µPPN.")
+            return
+
+        if bet > maxBet:
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} µPPN.")
             return
 
         if bet > current_balance:
             # Calculate the missing amount needed to complete the transaction including tax.
             missing_amount = bet - current_balance
-            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to place the bet. You need {missing_amount:.2f} more µPPN, including tax, to place this bet.")
+            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to place the bet. You need {missing_amount:,.2f} more µPPN, including tax, to place this bet.")
             return
 
         # Flip the coin
@@ -7164,9 +7253,11 @@ class CurrencySystem(commands.Cog):
             update_user_balance(self.conn, user_id, new_balance)
             await ctx.send(f"{ctx.author.mention}, congratulations! The coin landed on {coin_result}. You won {win_amount} µPPN. Your new balance is {new_balance}.")
             await log_gambling_transaction(ledger_conn, ctx, "Coinflip", bet, f"You won {win_amount} µPPN", new_balance)
+            await self.casinoTool(ctx, True)
         else:
             await ctx.send(f"{ctx.author.mention}, the coin landed on {coin_result}. You lost {total_cost} µPPN including tax. Your new balance is {new_balance}.")
             await log_gambling_transaction(ledger_conn, ctx, "Coinflip", bet, f"You lost {total_cost} µPPN", new_balance)
+            await self.casinoTool(ctx, False)
 
 
     @commands.command(name='slotmachine', aliases=['slots'], help='Play the slot machine. Bet an amount up to 500,000 µPPN.')
@@ -7179,8 +7270,12 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, bet amount must be a positive number.")
             return
 
-        if bet > 500000:
-            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is 500,000 µPPN.")
+        if bet < minBet:
+            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} µPPN.")
+            return
+
+        if bet > maxBet:
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} µPPN.")
             return
 
         # Define slot machine symbols and their values
@@ -7225,9 +7320,11 @@ class CurrencySystem(commands.Cog):
             update_user_balance(self.conn, user_id, new_balance)
             embed.add_field(name="Congratulations!", value=f"You won {win_amount} µPPN!", inline=False)
             await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"You won {win_amount} µPPN", new_balance)
+            await self.casinoTool(ctx, True)
         else:
             embed.add_field(name="Better luck next time!", value=f"You lost {total_cost} µPPN including tax. Your new balance is {new_balance} µPPN.", inline=False)
             await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"You lost {total_cost} µPPN", new_balance)
+            await self.casinoTool(ctx, False)
 
         embed.set_footer(text=f"Your new balance: {new_balance} µPPN")
         await ctx.send(embed=embed)
@@ -7686,7 +7783,7 @@ class CurrencySystem(commands.Cog):
             if size < 1024.0:
                 break
             size /= 1024.0
-        return f"{size:.2f} {unit}"
+        return f"{size:,.2f} {unit}"
 
     def get_file_lines(self, filename):
         try:
