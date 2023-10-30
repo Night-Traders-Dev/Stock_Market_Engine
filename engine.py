@@ -1,6 +1,5 @@
 from discord.ext import commands, tasks
 from discord import Embed, Colour
-#from cookies_discord_components import ComponentsBot, Button, ButtonStyle
 from tabulate import tabulate
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -42,13 +41,13 @@ import shlex
 # Hardcoded Variables
 
 announcement_channel_ids = [1093540470593962014, 1124784361766650026, 1124414952812326962]
-stockMin = 100
+stockMin = 1000
 stockMax = 5000000
-dStockLimit = 75000000 #2000000 standard
+dStockLimit = 150000000 #2000000 standard
 dETFLimit = 500000000000
 treasureMin = 10000000
 treasureMax = 50000000
-MAX_BALANCE = Decimal('500000000000000000')
+MAX_BALANCE = Decimal('750000000000000000')
 sellPressureMin = 0.00002
 sellPressureMax = 0.00005
 buyPressureMin = 0.0000025
@@ -56,8 +55,8 @@ buyPressureMax = 0.0000550
 stockDecayValue = 0.00065
 decayMin = 0.01
 resetµPPN = 100
-dailyMin = 10000
-dailyMax = 50000
+dailyMin = 100000
+dailyMax = 500000
 ticketPrice = 100
 maxTax = 0.50
 minBet = 10000
@@ -2720,7 +2719,7 @@ class CurrencySystem(commands.Cog):
     async def backup_database(self, ctx):
         try:
             # Create a timestamp for the backup file name
-            timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
 
             # Specify the source file path (current directory + database file)
             source_path = "currency_system.db"
@@ -2764,12 +2763,8 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"An error occurred while restoring the database: {e}")
 
 
-    @commands.command(name="historical_data", help="View historical data of a stock. Provide the stock name.")
-    async def historical_data(self, ctx, stock_name: str):
-        data = view_historical_data(self.conn, stock_name)
-        await ctx.send(f"```\n{data}\n```")
 
-    @commands.command(name="stock_stats", help="Get total buys, total sells, average price, and current price of a stock.")
+    @commands.command(name="stock_stats", help="Get total buys, total sells, average price, current price, and circulating supply of a stock.")
     async def stock_stats(self, ctx, symbol: str):
         # Retrieve relevant transactions for the specified stock symbol from the ledger database
         cursor = ledger_conn.cursor()
@@ -2805,34 +2800,22 @@ class CurrencySystem(commands.Cog):
         currency_conn = sqlite3.connect("currency_system.db")
         cursor_currency = currency_conn.cursor()
 
-        # Fetch current price from stocks table
+        # Fetch current price and available supply from stocks table
         cursor_currency.execute("SELECT available, price FROM stocks WHERE symbol = ?", (symbol,))
         result = cursor_currency.fetchone()
-        currency_conn.close()
 
         if result:
-            available, current_price = result
+            available_supply, current_price = result
             formatted_current_price = '{:,.2f}'.format(current_price)
         else:
             await ctx.send(f"{symbol} is not a valid stock symbol.")
             return
 
-        # Fetch ETF information from etf_stocks table
-        currency_conn = sqlite3.connect("currency_system.db")
+        # Fetch circulating supply from user_stocks table
         cursor_currency = currency_conn.cursor()
-
-        cursor_currency.execute("""
-            SELECT etfs.etf_id
-            FROM etfs
-            JOIN etf_stocks ON etfs.etf_id = etf_stocks.etf_id
-            WHERE etf_stocks.symbol = ?
-        """, (symbol,))
-
-        etf_ids = cursor_currency.fetchall()
+        cursor_currency.execute("SELECT SUM(amount) FROM user_stocks WHERE symbol = ?", (symbol,))
+        circulating_supply = cursor_currency.fetchone()[0] or 0
         currency_conn.close()
-
-        # Extract ETF IDs from the result
-        etf_ids = [etf_id[0] for etf_id in etf_ids]
 
         # Determine if it's over or undervalued
         valuation_label = "Overvalued🔴" if current_price > average_price else "Undervalued🟢"
@@ -2841,20 +2824,20 @@ class CurrencySystem(commands.Cog):
         formatted_total_buys = '{:,}'.format(int(total_buys))
         formatted_total_sells = '{:,}'.format(int(total_sells))
 
-        # Format ETFs as a string
-        etfs_str = ', '.join(f"ETF {etf}" for etf in etf_ids) if etf_ids else "None"
-
         # Create an embed to display the statistics
         embed = discord.Embed(
             title=f"Stock Statistics for {symbol}📊",
             color=discord.Color.blue()
         )
+        circulatingValue = circulating_supply * current_price
+        formatet_circulating_value = '{:,}'.format(int(circulatingValue))
         embed.add_field(name="Total Buys💵", value=f"{formatted_total_buys} µPPN ({total_quantity_buys:,} buys📈)", inline=False)
         embed.add_field(name="Total Sells💵", value=f"{formatted_total_sells} µPPN ({total_quantity_sells:,} sells📉)", inline=False)
         embed.add_field(name="Average Price", value=f"{average_price:,.2f} µPPN🔁", inline=False)
         embed.add_field(name="Current Price", value=f"{formatted_current_price} µPPN", inline=False)
+        embed.add_field(name="Circulating Supply", value=f"{circulating_supply:,} shares🔄", inline=False)
+        embed.add_field(name="Circulating Value", value=f"{formatet_circulating_value} µPPN")
         embed.add_field(name="Valuation", value=valuation_label, inline=False)
-        embed.add_field(name="Belongs to ETF(s)", value=etfs_str, inline=False)
 
         await ctx.send(embed=embed)
 
@@ -3284,6 +3267,8 @@ class CurrencySystem(commands.Cog):
         # Check if the stock_name is "TitanForge" and set a different limit
         if stock_name.lower() == "titanforge":
             stock_limit = float('inf')  # Infinite limit for TitanForge
+        elif stock_name.lower() == "p3:stable":
+            stock_limit = float('inf')  # Infinite limit for TitanForge
         else:
             stock_limit = dStockLimit
 
@@ -3536,7 +3521,11 @@ class CurrencySystem(commands.Cog):
             calculate_team_profit_loss(self.conn, team_id)
 
         decay_other_stocks(self.conn, stock_name)
-        await self.increase_price(ctx, stock_name, amount)
+        if stock_name == ('P3:Stable'):
+            await self.stableManager(ctx, 'BUY', amount)
+        else:
+            await self.increase_price(ctx, stock_name, amount)
+
         await self.blueChipBooster(ctx, "BUY")
         await self.P3LQDYBooster(ctx)
         self.conn.commit()
@@ -3680,12 +3669,17 @@ class CurrencySystem(commands.Cog):
                 # Calculate and update the team's profit/loss
                 calculate_team_profit_loss(self.conn, team_id)
 
-            await self.decrease_price(ctx, stock_name, amount)
+            if stock_name == ('P3:Stable'):
+                await self.stableManager(ctx, 'sell', amount)
+            else:
+                await self.decrease_price(ctx, stock_name, amount)
             await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price)
             self.conn.commit()
             await self.blueChipBooster(ctx, "SELL")
             await self.P3LQDYBooster(ctx)
             await ctx.send(f"{ctx.author.mention}, you have sold {amount:,.2f} stocks of '{stock_name}'. Your new balance is: {new_balance:,.2f} µPPN.")
+
+
 
 
 # Buy/Sell Multi
@@ -3836,7 +3830,10 @@ class CurrencySystem(commands.Cog):
 
             decay_other_stocks(self.conn, stock_name)
             await self.blueChipBooster(ctx, "BUY")
-            await self.increase_price_non_verbose(ctx, stock_name, amount)
+            if stock_name == ('P3:Stable'):
+                await self.stableManager(ctx, 'BUY', amount)
+            else:
+                await self.increase_price_non_verbose(ctx, stock_name, amount)
             await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, price)
 
             # Update total spent
@@ -3982,7 +3979,10 @@ class CurrencySystem(commands.Cog):
                 # Calculate and update the team's profit/loss
                 calculate_team_profit_loss(self.conn, team_id)
 
-            await self.decrease_price(ctx, stock_name, amount)
+            if stock_name == ('P3:Stable'):
+                await self.stableManager(ctx, 'sell', amount)
+            else:
+                await self.decrease_price(ctx, stock_name, amount)
             await self.blueChipBooster(ctx, "SELL")
             await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price)
             last_sell_time[user_id] = current_time
@@ -4155,8 +4155,12 @@ class CurrencySystem(commands.Cog):
             new_ctx.command = self.bot.get_command(command_args[0])
             new_ctx.message.content = ctx.prefix + command  # Update the content to include the prefix
 
-            # Convert integer arguments or parameters
+            # Convert integer arguments or parameters, excluding the P3 address
             for i, arg in enumerate(command_args[1:]):
+                # Skip the P3 address when converting to int
+                if i == 0:
+                    continue
+
                 for param in new_ctx.command.clean_params.values():
                     if param.annotation == int and param.name in arg:
                         try:
@@ -5211,6 +5215,134 @@ class CurrencySystem(commands.Cog):
         await ctx.send(f"The prices of all stocks have been deducted by {percentage}%.")
 
 
+    @commands.command(name="buy_stock_for_bot")
+    @is_allowed_user(930513222820331590, PBot)
+    async def buy_stock_for_bot(self, ctx, stock_name, amount):
+        cursor = self.conn.cursor()
+
+        # Get the stock information
+        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+        stock_info = cursor.fetchone()
+
+        if stock_info is None:
+            await ctx.send(f"This stock '{stock_name}' does not exist.")
+            return
+
+        price = Decimal(stock_info[2])
+        total_cost = price * Decimal(amount)
+
+        # Update bot's stock balance
+        cursor.execute("""
+            INSERT INTO user_stocks (user_id, symbol, amount)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id, symbol) DO UPDATE SET amount = amount + ?
+        """, (PBot, stock_name, amount, amount))
+
+        # Update available stock
+        cursor.execute("""
+            UPDATE stocks
+            SET available = available - ?
+            WHERE symbol = ?
+        """, (amount, stock_name))
+
+
+        # Update bot's balance
+        current_balance = get_user_balance(self.conn, PBot)
+        new_balance = current_balance + total_cost
+        update_user_balance(self.conn, PBot, new_balance)
+        decay_other_stocks(self.conn, stock_name)
+        await self.increase_price_non_verbose(ctx, stock_name, float(amount))
+        await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, total_cost, total_cost, 0, 0, price)
+
+        # Commit the transaction
+        self.conn.commit()
+
+    @commands.command(name="sell_stock_for_bot")
+    @is_allowed_user(930513222820331590, PBot)
+    async def sell_stock_for_bot(self, ctx, stock_name, amount):
+        cursor = self.conn.cursor()
+
+        # Get the stock information
+        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+        stock_info = cursor.fetchone()
+
+        if stock_info is None:
+            await ctx.send(f"This stock '{stock_name}' does not exist.")
+            return
+
+        price = Decimal(stock_info[2])
+        total_earnings = price * Decimal(amount)
+
+        # Update bot's stock balance
+        cursor.execute("""
+            UPDATE user_stocks
+            SET amount = amount - ?
+            WHERE user_id = ? AND symbol = ?
+        """, (amount, PBot, stock_name))
+
+        # Update available stock
+        cursor.execute("""
+            UPDATE stocks
+            SET available = available + ?
+            WHERE symbol = ?
+        """, (amount, stock_name))
+
+        # Update bot's balance
+        current_balance = get_user_balance(self.conn, PBot)
+        new_balance = current_balance + total_earnings
+        update_user_balance(self.conn, PBot, new_balance)
+        decay_other_stocks(self.conn, stock_name)
+        await self.decrease_price_non_verbose(ctx, stock_name, float(amount))
+        await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, total_earnings, total_earnings, 0, 0, price)
+
+        # Commit the transaction
+        self.conn.commit()
+
+
+
+
+
+    @commands.command(name="stableManager")
+    @is_allowed_user(930513222820331590, PBot)
+    async def stableManager(self, ctx, type: str, amount: int):
+        cursor = self.conn.cursor()
+
+        reserveStocks = ["P3:Gold-Reserve", "BlueChipOG"]
+
+        if type.lower() == "buy":
+            for stock_name in reserveStocks:
+                await self.sell_stock_for_bot(ctx, stock_name, amount / 2)
+            # Randomly fluctuate the price of P3:Stable
+            new_price = random.uniform(950, 1150)
+            cursor.execute("""
+                UPDATE stocks
+                SET price = ?
+                WHERE symbol = "P3:Stable"
+            """, (new_price,))
+            self.conn.commit()
+
+            await ctx.send(f"P3:Stable has been bought, and its price has fluctuated to {new_price:,.2f}.")
+
+        elif type.lower() == "sell":
+            for stock_name in reserveStocks:
+                await self.buy_stock_for_bot(ctx, stock_name, amount / 2)
+
+            # Randomly fluctuate the price of P3:Stable
+            new_price = random.uniform(950, 1150)
+            cursor.execute("""
+                UPDATE stocks
+                SET price = ?
+                WHERE symbol = "P3:Stable"
+            """, (new_price,))
+            self.conn.commit()
+
+            await ctx.send(f"P3:Stable has been sold, and its price has fluctuated to {new_price:,.2f}.")
+
+        else:
+            await ctx.send("Invalid operation. Use 'buy' or 'sell'.")
+
+
+
     @commands.command(name="blueChipBooster")
     @is_allowed_user(930513222820331590, PBot)
     async def blueChipBooster(self, ctx, type: str):
@@ -5242,7 +5374,7 @@ class CurrencySystem(commands.Cog):
         cost = boosterAmount * current_price
 
         print(f'BlueChipBooster: {boosterAmount} shares')
-        await log_transaction(ledger_conn, ctx, "Buy Stock", "BlueChipOG", boosterAmount, cost, cost, 0, 0, current_price)
+        await self.buy_stock_for_bot(ctx, "BlueChipOG", boosterAmount)
 
     @commands.command(name="P3LQDYBooster")
     @is_allowed_user(930513222820331590, PBot)
@@ -5301,20 +5433,12 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"This stock does not exist.")
             return
 
-        price_increase = random.uniform(buyPressureMin * boosterAmount, min(buyPressureMax * boosterAmount, 1000000 - float(stock[2])))
         current_price = float(stock[2])
-        new_price = min(current_price + price_increase, stockMax)
 
-        # Update the stock price
-        cursor.execute("""
-            UPDATE stocks
-            SET price = ?
-            WHERE symbol = ?
-        """, (new_price, stock_name))
 
         cost = boosterAmount * current_price
+        await self.buy_stock_for_bot(ctx, stock_name, boosterAmount)
         self.conn.commit()
-        await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, boosterAmount, cost, cost, 0, 0, current_price)
 
 
     @commands.command(name="treasureBooster")
@@ -5329,20 +5453,12 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"This stock does not exist.")
             return
 
-        price_increase = random.uniform(buyPressureMin * boosterAmount, min(buyPressureMax * boosterAmount, 1000000 - float(stock[2])))
         current_price = float(stock[2])
-        new_price = min(current_price + price_increase, stockMax)
 
-        # Update the stock price
-        cursor.execute("""
-            UPDATE stocks
-            SET price = ?
-            WHERE symbol = ?
-        """, (new_price, stock_name))
 
         cost = boosterAmount * current_price
         self.conn.commit()
-        await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, boosterAmount, cost, cost, 0, 0, current_price)
+        await self.buy_stock_for_bot(ctx, stock_name, boosterAmount)
 
 
     @commands.command(name="whaleBooster")
@@ -5357,20 +5473,11 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"This stock does not exist.")
             return
 
-        price_increase = random.uniform(buyPressureMin * boosterAmount, min(buyPressureMax * boosterAmount, 1000000 - float(stock[2])))
         current_price = float(stock[2])
-        new_price = min(current_price + price_increase, stockMax)
-
-        # Update the stock price
-        cursor.execute("""
-            UPDATE stocks
-            SET price = ?
-            WHERE symbol = ?
-        """, (new_price, stock_name))
 
         cost = boosterAmount * current_price
         self.conn.commit()
-        await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, boosterAmount, cost, cost, 0, 0, current_price)
+        await self.buy_stock_for_bot(ctx, stock_name, boosterAmount)
 
     @commands.command(name="casinoTool")
     @is_allowed_user(930513222820331590, PBot)
@@ -5398,8 +5505,8 @@ class CurrencySystem(commands.Cog):
             supply_boost = 50000000
 
         # Apply booster amount to total and available supply
-        total_supply += supply_boost
-        current_supply += supply_boost
+        total_supply += supply_boost * 2
+        current_supply += supply_boost * 2
 
         # Update the stock supply
         await self.set_stock_supply(ctx, stock_name, total_supply, current_supply)
@@ -5408,16 +5515,7 @@ class CurrencySystem(commands.Cog):
         stock = cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,)).fetchone()
         if stock:
             current_price = float(stock[2])
-            price_increase = random.uniform(buyPressureMin * booster_amount, min(buyPressureMax * booster_amount, 1000000 - current_price))
-            new_price = min(current_price + price_increase, stockMax)
 
-            cursor.execute("""
-                UPDATE stocks
-                SET price = ?
-                WHERE symbol = ?
-            """, (new_price, stock_name))
-
-            self.conn.commit()
 
             # Send an embed to the ledger channel
             guild_id = 1161678765894664323
@@ -5430,7 +5528,7 @@ class CurrencySystem(commands.Cog):
                     description=f"{supply_boost} shares have been unlocked for {stock_name}.",
                     color=discord.Color.green()
                 )
-                embed.add_field(name="Current Price", value=f"{new_price:,.2f} µPPN", inline=False)
+                embed.add_field(name="Current Price", value=f"{current_price:,.2f} µPPN", inline=False)
                 embed.add_field(name="Total Supply", value=f"{total_supply:,.2f} shares", inline=True)
                 embed.add_field(name="Available Supply", value=f"{current_supply:,.2f} shares", inline=True)
 
@@ -5438,7 +5536,7 @@ class CurrencySystem(commands.Cog):
 
             cost = booster_amount * current_price
             await ctx.send(f"{supply_boost:,.2f} Shares unlocked for {stock_name}")
-            await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, booster_amount, cost, cost, 0, 0, current_price)
+            await self.buy_stock_for_bot(ctx, stock_name, booster_amount / 2)
 
 
 
@@ -5519,6 +5617,34 @@ class CurrencySystem(commands.Cog):
         self.conn.commit()
 
         await ctx.send(f"The price of {stock_name} has decreased to {new_price:,.2f}.")
+
+
+
+    @commands.command(name="decrease_price_non_verbose")
+    @is_allowed_user(930513222820331590, PBot)
+    async def decrease_price_non_verbose(self, ctx, stock_name: str, amount: float):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+        stock = cursor.fetchone()
+        if stock is None:
+            await ctx.send(f"This stock does not exist.")
+            return
+
+        # Generate a random float between 0.000011 * amount and 0.00005 * amount for price decrease
+        price_decrease = random.uniform(sellPressureMin * amount, min(sellPressureMax * amount, float(stock[2])))
+        current_price = float(stock[2])
+        new_price = max(current_price - price_decrease, stockMin)  # Ensure the price doesn't go below 0.00001
+
+        # Update the stock price
+        cursor.execute("""
+            UPDATE stocks
+            SET price = ?
+            WHERE symbol = ?
+        """, (float(new_price), stock_name))
+
+        self.conn.commit()
+
+        print(f"The price of {stock_name} has decreased to {new_price:,.2f}.")
 
 
 #ETF Tools and Engine
@@ -7655,7 +7781,7 @@ class CurrencySystem(commands.Cog):
         all_stocks = cursor.fetchall()
 
         stocks_can_buy = {}
-        dStockLimit = 75000000
+        dStockLimit = 150000000
         for stock in all_stocks:
             stock_name = stock[0]
             stock_limit = dStockLimit
@@ -7719,6 +7845,14 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="burn_stocks", aliases=["burn"], help="Burn a certain amount of stocks to reduce total supply.")
     async def burn_stocks(self, ctx, stock_name: str, amount: int):
         user_id = ctx.author.id
+
+        if stock_name.lower() == "p3:stable":
+            await ctx.send("Cannot burn Stable Token P3:Stable")
+            return
+
+        if stock_name.lower() == "titanforge":
+            await ctx.send("Cannot burn Utility Token TitanForge")
+            return
 
         if amount <= 0:
             await ctx.send("Invalid amount. Please provide a positive number of stocks to burn.")
