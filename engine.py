@@ -50,9 +50,9 @@ treasureMax = 50000000
 MAX_BALANCE = Decimal('750000000000000000')
 sellPressureMin = 0.00002
 sellPressureMax = 0.00005
-buyPressureMin = 0.0000025
-buyPressureMax = 0.0000550
-stockDecayValue = 0.00065
+buyPressureMin = 0.0000035
+buyPressureMax = 0.0000650
+stockDecayValue = 0.00060
 decayMin = 0.01
 resetµPPN = 100
 dailyMin = 100000
@@ -110,6 +110,13 @@ MAX_EARNINGS = 500000
 
 ## End Work
 
+
+
+def is_valid_user_id(client, user_id):
+    user = client.get_user(user_id)
+    return user is not None
+
+#client = discord.Client()
 
 ##
 # Function to split a list into chunks of a specific size
@@ -319,10 +326,10 @@ async def log_transaction(ledger_conn, ctx, action, symbol, quantity, pre_tax_am
                 title=f"{P3Addr} {action} {symbol} {'ETF' if is_etf else 'Stock'} Transaction",
                 description=f"Quantity: {quantity}\n"
                             f"Price: {price} µPPN\n"
-                            f"Pre-tax Amount: {pre_tax_amount} µPPN\n"
-                            f"Post-tax Amount: {post_tax_amount} µPPN\n"
-                            f"Balance Before: {balance_before} µPPN\n"
-                            f"Balance After: {balance_after} µPPN\n"
+                            f"Pre-tax Amount: {pre_tax_amount:,.2f} µPPN\n"
+                            f"Post-tax Amount: {post_tax_amount:,.2f} µPPN\n"
+                            f"Balance Before: {balance_before:,.2f} µPPN\n"
+                            f"Balance After: {balance_after:,.2f} µPPN\n"
                             f"Timestamp: {timestamp}",
                 color=discord.Color.green() if action.startswith("Buy") else discord.Color.red()
             )
@@ -358,7 +365,7 @@ async def log_transfer(ledger_conn, ctx, sender_name, receiver_name, receiver_id
         if channel1:
             embed = discord.Embed(
                 title=f"Transfer from {P3Addr_sender} to {P3Addr_receiver}",
-                description=f"Amount: {amount} µPPN",
+                description=f"Amount: {amount:,.2f} µPPN",
                 color=discord.Color.purple()
             )
 
@@ -371,9 +378,18 @@ async def log_stock_transfer(ledger_conn, ctx, sender, receiver, symbol, amount)
         guild_id = 1161678765894664323
         guild = ctx.bot.get_guild(guild_id)
 
+        if amount == 0.0:
+            return
+
         if guild:
-            P3Addr_sender = generate_crypto_address(sender.id)
-            P3Addr_receiver = generate_crypto_address(receiver.id)
+            if sender == "stakingYield":
+                P3Addr_sender = "P3:0x00000000"
+            else:
+                P3Addr_sender = generate_crypto_address(sender.id)
+            if isinstance(receiver, int) == True:
+                P3Addr_receiver = generate_crypto_address(receiver)
+            else:
+                P3Addr_receiver = generate_crypto_address(receiver.id)
 
             channel1_id = ledger_channel
 
@@ -382,7 +398,7 @@ async def log_stock_transfer(ledger_conn, ctx, sender, receiver, symbol, amount)
             if channel1:
                 embed = discord.Embed(
                     title=f"Stock Transfer from {P3Addr_sender} to {P3Addr_receiver}",
-                    description=f"Stock: {symbol}\nAmount: {amount}",
+                    description=f"Stock: {symbol}\nAmount: {amount:,.2f}",
                     color=discord.Color.purple()
                 )
 
@@ -416,9 +432,9 @@ async def log_item_transaction(conn, ctx, action, item_name, quantity, total_cos
 
         if channel1:
             embed = discord.Embed(
-                title=f"{P3Addr} {'Purchase' if is_purchase else 'Sale'} of {quantity} {item_name}",
-                description=f"Item: {item_name}\nQuantity: {quantity}\nTotal Cost: {total_cost} µPPN\n"
-                            f"Tax Amount: {tax_amount} µPPN\nNew Balance: {new_balance} µPPN\nTimestamp: {timestamp}",
+                title=f"{P3Addr} {'Purchase' if is_purchase else 'Sale'} of {quantity:,.2f} {item_name}",
+                description=f"Item: {item_name}\nQuantity: {quantity:,.2f}\nTotal Cost: {total_cost:,.2f} µPPN\n"
+                            f"Tax Amount: {tax_amount:,.2f} µPPN\nNew Balance: {new_balance:,.2f} µPPN\nTimestamp: {timestamp}",
                 color=discord.Color.green() if is_purchase else discord.Color.red()
             )
 
@@ -453,8 +469,8 @@ async def log_burn_stocks(ledger_conn, ctx, stock_name, quantity, price_before, 
         if channel1:
             embed = discord.Embed(
                 title=f"{P3Addr} Stock Burn Transaction",
-                description=f"Stock Name: {stock_name}\nQuantity Burned: {quantity}\n"
-                            f"Price Before Burn: {price_before} µPPN\nPrice After Burn: {price_after} µPPN\nTimestamp: {timestamp}",
+                description=f"Stock Name: {stock_name}\nQuantity Burned: {quantity:,.2f}\n"
+                            f"Price Before Burn: {price_before:,.2f} µPPN\nPrice After Burn: {price_after:,.2f} µPPN\nTimestamp: {timestamp}",
                 color=discord.Color.yellow()
             )
 
@@ -487,8 +503,8 @@ async def log_gambling_transaction(ledger_conn, ctx, game, bet_amount, win_loss,
         if channel1:
             embed = discord.Embed(
                 title=f"{P3Addr} {game} Gambling Transaction",
-                description=f"Game: {game}\nBet Amount: {bet_amount} µPPN\nWin/Loss: {win_loss}\n"
-                            f"Amount Paid/Received After Taxes: {amount_after_tax} µPPN",
+                description=f"Game: {game}\nBet Amount: {bet_amountF} µPPN\nWin/Loss: {win_loss}\n"
+                            f"Amount Paid/Received After Taxes: {amount_after_tax:,.2f} µPPN",
                 color=discord.Color.orange() if win_loss.startswith("You won") else discord.Color.orange()
             )
 
@@ -2277,49 +2293,21 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"An error occurred while reverting the stocks: {e}")
 
 
+
     @commands.command(name="give", help="Give a specified amount of µPPN to another user.")
-    async def give(self, ctx, recipient: discord.Member, amount: int):
-        if amount <= 0:
-            await ctx.send("The amount to give should be greater than 0.")
-            return
-
-        sender_id = ctx.author.id
-        recipient_id = recipient.id
-        sender_balance = get_user_balance(self.conn, sender_id)
-
-        if sender_balance < amount:
-            await ctx.send(f"{ctx.author.mention}, you don't have enough µPPN to give. Your current balance is {sender_balance} µPPN.")
-            return
-
-        # Deduct the amount from the sender's balance
-        update_user_balance(self.conn, sender_id, sender_balance - amount)
-
-        # Add the amount to the recipient's balance
-        recipient_balance = get_user_balance(self.conn, recipient_id)
-        update_user_balance(self.conn, recipient_id, recipient_balance + amount)
-
-        # Log the transfer
-        await log_transfer(ledger_conn, ctx, ctx.author.name, recipient.name, recipient.id, amount)
-
-
-        await ctx.send(f"{ctx.author.mention}, you have successfully given {amount:,.2f} µPPN to {recipient.mention}.")
-
-    @commands.command(name="give_addr", help="Give a specified amount of µPPN to another user.")
     async def give_addr(self, ctx, target, amount: int):
         sender_id = ctx.author.id
         P3addrConn = sqlite3.connect("P3addr.db")
 
-        # Check if the target is a mention (Discord username) or a P3 address
-        if ctx.message.mentions:
-            user_id = str(ctx.message.mentions[0].id)
-        elif target.startswith("P3:"):
+
+        if target.startswith("P3:"):
             p3_address = target
             user_id = get_user_id(P3addrConn, p3_address)
             if not user_id:
                 await ctx.send("Invalid or unknown P3 address.")
                 return
         else:
-            await ctx.send("Please provide a valid mention or P3 address.")
+            await ctx.send("Please provide a valid P3 address.")
             return
 
         if amount <= 0:
@@ -2329,7 +2317,7 @@ class CurrencySystem(commands.Cog):
         sender_balance = get_user_balance(self.conn, sender_id)
 
         if sender_balance < amount:
-            await ctx.send(f"{ctx.author.mention}, you don't have enough µPPN to give. Your current balance is {sender_balance} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, you don't have enough µPPN to give. Your current balance is {sender_balance:,.2f} µPPN.")
             return
 
         # Deduct the amount from the sender's balance
@@ -2351,15 +2339,19 @@ class CurrencySystem(commands.Cog):
     async def daily(self, ctx):
         async with self.lock:  # Use the asynchronous lock
             user_id = ctx.author.id
+            member = ctx.guild.get_member(user_id)
             current_time = datetime.now()
 
             # If the user hasn't claimed or 24 hours have passed since the last claim
             if user_id not in self.last_claimed or (current_time - self.last_claimed[user_id]).total_seconds() > 86400:
-                amount = random.randint(dailyMin, dailyMax)
+                if has_role(member, bronze_pass):
+                    amount = random.randint(dailyMin * 2, dailyMax * 2)
+                else:
+                    amount = random.randint(dailyMin, dailyMax)
                 current_balance = get_user_balance(self.conn, user_id)
                 new_balance = current_balance + amount
                 update_user_balance(self.conn, user_id, new_balance)
-                await ctx.send(f"{ctx.author.mention}, you have claimed {amount:,.2f} µPPN. Your new balance is: {new_balance} µPPN.")
+                await ctx.send(f"{ctx.author.mention}, you have claimed {amount:,.2f} µPPN. Your new balance is: {new_balance:,.2f} µPPN.")
                 self.last_claimed[user_id] = current_time  # Update the last claimed time
             else:
                 time_left = 86400 - (current_time - self.last_claimed[user_id]).total_seconds()
@@ -2400,7 +2392,7 @@ class CurrencySystem(commands.Cog):
         current_balance = get_user_balance(self.conn, user_id)
         new_balance = current_balance + amount
         update_user_balance(self.conn, user_id, new_balance)
-        await ctx.send(f"{ctx.author.mention}, you have added {amount:,.2f} µPPN. Your new balance is: {new_balance} µPPN.")
+        await ctx.send(f"{ctx.author.mention}, you have added {amount:,.2f} µPPN. Your new balance is: {new_balance:,.2f} µPPN.")
 
 
 
@@ -3099,10 +3091,15 @@ class CurrencySystem(commands.Cog):
                     sell_timestamps = [entry[0] for entry in sell_prices]
                     sell_prices = [entry[1] for entry in sell_prices]
                     # Define a dictionary for time periods
+
                     time_periods = {
                         "1h": timedelta(hours=1),
                         "4h": timedelta(hours=4),
                         "1d": timedelta(days=1),
+                        "2d": timedelta(days=2),
+                        "3d": timedelta(days=3),
+                        "4d": timedelta(days=4),
+                        "5d": timedelta(days=5),
                         "1w": timedelta(weeks=1),
                         "2w": timedelta(weeks=2),
                         "3w": timedelta(weeks=3),
@@ -3113,21 +3110,35 @@ class CurrencySystem(commands.Cog):
                         # Add more as needed
                     }
 
-                    # Use default values if the user doesn't provide specific information
-                    if not time_period:
-                        time_period = "4w"
 
-                    if not rsi_period:
+                    # Calculate the time period dynamically
+#                    if time_period:
+#                        try:
+#                            time_delta = timedelta(**{time_period: 1})
+#                        except TypeError:
+#                            await ctx.send("Invalid time period. Please use a valid format like '1d', '2w', etc.")
+#                            return
+#                    else:
+#                        # Default to 1 week if not provided
+#                        time_delta = timedelta(weeks=24)
+
+                    # Use default values if the user doesn't provide specific information
+                    if not time_period or time_period.lower() == "none":
+                        time_period = "6m"
+
+                    if not rsi_period or rsi_period.lower() == "none":
                         rsi_period = 14
 
-                    if not sma_period:
+                    if not sma_period or sma_period.lower() == "none":
                         sma_period = 50
 
-                    if not ema_period:
+                    if not ema_period or ema_period.lower() == "none":
                         ema_period = 50
 
+
                     # Filter transactions based on the specified time period
-                    start_date = datetime.now() - time_periods.get(time_period, timedelta(hours=1))  # Default to 1 week if not found
+                    start_date = datetime.now() - time_periods.get(time_period, timedelta(hours=1))
+                    #start_date = datetime.now() - time_delta
 
                     buy_prices, buy_timestamps = zip(*[(p, t) for p, t in zip(buy_prices, buy_timestamps) if t >= start_date])
                     sell_prices, sell_timestamps = zip(*[(p, t) for p, t in zip(sell_prices, sell_timestamps) if t >= start_date])
@@ -3149,24 +3160,24 @@ class CurrencySystem(commands.Cog):
                         valuation = "Fair-Valued"
 
                     # Calculate RSI
-                    if len(buy_prices) >= rsi_period:
-                        rsi = talib.RSI(np.array(buy_prices), timeperiod=rsi_period)
+                    if len(buy_prices) >= int(rsi_period):
+                        rsi = talib.RSI(np.array(buy_prices), timeperiod=int(rsi_period))
                         rsi_timestamps = buy_timestamps[-len(rsi):]  # Match RSI timestamps
                     else:
                         rsi = None  # Insufficient data for RSI
                         rsi_timestamps = []
 
                     # Calculate Simple Moving Average (SMA)
-                    if len(buy_prices) >= sma_period:
-                        sma = talib.SMA(np.array(buy_prices), timeperiod=sma_period)
+                    if len(buy_prices) >= int(sma_period):
+                        sma = talib.SMA(np.array(buy_prices), timeperiod=int(sma_period))
                         sma_timestamps = buy_timestamps[-len(sma):]  # Match SMA timestamps
                     else:
                         sma = None  # Insufficient data for SMA
                         sma_timestamps = []
 
                     # Calculate Exponential Moving Average (EMA)
-                    if len(buy_prices) >= ema_period:
-                        ema = talib.EMA(np.array(buy_prices), timeperiod=ema_period)
+                    if len(buy_prices) >= int(ema_period):
+                        ema = talib.EMA(np.array(buy_prices), timeperiod=int(ema_period))
                         ema_timestamps = buy_timestamps[-len(ema):]  # Match EMA timestamps
                     else:
                         ema = None  # Insufficient data for EMA
@@ -3190,29 +3201,42 @@ class CurrencySystem(commands.Cog):
 
                     # Plot the average line on the price history chart
                     ax1.plot(average_timestamps, average_prices, linestyle='-', color='black', label='Average Price')
-                    if sma is not None:
+                    if sma is not None and len(sma) == len(sma_timestamps):
                         ax1.plot(sma_timestamps, sma, color='purple', label=f'SMA ({sma_period}-period)')
-                    if ema is not None:
+                    if ema is not None and len(ema) == len(ema_timestamps):
                         ax1.plot(ema_timestamps, ema, color='blue', label=f'EMA ({ema_period}-period)')
                     if upper is not None and lower is not None:
-                            ax1.fill_between(bb_timestamps, upper, lower, color='lightgray', alpha=0.5, label='Bollinger Bands')
+                        ax1.fill_between(bb_timestamps, upper, lower, color='lightblue', alpha=0.5, label='Bollinger Bands')
 
-                    ax1.set_title(f"Price History for {stock_symbol}")
+                    ax1.set_title(f"Stock Chart for {stock_symbol}")
                     ax1.set_ylabel("Price")
                     ax1.grid(True)
                     ax1.legend()
                     ax1.tick_params(axis='x', rotation=45)
+                    if "h" in time_period:
+                        ax1.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                    elif "d" in time_period:
+                        ax1.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                    else:
+                        ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+                    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
 
                     # Plot RSI on the separate RSI chart
-                    if rsi is not None:
+                    if rsi is not None and len(rsi) == len(rsi_timestamps):
                         ax2.plot(rsi_timestamps, rsi, color='orange', label=f'RSI ({rsi_period}-period)')
                         ax2.set_title(f"RSI Chart for {stock_symbol}")
                         ax2.set_ylabel("RSI")
                         ax2.grid(True)
                         ax2.legend()
-                        ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=1))  # Show major ticks every month
+                        if "h" in time_period:
+                            ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                        elif "d" in time_period:
+                            ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                        else:
+                            ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
                         ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
                         ax2.tick_params(axis='x', rotation=45)
+
 
                     # Save the chart to a BytesIO object
                     buffer = io.BytesIO()
@@ -3260,17 +3284,22 @@ class CurrencySystem(commands.Cog):
     async def buy(self, ctx, stock_name: str, amount: int):
         buyer_id = ctx.author.id
         user_id = ctx.author.id
+        member = ctx.guild.get_member(user_id)
 
         cursor = self.conn.cursor()
+        if amount <= 0:
+            await ctx.send("Amount must be a positive number.")
+            return
 
 
         # Check if the stock_name is "TitanForge" and set a different limit
-        if stock_name.lower() == "titanforge":
-            stock_limit = float('inf')  # Infinite limit for TitanForge
-        elif stock_name.lower() == "p3:stable":
+        if stock_name.lower() == "p3:stable":
             stock_limit = float('inf')  # Infinite limit for TitanForge
         else:
-            stock_limit = dStockLimit
+            if has_role(member, bronze_pass):
+                stock_limit = dStockLimit * 1.5
+            else:
+                stock_limit = dStockLimit
 
         if amount == 0:
             await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
@@ -3527,7 +3556,15 @@ class CurrencySystem(commands.Cog):
             await self.increase_price(ctx, stock_name, amount)
 
         await self.blueChipBooster(ctx, "BUY")
-        await self.P3LQDYBooster(ctx)
+        stock_amount = amount
+        print(f"Debug: {stock_name}, Amount {stock_amount}, Price {price}, Stock Limit {stock_limit}")
+        if (
+            stock_name.lower() == "p3:lqdy"
+            and price <= 1000000
+            and stock_amount <= stock_limit
+        ):
+            await self.reward_share_holders(ctx, "p3:lqdy")
+            print(f"{stock_name} utility deployed")
         self.conn.commit()
         if amount == 0:
             print(f'Fix for 0 amount buy after order book')
@@ -3543,6 +3580,9 @@ class CurrencySystem(commands.Cog):
         user_id = ctx.author.id
         member = ctx.guild.get_member(user_id)
 
+        if amount <= 0:
+            await ctx.send("Amount must be a positive number.")
+            return
 
         await ctx.message.delete()
         cursor = self.conn.cursor()
@@ -3576,7 +3616,7 @@ class CurrencySystem(commands.Cog):
         price = Decimal(stock[2])
         earnings = price * Decimal(amount)
         tax_percentage = get_tax_percentage(amount, earnings)  # Custom function to determine the tax percentage based on quantity and earnings
-        if has_role(member, bronze_pass) and tax_rate >= 0.15:
+        if has_role(member, bronze_pass):
             tax_percentage -= role_discount
         fee = earnings * Decimal(tax_percentage)
         total_earnings = earnings - fee
@@ -4130,7 +4170,7 @@ class CurrencySystem(commands.Cog):
         # Commit changes to the database
         self.conn.commit()
 
-        await ctx.send(f"You have successfully bought {amount} units of stocks from ETF {etf_id}. Your new balance is: {new_balance} µPPN.")
+        await ctx.send(f"You have successfully bought {amount} units of stocks from ETF {etf_id}. Your new balance is: {new_balance:,.2f} µPPN.")
 
 
     @commands.command(name="as-user", help="Run a stock command as a specific user using their P3 address.")
@@ -5054,10 +5094,22 @@ class CurrencySystem(commands.Cog):
         await ctx.send(f"Gave {amount} of {symbol} to {user.name}.")
 
     @commands.command(name="send_stock", help="Send a user an amount of a stock from your stash.")
-    async def send_stock(self, ctx, user: discord.User, symbol: str, amount: int):
+    async def send_stock(self, ctx, target, symbol: str, amount: int):
         cursor = self.conn.cursor()
+        P3addrConn = sqlite3.connect("P3addr.db")
+
 
         await ctx.message.delete()
+
+        if target.startswith("P3:"):
+            p3_address = target
+            user_id = get_user_id(P3addrConn, p3_address)
+            if not user_id:
+                await ctx.send("Invalid or unknown P3 address.")
+                return
+        else:
+            await ctx.send("Please provide a valid P3 address.")
+            return
 
         # Check if the stock exists.
         cursor.execute("SELECT symbol, available FROM stocks WHERE symbol=?", (symbol,))
@@ -5078,20 +5130,20 @@ class CurrencySystem(commands.Cog):
         cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (new_amount, ctx.author.id, symbol))
 
         # Update the recipient's stocks.
-        cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (user.id, symbol))
+        cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (user_id, symbol))
         recipient_stock = cursor.fetchone()
         if recipient_stock is None:
-            cursor.execute("INSERT INTO user_stocks(user_id, symbol, amount) VALUES(?, ?, ?)", (user.id, symbol, amount))
+            cursor.execute("INSERT INTO user_stocks(user_id, symbol, amount) VALUES(?, ?, ?)", (user_id, symbol, amount))
         else:
             new_amount = recipient_stock['amount'] + amount
-            cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (new_amount, user.id, symbol))
+            cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (new_amount, user_id, symbol))
 
         self.conn.commit()
 
         # Log the stock transfer
-        await log_stock_transfer(ledger_conn, ctx, ctx.author, user, symbol, amount)
+        await log_stock_transfer(ledger_conn, ctx, ctx.author, user_id, symbol, amount)
 
-        await ctx.send(f"Sent {amount} of {symbol} to {user.name}.")
+        await ctx.send(f"Sent {amount} of {symbol} to {target}.")
 
 
     @commands.command(name="add_stock", help="Add a new stock. Provide the stock symbol, name, price, total supply, and available amount.")
@@ -5299,6 +5351,63 @@ class CurrencySystem(commands.Cog):
         self.conn.commit()
 
 
+    @commands.command(name="reward_share_holders", help="Reward P3:Stable shareholders with 7% more shares.")
+    @is_allowed_user(930513222820331590)
+    async def reward_share_holders(self, ctx, stock_symbol: str):
+        cursor = self.conn.cursor()
+
+
+        if stock_symbol.lower() == "p3:stable":
+            stable_symbol = "P3:Stable"
+            stakingYield = 0.07
+        elif stock_symbol.lower() == "p3:bank":
+            stable_symbol = "P3:BANK"
+            stakingYield = 0.12
+        elif stock_symbol.lower() == "p3:lqdy":
+            stable_symbol = "P3:LQDY"
+            stakingYield = 0.0475
+        else:
+            ctx.send(f"{stock_symbol} is not a Yield Reward Stock")
+            return
+
+        # Fetch all users who hold P3:Stable
+        cursor.execute("SELECT user_id, amount FROM user_stocks WHERE symbol=?", (stable_symbol,))
+        stable_holders = cursor.fetchall()
+
+        if not stable_holders:
+            await ctx.send("No users hold P3:Stable.")
+            return
+
+        total_rewarded_shares = 0
+
+        # Reward each shareholder
+        for holder in stable_holders:
+            user_id = holder['user_id']
+            if user_id == 1092870544988319905:
+                print(f"Skipping {user_id}")
+                continue
+            amount_held = holder['amount']
+            if amount_held == 0.0:
+                continue
+            print(f"UserID: {user_id} holds {amount_held} of {stable_symbol}")
+
+            # Calculate the reward (7% of the held amount)
+            reward_shares = int(amount_held * stakingYield)
+
+            # Update the user's stock holdings with the rewarded shares
+            new_amount_held = amount_held + reward_shares
+            cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (new_amount_held, user_id, stable_symbol))
+
+            total_rewarded_shares += reward_shares
+            await log_stock_transfer(ledger_conn, ctx, "stakingYield", user_id, stable_symbol, reward_shares)
+
+
+        self.conn.commit()
+
+        if stock_symbol.lower() != "p3:lqdy":
+            await ctx.send(f"Reward distribution completed. Total {stock_symbol} shares rewarded: {total_rewarded_shares:,.2f} at {stakingYield * 100}%.")
+        else:
+            print(f"{stock_symbol} utility deployed")
 
 
 
@@ -5309,11 +5418,20 @@ class CurrencySystem(commands.Cog):
 
         reserveStocks = ["P3:Gold-Reserve", "BlueChipOG"]
 
+        shareLimit = 1000000000
+
+
+
+        if amount >= shareLimit:
+            shares_amount = shareLimit
+        else:
+            shares_amount = amount
+
         if type.lower() == "buy":
             for stock_name in reserveStocks:
-                await self.sell_stock_for_bot(ctx, stock_name, amount / 2)
+                await self.sell_stock_for_bot(ctx, stock_name, shares_amount)
             # Randomly fluctuate the price of P3:Stable
-            new_price = random.uniform(950, 1150)
+            new_price = random.uniform(850, 2500)
             cursor.execute("""
                 UPDATE stocks
                 SET price = ?
@@ -5325,10 +5443,10 @@ class CurrencySystem(commands.Cog):
 
         elif type.lower() == "sell":
             for stock_name in reserveStocks:
-                await self.buy_stock_for_bot(ctx, stock_name, amount / 2)
+                await self.buy_stock_for_bot(ctx, stock_name, shares_amount * 2)
 
             # Randomly fluctuate the price of P3:Stable
-            new_price = random.uniform(950, 1150)
+            new_price = random.uniform(850, 2500)
             cursor.execute("""
                 UPDATE stocks
                 SET price = ?
@@ -6118,7 +6236,7 @@ class CurrencySystem(commands.Cog):
 
 
 
-        await ctx.send(f"You have successfully bought {quantity} units of ETF {etf_id}. Your new balance is: {new_balance} µPPN.")
+        await ctx.send(f"You have successfully bought {quantity} units of ETF {etf_id}. Your new balance is: {new_balance:,.2f} µPPN.")
 
 
     @commands.command(name="sell_etf", help="Sell an ETF. Provide the ETF ID and quantity.")
@@ -6180,7 +6298,7 @@ class CurrencySystem(commands.Cog):
         if etf_id == 10:
             await self.whaleBooster(ctx)
 
-        await ctx.send(f"You have successfully sold {quantity} units of ETF {etf_id}. Your new balance is: {new_balance} µPPN.")
+        await ctx.send(f"You have successfully sold {quantity} units of ETF {etf_id}. Your new balance is: {new_balance:,.2f} µPPN.")
 
     @commands.command(name="buy_all_etf", help="Buy a specified quantity of each ETF up to a limit of 500 billion shares.")
     async def buy_all_etf(self, ctx, quantity: int):
@@ -6255,7 +6373,7 @@ class CurrencySystem(commands.Cog):
                 await log_transaction(ledger_conn, ctx, "Buy ALL ETF", etf_id, quantity, cost, cost, current_balance, new_balance, etf_value)
 
         self.conn.commit()
-        await ctx.send(f"You have successfully bought {total_shares} shares of each ETF. Your new balance is: {new_balance} µPPN.")
+        await ctx.send(f"You have successfully bought {total_shares} shares of each ETF. Your new balance is: {new_balance:,.2f} µPPN.")
 
 
 
@@ -6321,7 +6439,7 @@ class CurrencySystem(commands.Cog):
 
         if sold_etfs:
             sold_etf_list = ", ".join(map(str, sold_etfs))
-            await ctx.send(f"You have successfully sold all units of ETFs {sold_etf_list}. Your new balance is: {new_balance} µPPN.")
+            await ctx.send(f"You have successfully sold all units of ETFs {sold_etf_list}. Your new balance is: {new_balance:,.2f} µPPN.")
 
 
     @commands.command(name="reset_stock_limit", help="Reset a user's daily stock buy limit based on P3 address.")
@@ -6946,7 +7064,7 @@ class CurrencySystem(commands.Cog):
         await log_item_transaction(self.conn, ctx, "Buy", item_name, quantity, total_cost, tax_amount, new_balance)
         self.conn.commit()
 
-        await ctx.send(f"{ctx.author.mention}, you have successfully bought {quantity} {item_name}. Your new balance is: {new_balance} µPPN.")
+        await ctx.send(f"{ctx.author.mention}, you have successfully bought {quantity} {item_name}. Your new balance is: {new_balance:,.2f} µPPN.")
         if item_name == "Gold":
             await self.goldReserveBooster(ctx, quantity)
 
@@ -7017,7 +7135,7 @@ class CurrencySystem(commands.Cog):
         await log_item_transaction(self.conn, ctx, "Sell", item_name, quantity, total_sale_amount, Decimal(fee), new_balance)
         self.conn.commit()
 
-        await ctx.send(f"{ctx.author.mention}, you have successfully sold {quantity} {item_name}. Your new balance is: {new_balance} µPPN.")
+        await ctx.send(f"{ctx.author.mention}, you have successfully sold {quantity} {item_name}. Your new balance is: {new_balance:,.2f} µPPN.")
 
 
 ## Market Place Tools
@@ -7511,13 +7629,14 @@ class CurrencySystem(commands.Cog):
         if win_amount > 0:
             new_balance += win_amount
             update_user_balance(self.conn, user_id, new_balance)
-            await ctx.send(f"{ctx.author.mention}, congratulations! The ball landed on {spin_result} ({spin_color}). You won {win_amount} µPPN. Your new balance is {new_balance}.")
+            await ctx.send(f"{ctx.author.mention}, congratulations! The ball landed on {spin_result} ({spin_color}). You won {win_amount} µPPN. Your new balance is {new_balance:,.2f}.")
             await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You won {win_amount} µPPN", new_balance)
             await self.casinoTool(ctx, True)
         else:
-            await ctx.send(f"{ctx.author.mention}, the ball landed on {spin_result} ({spin_color}). You lost {total_cost} µPPN including tax. Your new balance is {new_balance}.")
+            await ctx.send(f"{ctx.author.mention}, the ball landed on {spin_result} ({spin_color}). You lost {total_cost} µPPN including tax. Your new balance is {new_balance:,.2f}.")
             await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You lost {total_cost} µPPN", new_balance)
             await self.casinoTool(ctx, False)
+
 
     @commands.command(name='coinflip', help='Flip a coin and bet on heads or tails.')
     async def coinflip(self, ctx, choice: str, bet: int):
@@ -7560,17 +7679,26 @@ class CurrencySystem(commands.Cog):
         update_user_balance(self.conn, user_id, new_balance)
 
         # Check if the user wins
-        if choice.lower() == coin_result:
+        win = choice.lower() == coin_result
+
+        # Create an embed to display the result
+        embed = discord.Embed(title="Coinflip Result", color=discord.Color.gold())
+        embed.add_field(name="Your Choice", value=choice.capitalize(), inline=True)
+        embed.add_field(name="Coin Landed On", value=coin_result.capitalize(), inline=True)
+
+        if win:
             win_amount = bet * 2  # Payout for correct choice is 2x
             new_balance += win_amount
-            update_user_balance(self.conn, user_id, new_balance)
-            await ctx.send(f"{ctx.author.mention}, congratulations! The coin landed on {coin_result}. You won {win_amount} µPPN. Your new balance is {new_balance}.")
-            await log_gambling_transaction(ledger_conn, ctx, "Coinflip", bet, f"You won {win_amount} µPPN", new_balance)
+            embed.add_field(name="Congratulations!", value=f"You won {win_amount:,.2f} µPPN", inline=False)
             await self.casinoTool(ctx, True)
         else:
-            await ctx.send(f"{ctx.author.mention}, the coin landed on {coin_result}. You lost {total_cost} µPPN including tax. Your new balance is {new_balance}.")
-            await log_gambling_transaction(ledger_conn, ctx, "Coinflip", bet, f"You lost {total_cost} µPPN", new_balance)
+            embed.add_field(name="Oops!", value=f"You lost {total_cost:,.2f} µPPN including tax", inline=False)
             await self.casinoTool(ctx, False)
+
+        embed.add_field(name="New Balance", value=f"{new_balance:,.2f} µPPN", inline=False)
+
+        await ctx.send(embed=embed)
+        await log_gambling_transaction(ledger_conn, ctx, "Coinflip", bet, f"{'Win' if win else 'Loss'}", new_balance)
 
 
     @commands.command(name='slotmachine', aliases=['slots'], help='Play the slot machine. Bet an amount up to 500,000 µPPN.')
@@ -7635,11 +7763,11 @@ class CurrencySystem(commands.Cog):
             await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"You won {win_amount} µPPN", new_balance)
             await self.casinoTool(ctx, True)
         else:
-            embed.add_field(name="Better luck next time!", value=f"You lost {total_cost} µPPN including tax. Your new balance is {new_balance} µPPN.", inline=False)
+            embed.add_field(name="Better luck next time!", value=f"You lost {total_cost} µPPN including tax. Your new balance is {new_balance:,.2f} µPPN.", inline=False)
             await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"You lost {total_cost} µPPN", new_balance)
             await self.casinoTool(ctx, False)
 
-        embed.set_footer(text=f"Your new balance: {new_balance} µPPN")
+        embed.set_footer(text=f"Your new balance: {new_balance:,.2f} µPPN")
         await ctx.send(embed=embed)
 
 
@@ -7654,7 +7782,7 @@ class CurrencySystem(commands.Cog):
         # Check if the player has enough balance to place the bet
         user_balance = 1000  # Replace with your logic to get the user's balance
         if bet <= 0 or bet > user_balance:
-            await ctx.send(f"Invalid bet. Please bet between 1 and {user_balance} µPPN.")
+            await ctx.send(f"Invalid bet. Please bet between 1 and {user_balance:,.2f} µPPN.")
             return
 
         # Start a new Blackjack game
@@ -7771,6 +7899,11 @@ class CurrencySystem(commands.Cog):
     @commands.command(name='check_stocks', help='Check which stocks you can still buy.')
     async def check_stocks(self, ctx):
         user_id = ctx.author.id
+        member = ctx.guild.get_member(user_id)
+        if has_role(member, bronze_pass):
+            dStockLimit = 150000000 * 1.25
+        else:
+            dStockLimit = 150000000
 
         # Connect to the database
         conn = sqlite3.connect("currency_system.db")
@@ -7781,7 +7914,6 @@ class CurrencySystem(commands.Cog):
         all_stocks = cursor.fetchall()
 
         stocks_can_buy = {}
-        dStockLimit = 150000000
         for stock in all_stocks:
             stock_name = stock[0]
             stock_limit = dStockLimit
