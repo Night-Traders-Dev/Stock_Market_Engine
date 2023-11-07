@@ -48,11 +48,11 @@ dETFLimit = 500000000000
 treasureMin = 10000000
 treasureMax = 50000000
 MAX_BALANCE = Decimal('750000000000000000')
-sellPressureMin = 0.00002
-sellPressureMax = 0.00005
-buyPressureMin = 0.0000035
-buyPressureMax = 0.0000650
-stockDecayValue = 0.00060
+sellPressureMin = 0.000025
+sellPressureMax = 0.000055
+buyPressureMin = 0.0000055
+buyPressureMax = 0.0000850
+stockDecayValue = 0.00025
 decayMin = 0.01
 resetµPPN = 100
 dailyMin = 100000
@@ -110,6 +110,69 @@ MAX_EARNINGS = 500000
 
 ## End Work
 
+def parse_time_shorthand(shorthand):
+    if shorthand.endswith("m"):
+        return timedelta(minutes=int(shorthand[:-1]))
+    elif shorthand.endswith("h"):
+        return timedelta(hours=int(shorthand[:-1]))
+    elif shorthand.endswith("d"):
+        return timedelta(days=int(shorthand[:-1]))
+    else:
+        raise ValueError("Invalid time shorthand. Use 'm' for minutes, 'h' for hours, or 'd' for days.")
+
+def calculate_remaining_time(last_action_time, time_threshold):
+    if last_action_time is None:
+        return timedelta()
+
+    time_elapsed = datetime.now() - last_action_time
+    remaining_time = max(time_threshold - time_elapsed, timedelta())
+    remaining_time -= timedelta(hours=4)
+    return remaining_time
+
+def buy_check(cursor, user_id, stock_name, time_threshold):
+    # Convert shorthand time to timedelta
+    time_threshold = parse_time_shorthand(time_threshold)
+
+    # Get the total amount bought within the specified time threshold by the user for this stock
+    cursor.execute("""
+        SELECT SUM(amount), MAX(timestamp)
+        FROM user_daily_buys
+        WHERE user_id=? AND symbol=? AND timestamp >= ?
+    """, (user_id, stock_name, datetime.now() - time_threshold))
+
+    daily_bought_record = cursor.fetchone()
+    daily_bought = daily_bought_record[0] if daily_bought_record and daily_bought_record[0] is not None else 0
+    last_purchase_time_str = daily_bought_record[1] if daily_bought_record and daily_bought_record[1] is not None else None
+
+    # Convert last_purchase_time to a datetime object
+    last_purchase_time = datetime.strptime(last_purchase_time_str, "%Y-%m-%d %H:%M:%S") if last_purchase_time_str else None
+
+    remaining_time = calculate_remaining_time(last_purchase_time, time_threshold)
+
+    return daily_bought > 0, last_purchase_time, remaining_time
+
+def sell_check(cursor, user_id, stock_name, time_threshold):
+    # Convert shorthand time to timedelta
+    time_threshold = parse_time_shorthand(time_threshold)
+
+    # Get the total amount sold within the specified time threshold by the user for this stock
+    cursor.execute("""
+        SELECT SUM(amount), MAX(timestamp)
+        FROM user_daily_sells
+        WHERE user_id=? AND symbol=? AND timestamp >= ?
+    """, (user_id, stock_name, datetime.now() - time_threshold))
+
+    daily_sold_record = cursor.fetchone()
+    daily_sold = daily_sold_record[0] if daily_sold_record and daily_sold_record[0] is not None else 0
+    last_sold_time_str = daily_sold_record[1] if daily_sold_record and daily_sold_record[1] is not None else None
+
+    # Convert last_sold_time to a datetime object
+    last_sold_time = datetime.strptime(last_sold_time_str, "%Y-%m-%d %H:%M:%S") if last_sold_time_str else None
+
+    remaining_time = calculate_remaining_time(last_sold_time, time_threshold)
+
+    return daily_sold > 0, last_sold_time, remaining_time
+
 
 
 def is_valid_user_id(client, user_id):
@@ -155,6 +218,55 @@ def create_multipage_embeds(data, title):
         pages.append(embed)
 
     return pages
+
+
+async def check_impact(cursor, ctx, stock_name: str, amount: float):
+
+    # Get stock details
+    cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+    stock = cursor.fetchone()
+
+    if stock is None:
+        await ctx.send(f"This stock does not exist.")
+        return
+
+    # Assuming `price` is the third column
+    stock_price = float(stock[2])
+    subtotal = stock_price * amount
+
+
+    # Calculate potential price decrease
+    price_decrease = random.uniform(sellPressureMin * amount, min(sellPressureMax * amount, stock_price))
+    potential_stock_price = max(stock_price - price_decrease, 0)  # Ensure the price doesn't go below 0
+
+    # Calculate impact percentage
+    impact_percentage = ((stock_price - potential_stock_price) / stock_price) * 100
+    print(f"{generate_crypto_address(ctx.author.id)}: Selling {amount:,} shares of {stock_name} with an impact of {impact_percentage:2f}%")
+
+    # Check if impact percentage is over 10%
+    if impact_percentage > 10:
+        confirmation_message = await ctx.send(
+            f"The impact of this sell is estimated to be {impact_percentage}%. "
+            f"Are you sure you want to continue? Type `confirm` and press enter to proceed."
+        )
+
+        try:
+            # Wait for user confirmation
+            confirm_response = await ctx.bot.wait_for(
+                "message",
+                check=lambda msg: msg.author == ctx.author and msg.channel == ctx.channel and msg.content.lower() == "confirm",
+                timeout=30,
+            )
+
+            # Check if the user confirmed
+            if confirm_response:
+                await ctx.send("Sell confirmed. Proceeding with the sell.")
+            else:
+                await ctx.send("Sell canceled.")
+                return
+        except asyncio.TimeoutError:
+            await ctx.send("Sell confirmation timed out. Sell canceled.")
+            return
 
 async def check_and_notify_address(ctx):
     # Connect to the P3addr.db database
@@ -1022,6 +1134,20 @@ def setup_database():
     except sqlite3.Error as e:
         print(f"An error occurred while creating the tables: {str(e)}")
 
+    try:
+        cursor.execute("""
+
+            CREATE TABLE IF NOT EXISTS user_daily_sells (
+                user_id INTEGER,
+                symbol TEXT,
+                amount INTEGER,
+                timestamp DATETIME
+            );
+        """)
+        print("Daily Sells Limit created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
 
     try:
         cursor.execute("""
@@ -1317,10 +1443,11 @@ def decay_other_stocks(conn, stock_name_excluded, decay_percentage=stockDecayVal
 
     # Apply decay to each stock
     for symbol, price in stocks:
-        new_price = Decimal(price) * (1 - Decimal(decay_percentage))
-        # Ensure that the new price doesn't go below 0.01
-        new_price = max(new_price, Decimal(decayMin))
-        cursor.execute("UPDATE stocks SET price = ? WHERE symbol = ?", (str(new_price), symbol))
+        if symbol != "BlueChipOG":
+            new_price = Decimal(price) * (1 - Decimal(decay_percentage))
+            # Ensure that the new price doesn't go below 0.01
+            new_price = max(new_price, Decimal(decayMin))
+            cursor.execute("UPDATE stocks SET price = ? WHERE symbol = ?", (str(new_price), symbol))
 
     conn.commit()
 
@@ -2795,6 +2922,15 @@ class CurrencySystem(commands.Cog):
         # Fetch current price and available supply from stocks table
         cursor_currency.execute("SELECT available, price FROM stocks WHERE symbol = ?", (symbol,))
         result = cursor_currency.fetchone()
+        # Fetch ETFs containing the specified stock
+        cursor_currency.execute("""
+            SELECT DISTINCT etfs.etf_id
+            FROM etf_stocks
+            INNER JOIN etfs ON etf_stocks.etf_id = etfs.etf_id
+            WHERE etf_stocks.symbol = ?;
+        """, (symbol,))
+        etfs_containing_stock = [row[0] for row in cursor_currency.fetchall()]
+
 
         if result:
             available_supply, current_price = result
@@ -2830,6 +2966,9 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Circulating Supply", value=f"{circulating_supply:,} shares🔄", inline=False)
         embed.add_field(name="Circulating Value", value=f"{formatet_circulating_value} µPPN")
         embed.add_field(name="Valuation", value=valuation_label, inline=False)
+        if etfs_containing_stock:
+            embed.add_field(name="ETFs Containing Stock", value=", ".join(map(str, etfs_containing_stock)), inline=False)
+
 
         await ctx.send(embed=embed)
 
@@ -3200,7 +3339,7 @@ class CurrencySystem(commands.Cog):
                     average_timestamps, average_prices = zip(*average_prices)
 
                     # Plot the average line on the price history chart
-                    ax1.plot(average_timestamps, average_prices, linestyle='-', color='black', label='Average Price')
+#                    ax1.plot(average_timestamps, average_prices, linestyle='-', color='black', label='Average Price')
                     if sma is not None and len(sma) == len(sma_timestamps):
                         ax1.plot(sma_timestamps, sma, color='purple', label=f'SMA ({sma_period}-period)')
                     if ema is not None and len(ema) == len(ema_timestamps):
@@ -3213,6 +3352,12 @@ class CurrencySystem(commands.Cog):
                     ax1.grid(True)
                     ax1.legend()
                     ax1.tick_params(axis='x', rotation=45)
+                    # Set y-axis limits on the price history chart
+                    min_price = min(buy_prices + sell_prices)
+                    max_price = max(buy_prices + sell_prices)
+                    price_range = max_price - min_price
+                    y_axis_margin = 0.001  # Add a margin to the y-axis limits
+                    ax1.set_ylim(min_price - y_axis_margin * price_range, max_price + y_axis_margin * price_range)
                     if "h" in time_period:
                         ax1.xaxis.set_major_locator(mdates.DayLocator(interval=1))
                     elif "d" in time_period:
@@ -3286,7 +3431,11 @@ class CurrencySystem(commands.Cog):
         user_id = ctx.author.id
         member = ctx.guild.get_member(user_id)
 
+
         cursor = self.conn.cursor()
+#        result, last_purchase_time, remaining_time = sell_check(cursor, user_id, stock_name, "30m")
+#        if result:
+#            print(f"You can not purchase {stock_name} for another {remaining_time}")
         if amount <= 0:
             await ctx.send("Amount must be a positive number.")
             return
@@ -3558,13 +3707,12 @@ class CurrencySystem(commands.Cog):
         await self.blueChipBooster(ctx, "BUY")
         stock_amount = amount
         print(f"Debug: {stock_name}, Amount {stock_amount}, Price {price}, Stock Limit {stock_limit}")
-        if (
-            stock_name.lower() == "p3:lqdy"
-            and price <= 1000000
-            and stock_amount <= stock_limit
-        ):
-            await self.reward_share_holders(ctx, "p3:lqdy")
-            print(f"{stock_name} utility deployed")
+#        if (
+#            stock_name.lower() == "p3:lqdy"
+#            and price <= 1000000
+#            and stock_amount <= stock_limit
+#        ):
+#            await self.reward_share_holders(ctx, "p3:lqdy")
         self.conn.commit()
         if amount == 0:
             print(f'Fix for 0 amount buy after order book')
@@ -3584,8 +3732,18 @@ class CurrencySystem(commands.Cog):
             await ctx.send("Amount must be a positive number.")
             return
 
+
+
         await ctx.message.delete()
         cursor = self.conn.cursor()
+
+
+#        result, last_purchase_time, remaining_time = buy_check(cursor, user_id, stock_name, "30m")
+#        if result:
+#            await ctx.send(f"Must wait {remaining_time} after purchase to sell")
+#            return
+#        else:
+#            print("Buy:False")
 
         # Check if the user recently bought stocks
         cursor.execute("SELECT timestamp FROM user_daily_buys WHERE user_id=? AND symbol=? ORDER BY timestamp DESC LIMIT 1", (user_id, stock_name))
@@ -3612,7 +3770,7 @@ class CurrencySystem(commands.Cog):
         if stock is None:
             await ctx.send(f"{ctx.author.mention}, this stock does not exist.")
             return
-
+        await check_impact(cursor, ctx, stock_name, float(amount))
         price = Decimal(stock[2])
         earnings = price * Decimal(amount)
         tax_percentage = get_tax_percentage(amount, earnings)  # Custom function to determine the tax percentage based on quantity and earnings
@@ -3708,6 +3866,16 @@ class CurrencySystem(commands.Cog):
                 record_team_transaction(self.conn, team_id, stock_name, amount, price, "sell")
                 # Calculate and update the team's profit/loss
                 calculate_team_profit_loss(self.conn, team_id)
+
+            # Record this transaction in the user_daily_buys table
+            try:
+                cursor.execute("""
+                    INSERT INTO user_daily_sells (user_id, symbol, amount, timestamp)
+                    VALUES (?, ?, ?, datetime('now'))
+                """, (user_id, stock_name, amount))
+            except sqlite3.Error as e:
+                await ctx.send(f"{ctx.author.mention}, an error occurred while updating daily stock limit. Error: {str(e)}")
+                return
 
             if stock_name == ('P3:Stable'):
                 await self.stableManager(ctx, 'sell', amount)
@@ -3928,6 +4096,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="sellMulti", aliases=["sell_multi"], help="Sell stocks for all stocks in the market. Provide the amount to sell.")
+    @is_allowed_user(930513222820331590)
     async def sell_multi(self, ctx, amount: int):
         user_id = ctx.author.id
         current_time = datetime.now()
@@ -5465,9 +5634,9 @@ class CurrencySystem(commands.Cog):
     @is_allowed_user(930513222820331590, PBot)
     async def blueChipBooster(self, ctx, type: str):
         if type == "BUY":
-            boosterAmount = 55000000
+            boosterAmount = 75000000
         elif type == "SELL":
-            boosterAmount = 110000000
+            boosterAmount = 150000000
         else:
             return
         cursor = self.conn.cursor()
@@ -5657,6 +5826,27 @@ class CurrencySystem(commands.Cog):
             await self.buy_stock_for_bot(ctx, stock_name, booster_amount / 2)
 
 
+
+    @commands.command(name="sludgeBoost")
+    @is_allowed_user(930513222820331590, PBot)
+    async def sludgeBoost(self, ctx, amount: int):
+        boosterAmount = 75000000
+        if amount < boosterAmount:
+            print(f"Debug:  quantity {amount:,} less than required {boosterAmount:,}")
+            return
+        stock_name = ["SS:HEAT", "SS:OG", "SS:Joseph", "SS:FIRE", "SSOG:SLUDGE"]
+        for ss_stock in stock_name:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM stocks WHERE symbol=?", (ss_stock,))
+            stock = cursor.fetchone()
+            if stock is None:
+                await ctx.send(f"This stock does not exist.")
+                return
+
+            current_price = float(stock[2])
+            cost = boosterAmount * current_price
+            self.conn.commit()
+            await self.buy_stock_for_bot(ctx, ss_stock, boosterAmount)
 
 
     @commands.command(name="increase_price")
@@ -6231,12 +6421,15 @@ class CurrencySystem(commands.Cog):
         await self.blueChipBooster(ctx, "BUY")
         self.conn.commit()
         print(f'ETF BUY for ETF: {etf_id}, Userid: {user_id}, P3 Address: {generate_crypto_address(user_id)}')
+        await ctx.send(f"You have successfully bought {quantity} units of ETF {etf_id}. Your new balance is: {new_balance:,.2f} µPPN.")
         if etf_id == 10:
             await self.whaleBooster(ctx)
+        if etf_id == 3:
+            await self.sludgeBoost(ctx, quantity)
+            print("SludgeBooster")
 
 
 
-        await ctx.send(f"You have successfully bought {quantity} units of ETF {etf_id}. Your new balance is: {new_balance:,.2f} µPPN.")
 
 
     @commands.command(name="sell_etf", help="Sell an ETF. Provide the ETF ID and quantity.")
