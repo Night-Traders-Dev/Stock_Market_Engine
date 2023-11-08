@@ -110,6 +110,74 @@ MAX_EARNINGS = 500000
 
 ## End Work
 
+
+## BalckJack Helpers and Functions
+
+def calculate_hand_value(hand):
+    value = 0
+    num_aces = 0
+
+    for card in hand:
+        card_value = card[:-1]
+
+        if card_value in ['J', 'Q', 'K']:
+            value += 10
+        elif card_value == 'A':
+            value += 11
+            num_aces += 1
+        else:
+            try:
+                value += int(card_value)
+            except ValueError:
+                # Handle non-numeric card values (e.g., '4♣')
+                value += 10
+
+    # Adjust for aces
+    while value > 21 and num_aces:
+        value -= 10
+        num_aces -= 1
+
+    return value
+
+# Helper functions for handling different outcomes in Blackjack
+async def handle_blackjack_win(ctx, user_id, bet, current_balance):
+    currency_conn = sqlite3.connect("currency_system.db")
+    win_amount = bet * 2
+    new_balance = current_balance + Decimal(win_amount)
+    update_user_balance(currency_conn, user_id, new_balance)
+
+    embed = discord.Embed(title="Blackjack - You Win!", color=discord.Color.green())
+    embed.add_field(name="Your Hand", value=", ".join(player_hand) + f" ({player_value})", inline=False)
+    embed.add_field(name="Dealer's Hand", value=", ".join(dealer_hand) + f" ({dealer_value})", inline=False)
+    embed.add_field(name="Congratulations!", value=f"You won {win_amount} µPPN!", inline=False)
+    embed.set_footer(text=f"Your new balance: {new_balance:,.2f} µPPN")
+    await ctx.send(embed=embed)
+
+async def handle_blackjack_loss(ctx, user_id, bet, current_balance):
+    currency_conn = sqlite3.connect("currency_system.db")
+    new_balance = current_balance - Decimal(bet)
+    update_user_balance(currency_conn, user_id, new_balance)
+
+    embed = discord.Embed(title="Blackjack - You Lose!", color=discord.Color.red())
+    embed.add_field(name="Your Hand", value=", ".join(player_hand) + f" ({player_value})", inline=False)
+    embed.add_field(name="Dealer's Hand", value=", ".join(dealer_hand) + f" ({dealer_value})", inline=False)
+    embed.add_field(name="Better luck next time!", value=f"You lost {bet} µPPN.", inline=False)
+    embed.set_footer(text=f"Your new balance: {new_balance:,.2f} µPPN")
+    await ctx.send(embed=embed)
+
+async def handle_blackjack_push(ctx, user_id, bet, current_balance):
+    currency_conn = sqlite3.connect("currency_system.db")
+    new_balance = current_balance
+    update_user_balance(currency_conn, user_id, new_balance)
+
+    embed = discord.Embed(title="Blackjack - Push!", color=discord.Color.blue())
+    embed.add_field(name="Your Hand", value=", ".join(player_hand) + f" ({player_value})", inline=False)
+    embed.add_field(name="Dealer's Hand", value=", ".join(dealer_hand) + f" ({dealer_value})", inline=False)
+    embed.add_field(name="It's a tie!", value=f"No µPPN gained or lost.", inline=False)
+    embed.set_footer(text=f"Your balance remains: {new_balance:,.2f} µPPN")
+    await ctx.send(embed=embed)
+
+
 def parse_time_shorthand(shorthand):
     if shorthand.endswith("m"):
         return timedelta(minutes=int(shorthand[:-1]))
@@ -1272,6 +1340,50 @@ def create_trading_team(conn, name):
     conn.commit()
 
 
+@staticmethod
+def execute_stock_swap(user_order, matched_order):
+    user_id = user_order[1]
+    stock1, amount1, stock2, amount2 = user_order[2], user_order[3], user_order[4], user_order[5]
+    matched_user_id = matched_order[1]
+    matched_stock1, matched_amount1, matched_stock2, matched_amount2 = matched_order[2], matched_order[3], matched_order[4], matched_order[5]
+
+    cursor = self.conn.cursor()
+
+    try:
+        # Fetch user's stock holdings
+        cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (user_id, stock1))
+        user_stock1_amount = cursor.fetchone()[0]
+        cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (user_id, stock2))
+        user_stock2_amount = cursor.fetchone()[0]
+
+        # Fetch matched user's stock holdings
+        cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (matched_user_id, matched_stock1))
+        matched_user_stock1_amount = cursor.fetchone()[0]
+        cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (matched_user_id, matched_stock2))
+        matched_user_stock2_amount = cursor.fetchone()[0]
+
+        # Update user's stock holdings
+        cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (user_stock1_amount - amount1 + amount2, user_id, stock1))
+        cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (user_stock2_amount - amount2 + amount1, user_id, stock2))
+
+        # Update matched user's stock holdings
+        cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (matched_user_stock1_amount - matched_amount1 + matched_amount2, matched_user_id, matched_stock1))
+        cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (matched_user_stock2_amount - matched_amount2 + matched_amount1, matched_user_id, matched_stock2))
+
+        # Commit the changes
+        self.conn.commit()
+
+        print("Stock swap executed successfully.")
+
+    except sqlite3.Error as e:
+        # Handle database errors
+        print(f"Database error during stock swap: {e}")
+
+    except Exception as e:
+        # Handle unexpected errors
+        print(f"Unexpected error during stock swap: {e}")
+
+
 def is_allowed_user(*user_ids):
     async def predicate(ctx):
         return ctx.author.id in user_ids
@@ -1614,15 +1726,13 @@ class CurrencySystem(commands.Cog):
         self.lock = asyncio.Lock()
         self.claimed_users = set()  # Set to store claimed user IDs
         self.update_topstocks.start()
-#        self.update_etf_value_task.start()
-#        self.update_topwealth.start = partial(self.update_topwealth.start, ctx)
-#        self.check_market_prices.start()
         self.current_prices_stocks = {}  # Dictionary to store current prices for stocks
         self.old_prices_stocks = {}  # Dictionary to store old prices for stocks
         self.current_prices_etfs = {}  # Dictionary to store current values for ETFs
         self.old_prices_etfs = {}  # Dictionary to store old values for ETFs
         self.connection_pool = sqlite3.connect("currency_system.db", check_same_thread=False)
         self.last_job_times = {}
+        self.games = {}
 
 
     def setup(self, ctx):
@@ -1648,256 +1758,7 @@ class CurrencySystem(commands.Cog):
         self.get_connection().close()
 
 
-    @tasks.loop(seconds=120)  # Adjust the interval as needed
-    async def update_etf_value_task(self):
-        # The logic from your original update_etf_value method goes here
-        user = self.bot.get_user(self.bot.owner_id)
-        ctx = await self.bot.get_context(930513222820331590)
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            SELECT s.price
-            FROM stocks AS s
-            INNER JOIN etf_stocks AS e ON s.symbol = e.symbol
-            WHERE e.etf_id = 6
-        """)
-        stock_prices = cursor.fetchall()
 
-        if not stock_prices:
-            await ctx.send("No stocks found for ETF 6.")
-            return
-
-        # Calculate the total value of ETF 6 by summing up the stock prices
-        etf_6_value = sum(price for price, in stock_prices)
-
-        # Format the ETF value with commas
-        etf_6_value_formatted = locale.format_string("%0.2f", etf_6_value, grouping=True)
-
-        # Find the voice channel by its ID
-        voice_channel_id = 1161706930981589094  # Replace with the actual ID
-        voice_channel = ctx.guild.get_channel(voice_channel_id)
-
-        if voice_channel:
-            # Get the old price from the channel name using regular expressions
-            old_name = voice_channel.name
-            old_price_match = re.search(r"Market ([\d,]+\.\d+)", old_name)
-
-            if old_price_match:
-                old_price_str = old_price_match.group(1).replace(",", "")
-                try:
-                    old_price = float(old_price_str)
-                except ValueError:
-                    old_price = None
-            else:
-                old_price = None
-
-            if old_price is not None:
-                # Calculate the percentage change
-                percentage_change = ((etf_6_value - old_price) / old_price) * 100
-
-                # Create an embed for the message
-                embed = discord.Embed(
-                    title="Market Value Update",
-                    color=discord.Color.green()
-                )
-                embed.add_field(
-                    name="Old Price",
-                    value=f"${old_price:,.2f}",
-                    inline=True
-                )
-                embed.add_field(
-                    name="New Price",
-                    value=f"${etf_6_value:,.2f}",
-                    inline=True
-                )
-                embed.add_field(
-                    name="Percentage Change",
-                    value=f"{percentage_change:,.2f}%",
-                    inline=False
-                )
-
-                # Update the name of the voice channel with the calculated ETF 6 value
-                new_name = f"Market {etf_6_value_formatted}"
-                await voice_channel.edit(name=new_name)
-
-                # Send the embed message
-                await ctx.send(embed=embed)
-            else:
-                await ctx.send("Failed to retrieve the old price from the channel name.")
-        else:
-            await ctx.send(f"Voice channel with ID '{voice_channel_id}' not found.")
-
-        # Store the current ETF value in the dictionary
-        StockBot.etf_values["5 minutes"] = StockBot.etf_values["15 minutes"]
-        StockBot.etf_values["15 minutes"] = StockBot.etf_values["30 minutes"]
-        StockBot.etf_values["30 minutes"] = StockBot.etf_values["1 hour"]
-        StockBot.etf_values["1 hour"] = StockBot.etf_values["3 hours"]
-        StockBot.etf_values["3 hours"] = StockBot.etf_values["6 hours"]
-        StockBot.etf_values["6 hours"] = StockBot.etf_values["12 hours"]
-        StockBot.etf_values["12 hours"] = StockBot.etf_values["24 hours"]
-        StockBot.etf_values["24 hours"] = etf_6_value
-
-        # Calculate and print percentage changes for different time intervals
-        current_time = time.time()
-        for interval, old_value in StockBot.etf_values.items():
-            if old_value is not None:
-                elapsed_time = current_time - (60 * int(interval.split()[0]))
-                if elapsed_time > 0:
-                    percentage_change = ((etf_6_value - old_value) / old_value) * 100
-                    await self.send_percentage_change_embed(ctx, interval, percentage_change)
-
-        # Wait for 120 seconds before checking again
-        await asyncio.sleep(120)
-
-
-    @tasks.loop(minutes=10)
-    async def check_market_prices(self):
-        channel_id = 1161680453841993839  # Replace with your channel ID
-        channel = self.bot.get_channel(channel_id)
-
-        if channel:
-            cursor = self.conn.cursor()
-
-            # Check stocks
-            cursor.execute("SELECT symbol, price FROM stocks")
-            stocks = cursor.fetchall()
-
-            for symbol, current_price in stocks:
-                # Get the old price from the dictionary or set it to the current price if not present
-                old_price = self.old_prices_stocks.get(symbol, current_price)
-
-                # Update the old price in the dictionary
-                self.old_prices_stocks[symbol] = current_price
-
-                # Check for a significant price change
-                price_change_percentage = ((current_price - old_price) / old_price) * 100
-
-                # Update the current price in the dictionary
-                self.current_prices_stocks[symbol] = current_price
-
-                if abs(price_change_percentage) >= 25:
-                    print(f"Symbol: {symbol}, Current Price: {current_price:,.2f}, Old Price: {old_price:,.2f}, Change: {price_change_percentage:,.2f}%")
-                    # Create an embed with information about the price change
-                    embed = discord.Embed(
-                        title=f"Price Change Alert for {symbol}",
-                        color=discord.Color.red() if price_change_percentage < 0 else discord.Color.green()
-                    )
-                    embed.add_field(name="Current Price", value=f"{current_price:,.2f}")
-                    embed.add_field(name="Old Price", value=f"{old_price:,.2f}")
-                    embed.add_field(name="Change", value=f"{price_change_percentage:,.2f}%")
-
-                    # Send the embed to the channel
-                    await channel.send(embed=embed)
-
-            # Check ETFs
-            cursor.execute("SELECT etf_id, name FROM etfs")
-            etfs = cursor.fetchall()
-
-            for etf_id, etf_name in etfs:
-                # Get stocks associated with the ETF
-                cursor.execute("SELECT symbol, quantity FROM etf_stocks WHERE etf_id=?", (etf_id,))
-                stocks = cursor.fetchall()
-
-                # Calculate the value of the ETF
-                etf_value = sum(self.current_prices_stocks.get(symbol, 0) * quantity for symbol, quantity in stocks)
-
-                # Get the old value from the dictionary or set it to the current value if not present
-                old_etf_value = self.old_prices_etfs.get(etf_id, etf_value)
-
-                # Update the old value in the dictionary
-                self.old_prices_etfs[etf_id] = etf_value
-
-                # Check for a significant value change
-                etf_value_change_percentage = ((etf_value - old_etf_value) / old_etf_value) * 100
-
-                # Update the current value in the dictionary
-                self.current_prices_etfs[etf_id] = etf_value
-
-                if abs(etf_value_change_percentage) >= 10:
-                    print(f"ETF ID: {etf_id}, Current Value: {etf_value:,.2f}, Old Value: {old_etf_value:,.2f}, Change: {etf_value_change_percentage:,.2f}%")
-                    # Create an embed with information about the value change
-                    embed = discord.Embed(
-                        title=f"Value Change Alert for ETF {etf_name}",
-                        color=discord.Color.red() if etf_value_change_percentage < 0 else discord.Color.green()
-                    )
-                    embed.add_field(name="Current Value", value=f"{etf_value:,.2f}")
-                    embed.add_field(name="Old Value", value=f"{old_etf_value:,.2f}")
-                    embed.add_field(name="Change", value=f"{etf_value_change_percentage:,.2f}%")
-
-                    # Send the embed to the channel
-                    await channel.send(embed=embed)
-
-            cursor.close()
-
-    @tasks.loop(minutes=1)  # Adjust the loop interval as needed
-    async def update_topwealth(self):
-        try:
-            channel_id = 1161738095746625697  # Replace with your actual channel ID
-            message_id = 1161774598963081236  # Replace with your actual message ID
-            channel = self.bot.get_channel(channel_id)
-            print(f'Updating top_wealth')
-
-            if channel:
-                cursor = self.conn.cursor()
-
-                # Get the top 10 wealthiest users
-                cursor.execute("""
-                    SELECT users.user_id,
-                           (users.balance + IFNULL(total_stock_value, 0) + IFNULL(total_etf_value, 0)) AS total_wealth
-                    FROM users
-                    LEFT JOIN (
-                        SELECT user_id, SUM(stocks.price * user_stocks.amount) AS total_stock_value
-                        FROM user_stocks
-                        LEFT JOIN stocks ON user_stocks.symbol = stocks.symbol
-                        GROUP BY user_id
-                    ) AS user_stock_data ON users.user_id = user_stock_data.user_id
-                    LEFT JOIN (
-                        SELECT user_id, SUM(etf_value * user_etfs.quantity) AS total_etf_value
-                        FROM user_etfs
-                        LEFT JOIN (
-                            SELECT etf_stocks.etf_id, SUM(stocks.price * etf_stocks.quantity) AS etf_value
-                            FROM etf_stocks
-                            LEFT JOIN stocks ON etf_stocks.symbol = stocks.symbol
-                            GROUP BY etf_stocks.etf_id
-                        ) AS etf_data ON user_etfs.etf_id = etf_data.etf_id
-                        GROUP BY user_id
-                    ) AS user_etf_data ON users.user_id = user_etf_data.user_id
-                    ORDER BY total_wealth DESC
-                    LIMIT 10
-                """)
-
-                top_users = cursor.fetchall()
-
-                # Create the embed
-                embed = discord.Embed(title='Top 10 Wealthiest Users', color=discord.Color.gold())
-
-                for user_id, total_wealth in top_users:
-                    username = self.get_username(ctx, user_id)
-                    P3Addr = generate_crypto_address(user_id)
-
-                    # Format wealth in shorthand
-                    wealth_shorthand = self.format_value(total_wealth)
-
-                    embed.add_field(name=P3Addr, value=wealth_shorthand, inline=False)
-
-                # Find and edit the existing message by ID
-                existing_message = await channel.fetch_message(message_id)
-                if existing_message:
-                    try:
-                        await existing_message.edit(embed=embed)
-                    except discord.errors.NotFound:
-                        # If the message is not found, handle accordingly
-                        print("Message not found.")
-                else:
-                    # If the message is not found, handle accordingly
-                    print("Message not found.")
-
-        except sqlite3.Error as e:
-            # Log error message for debugging
-            print(f"Database error: {e}")
-
-        except Exception as e:
-            # Log error message for debugging
-            print(f"An unexpected error occurred: {e}")
 
 
     @tasks.loop(minutes=1)
@@ -2282,22 +2143,6 @@ class CurrencySystem(commands.Cog):
 ## End Wealth Functions
 
 
-    @commands.command(name="metrics", help="View system metrics")
-    async def view_metrics(self, ctx):
-        cursor = self.conn.cursor()
-
-        try:
-            cursor.execute("SELECT * FROM metrics")
-            metrics = cursor.fetchall()
-
-            if not metrics:
-                await ctx.send("No metrics found.")
-                return
-
-            metrics_str = "\n".join([f"{metric[0]}: {metric[1]}" for metric in metrics])
-            await ctx.send(f"System Metrics:\n{metrics_str}")
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred while retrieving system metrics. Error: {str(e)}")
 
     @commands.command(name='etf_metric', help='Show the current value and top holders of an ETF.')
     async def etf_metric(self, ctx, etf_id: int):
@@ -2334,93 +2179,6 @@ class CurrencySystem(commands.Cog):
 
 
 # Currency Tools
-
-    @commands.command(name="reset_game", help="Reset all user stocks and ETFs to 0 and set the balance to 100.00")
-    @is_allowed_user(930513222820331590, PBot)
-    async def reset_game(self, ctx):
-        cursor = self.conn.cursor()
-
-        # Reset user stocks and ETFs to 0
-        try:
-            cursor.execute("DELETE FROM user_stocks")
-            cursor.execute("DELETE FROM user_etfs")
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred while resetting user stocks and ETFs. Error: {str(e)}")
-            return
-
-        # Set balance to 100,000.00 for all users
-        try:
-            cursor.execute("UPDATE users SET balance = '100.00'")
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred while updating user balance. Error: {str(e)}")
-            return
-
-        self.conn.commit()
-        await ctx.send("All user stocks and ETFs have been reset to 0, and the balance is set to 100,000.00 for all users.")
-
-
-    @commands.command(name="revert_all_stocks", help="Revert all user-held stocks and place them back into the stock market for all users.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def revert_all_stocks(self, ctx):
-        cursor = self.conn.cursor()
-
-        # Fetch all user-held stocks from the user_stocks table
-        cursor.execute("SELECT * FROM user_stocks")
-        user_stocks = cursor.fetchall()
-
-        if not user_stocks:
-            await ctx.send("No user-held stocks found.")
-            return
-
-        try:
-            # Move the user-held stocks back to the stock market
-            for stock in user_stocks:
-                user_id = stock[0]
-                symbol = stock[1]
-                amount = stock[2]
-
-                # Update the stock's available amount in the stocks table
-                cursor.execute("UPDATE stocks SET available = available + ? WHERE symbol = ?", (amount, symbol))
-
-            # Delete all user's stock holdings
-            cursor.execute("DELETE FROM user_stocks")
-
-            self.conn.commit()
-            await ctx.send("All user-held stocks have been successfully reverted and placed back into the stock market.")
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred while reverting the stocks: {e}")
-
-    @commands.command(name="revert_stocks", help="Revert all user-held stocks and place them back into the stock market.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def revert_stocks(self, ctx):
-        user_id = ctx.author.id
-        cursor = self.conn.cursor()
-
-        # Fetch all the stocks held by the user
-        cursor.execute("SELECT * FROM user_stocks WHERE user_id=?", (user_id,))
-        user_stocks = cursor.fetchall()
-
-        if not user_stocks:
-            await ctx.send("You don't hold any stocks to revert.")
-            return
-
-        try:
-            # Move the user-held stocks back to the stock market
-            for stock in user_stocks:
-                symbol = stock[1]
-                amount = stock[2]
-
-                # Update the stock's available amount in the stocks table
-                cursor.execute("UPDATE stocks SET available = available + ? WHERE symbol = ?", (amount, symbol))
-
-            # Delete the user's stock holdings
-            cursor.execute("DELETE FROM user_stocks WHERE user_id=?", (user_id,))
-
-            self.conn.commit()
-            await ctx.send("All your held stocks have been successfully reverted and placed back into the stock market.")
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred while reverting the stocks: {e}")
-
 
 
     @commands.command(name="give", help="Give a specified amount of µPPN to another user.")
@@ -2523,21 +2281,6 @@ class CurrencySystem(commands.Cog):
         update_user_balance(self.conn, user_id, new_balance)
         await ctx.send(f"{ctx.author.mention}, you have added {amount:,.2f} µPPN. Your new balance is: {new_balance:,.2f} µPPN.")
 
-
-
-    @commands.command(name="reset_user_µPPN")
-    @is_allowed_user(930513222820331590, PBot)
-    async def reset_user_µPPN(self, ctx):
-        try:
-            # Set user balance to 10,000 µPPN
-            cursor = self.conn.cursor()
-            cursor.execute("UPDATE users SET balance = ?", (resetµPPN,))
-
-            self.conn.commit()
-            await ctx.send("User µPPN reset successfully.")
-
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred while resetting user µPPN: {e}")
 
 
 
@@ -2805,83 +2548,6 @@ class CurrencySystem(commands.Cog):
 
 
 
-
-    @commands.command(name="reset_users")
-    @is_allowed_user(930513222820331590, PBot)
-    async def reset_users(self, ctx):
-        try:
-            cursor = self.conn.cursor()
-
-            # Reset user balances to 10,000 µPPN for all users
-            cursor.execute("UPDATE users SET balance = 10000")
-
-            # Clear user stocks
-            cursor.execute("DELETE FROM user_stocks")
-
-            # Reset available amounts of stocks to their total supplies
-            cursor.execute("UPDATE stocks SET available = total_supply")
-
-            # Clear user commodities
-            cursor.execute("DELETE FROM user_commodities")
-
-            # Reset available amounts of commodities to their total supplies
-            cursor.execute("UPDATE commodities SET available = total_supply")
-
-            self.conn.commit()
-            await ctx.send("User balances, stocks, and commodities reset successfully for all users.")
-
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred while resetting user balances: {e}")
-
-
-
-    @commands.command(name="backup_database")
-    @is_allowed_user(930513222820331590, PBot)
-    async def backup_database(self, ctx):
-        try:
-            # Create a timestamp for the backup file name
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-
-            # Specify the source file path (current directory + database file)
-            source_path = "currency_system.db"
-
-            # Specify the destination file path (backup file location with timestamp)
-            destination_path = f"backup_{timestamp}.db"
-
-            # Create a backup of the database file
-            shutil.copy2(source_path, destination_path)
-
-            await ctx.send(f"Database backup created: {destination_path}")
-
-        except Exception as e:
-            await ctx.send(f"An error occurred while creating the database backup: {e}")
-
-    @commands.command(name="restore_backup")
-    @is_allowed_user(930513222820331590, PBot)
-    async def restore_database(self, ctx):
-        try:
-            # Specify the backup file path pattern
-            backup_path_pattern = "backup_*.db"
-
-            # Get the list of backup files sorted by modification time
-            backup_files = sorted(glob.glob(backup_path_pattern), key=os.path.getmtime, reverse=True)
-
-            if len(backup_files) > 0:
-                # Select the most recent backup file
-                latest_backup_file = backup_files[0]
-
-                # Specify the destination file path (current directory + database file)
-                destination_path = "currency_system.db"
-
-                # Restore the database from the most recent backup file
-                shutil.copy2(latest_backup_file, destination_path)
-
-                await ctx.send(f"Database restored from backup: {latest_backup_file}")
-            else:
-                await ctx.send("No backup files found.")
-
-        except Exception as e:
-            await ctx.send(f"An error occurred while restoring the database: {e}")
 
 
 
@@ -3166,7 +2832,7 @@ class CurrencySystem(commands.Cog):
             total_market_cap = total_market_value + total_etf_value
             formatted_total_market_cap = '{:,.2f}'.format(total_market_cap)
 
-            # Calculate community profits/losses
+            # Calculate community profits/losses for all stocks and ETFs
             ledger_cursor.execute("""
                 SELECT action, SUM(quantity), SUM(price)
                 FROM stock_transactions
@@ -3184,6 +2850,7 @@ class CurrencySystem(commands.Cog):
                     total_community_sells += total_price
 
             total_community_profits_losses = total_community_sells - total_community_buys
+
 
             # Calculate most and least bought stocks
             ledger_cursor.execute("""
@@ -8278,43 +7945,112 @@ class CurrencySystem(commands.Cog):
         await ctx.send(embed=embed)
 
 
-    @commands.command(name='start_blackjack', aliases=['bj'], help='Start a Blackjack game. Usage: !start_blackjack <bet>')
-    async def start_blackjack(self, ctx, bet: int):
-        player = ctx.author.id
+    @commands.command(name='blackjack', aliases=['bj'], help='Play Blackjack against the dealer.')
+    async def blackjack(self, ctx, bet: int):
+        user_id = ctx.author.id
+        current_balance = get_user_balance(self.conn, user_id)
 
-        if player in self.games:
-            await ctx.send("You're already in a game! Finish that one before starting a new one.")
+        # Check if bet amount is positive and within the limit
+        if bet <= 0:
+            await ctx.send(f"{ctx.author.mention}, bet amount must be a positive number.")
             return
 
-        # Check if the player has enough balance to place the bet
-        user_balance = 1000  # Replace with your logic to get the user's balance
-        if bet <= 0 or bet > user_balance:
-            await ctx.send(f"Invalid bet. Please bet between 1 and {user_balance:,.2f} µPPN.")
+        if bet < minBet:
+            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} µPPN.")
             return
 
-        # Start a new Blackjack game
-        self.games[player] = BlackjackGame([player])
-        self.games[player].bets[player] = bet
-
-        # Deal initial cards
-        for _ in range(2):
-            self.games[player].deal_card(player)
-            self.games[player].deal_card('dealer')
-
-        # Player turns
-        result = await self.games[player].player_turn(player, ctx)
-        if result == 'timeout':
-            del self.games[player]
+        if bet > maxBet:
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} µPPN.")
             return
 
-        # Dealer turn
-        self.games[player].dealer_turn(ctx)
+        # Define Blackjack deck
+        deck = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+        suits = ["♠️", "♥️", "♦️", "♣️"]
+        cards = [f"{value}{suit}" for value in deck for suit in suits]
 
-        # Determine the winner
-        self.games[player].determine_winner(ctx)
+        # Shuffle the deck
+        random.shuffle(cards)
 
-        # Clean up the game
-        del self.games[player]
+        # Deal initial cards to the player and dealer
+        player_hand = [cards.pop(), cards.pop()]
+        dealer_hand = [cards.pop(), cards.pop()]
+
+        # Calculate initial hand values
+        player_value = calculate_hand_value(player_hand)
+        dealer_value = calculate_hand_value(dealer_hand)
+
+        # Create and send the embed with the initial Blackjack state
+        embed = discord.Embed(title="Blackjack", color=discord.Color.green())
+        embed.add_field(name="Your Hand", value=", ".join(player_hand) + f" ({player_value})", inline=False)
+        embed.add_field(name="Dealer's Hand", value=f"{dealer_hand[0]}, ?")
+        embed.set_footer(text=f"Current bet: {bet} µPPN | Your balance: {current_balance:,.2f} µPPN")
+        await ctx.send(embed=embed)
+
+        # Check for natural Blackjack (21 with two cards)
+        if player_value == 21 and dealer_value != 21:
+            await handle_blackjack_win(ctx, user_id, bet, current_balance)
+            return
+        elif dealer_value == 21 and player_value != 21:
+            await handle_blackjack_loss(ctx, user_id, bet, current_balance)
+            return
+        elif player_value == 21 and dealer_value == 21:
+            await handle_blackjack_push(ctx, user_id, bet, current_balance)
+            return
+
+        # Ask the player to hit or stand
+        await ctx.send(f"{ctx.author.mention}, do you want to hit or stand? (Type `hit` or `stand`)")
+
+        def check(msg):
+            return msg.author.id == user_id and msg.content.lower() in ['hit', 'stand']
+
+        while True:
+            try:
+                response = await self.bot.wait_for('message', check=check, timeout=60)
+            except asyncio.TimeoutError:
+                await ctx.send(f"{ctx.author.mention}, you took too long to respond. The game has ended.")
+                return
+
+            action = response.content.lower()
+
+            if action == 'hit':
+                # Deal another card to the player
+                player_hand.append(cards.pop())
+                player_value = calculate_hand_value(player_hand)
+
+                # Check for bust
+                if player_value > 21:
+                    await handle_blackjack_loss(ctx, bet, current_balance)
+                    return
+
+                # Send updated hand to the player
+                embed = discord.Embed(title="Blackjack", color=discord.Color.green())
+                embed.add_field(name="Your Hand", value=", ".join(player_hand) + f" ({player_value})", inline=False)
+                embed.add_field(name="Dealer's Hand", value=f"{dealer_hand[0]}, ?")
+                embed.set_footer(text=f"Current bet: {bet} µPPN | Your balance: {current_balance:,.2f} µPPN")
+                await ctx.send(embed=embed)
+
+            elif action == 'stand':
+                # Dealer's turn
+                while dealer_value < 17:
+                    dealer_hand.append(cards.pop())
+                    dealer_value = calculate_hand_value(dealer_hand)
+
+                # Check for dealer bust
+                if dealer_value > 21:
+                    await handle_blackjack_win(ctx, user_id, bet, current_balance)
+                    return
+
+                # Determine the winner
+                if player_value > dealer_value:
+                    await handle_blackjack_win(ctx, user_id, bet, current_balance)
+                elif player_value < dealer_value:
+                    await handle_blackjack_loss(ctx, user_id, bet, current_balance)
+                else:
+                    await handle_blackjack_push(ctx, user_id, bet, current_balance)
+
+                return
+
+
 
 
     @commands.command(name='simulate_roulette', help='Simulate a roulette bet to see the amount in taxes it would cost, and how much you would win/lose.')
@@ -8718,26 +8454,66 @@ class CurrencySystem(commands.Cog):
         else:
             await ctx.send("The specified order does not exist or is not open.")
 
-    @commands.command(name="match_swap_order", help="Match with an existing open swap order.")
-    async def match_swap_order(self, ctx, order_id: int):
+    @commands.command(name="match_swap_order", help="Attempt to match open swap orders.")
+    @is_allowed_user(930513222820331590, PBot)
+    async def match_swap_order(self, ctx):
         user_id = ctx.author.id
         cursor = self.conn.cursor()
 
-        # Check if the order is open
-        cursor.execute("SELECT * FROM swap_orders WHERE id=? AND status='open'", (order_id,))
-        order = cursor.fetchone()
+        try:
+            # Fetch user's open swap orders
+            cursor.execute("SELECT * FROM swap_orders WHERE user_id=? AND status='open'", (user_id,))
+            user_orders = cursor.fetchall()
 
-        if order:
-            # Match the order
-            cursor.execute("UPDATE swap_orders SET status='matched' WHERE id=?", (order_id,))
-            self.conn.commit()
+            if not user_orders:
+                await ctx.send("You have no open swap orders.")
+                return
 
-            # Perform the stock swap (you can adapt this part based on your logic)
-            # ...
+            # Fetch all other open swap orders that are compatible with the user's orders
+            compatible_orders = []
+            for user_order in user_orders:
+                stock1, amount1, stock2, amount2 = user_order[2], user_order[3], user_order[4], user_order[5]
+                cursor.execute("""
+                    SELECT *
+                    FROM swap_orders
+                    WHERE status='open'
+                    AND ((stock1=? AND amount1<=? AND stock2 IN (SELECT stock1 FROM swap_orders WHERE status='open' AND stock2=? AND amount2<=?))
+                        OR (stock2=? AND amount2<=? AND stock1 IN (SELECT stock2 FROM swap_orders WHERE status='open' AND stock1=? AND amount1<=?)))
+                """, (stock1, amount1, stock2, amount2, stock2, amount2, stock1, amount1))
+                compatible_orders.extend(cursor.fetchall())
 
-            await ctx.send(f"Successfully matched with swap order {order_id}.")
-        else:
-            await ctx.send("The specified order does not exist or is not open.")
+            if not compatible_orders:
+                await ctx.send("No compatible open swap orders found.")
+                return
+
+            # Match orders and execute swaps
+            for compatible_order in compatible_orders:
+                matched_order_id = compatible_order[0]
+
+                # Close the user's order
+                cursor.execute("UPDATE swap_orders SET status='matched' WHERE id=?", (matched_order_id,))
+
+                # Close the matched order
+                cursor.execute("UPDATE swap_orders SET status='matched' WHERE id=?", (user_order[0],))
+
+                # Execute the stock swap (placeholder logic, update based on your implementation)
+                self.execute_stock_swap(user_order, compatible_order)
+
+                self.conn.commit()
+
+            await ctx.send("Swap orders matched successfully.")
+
+        except sqlite3.Error as e:
+            # Handle database errors
+            print(f"Database error: {e}")
+            await ctx.send("An error occurred while processing the swap orders. Please try again later.")
+
+        except Exception as e:
+            # Handle unexpected errors
+            print(f"An unexpected error occurred: {e}")
+            await ctx.send("An unexpected error occurred. Please try again later.")
+
+
 
 ## Server stats
 
