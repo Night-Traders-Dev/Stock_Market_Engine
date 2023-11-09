@@ -3106,11 +3106,11 @@ class CurrencySystem(commands.Cog):
 #                    ax1.plot(buy_timestamps, buy_prices, color='green', label='Price')
 #                    ax1.plot(average_timestamps, average_prices, linestyle='-', color='black', label='Average Price')
                     if sma is not None and len(sma) == len(sma_timestamps):
-                        ax1.plot(sma_timestamps, sma, color='purple', label=f'SMA ({sma_period}-period)')
+                        ax1.plot(sma_timestamps, sma, color='green', label=f'SMA ({sma_period}-period)')
                     if ema is not None and len(ema) == len(ema_timestamps):
-                        ax1.plot(ema_timestamps, ema, color='blue', label=f'EMA ({ema_period}-period)')
+                        ax1.plot(ema_timestamps, ema, color='yellow', label=f'EMA ({ema_period}-period)')
                     if upper is not None and lower is not None:
-                        ax1.fill_between(bb_timestamps, upper, lower, color='lightblue', alpha=0.5, label='Bollinger Bands')
+                        ax1.fill_between(bb_timestamps, upper, lower, color='brown', alpha=0.5, label='Bollinger Bands')
 
                     ax1.set_title(f"Stock Chart for {stock_symbol}")
                     ax1.set_ylabel("Price")
@@ -3133,7 +3133,7 @@ class CurrencySystem(commands.Cog):
 
                     # Plot RSI on the separate RSI chart
                     if rsi is not None and len(rsi) == len(rsi_timestamps):
-                        ax2.plot(rsi_timestamps, rsi, color='orange', label=f'RSI ({rsi_period}-period)')
+                        ax2.plot(rsi_timestamps, rsi, color='blue', label=f'RSI ({rsi_period}-period)')
                         ax2.set_title(f"RSI Chart for {stock_symbol}")
                         ax2.set_ylabel("RSI")
                         ax2.grid(True)
@@ -3147,10 +3147,21 @@ class CurrencySystem(commands.Cog):
                         ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
                         ax2.tick_params(axis='x', rotation=45)
 
+                    # Set the background color of the entire chart to black
+                    ax1.set_facecolor('black')
+                    ax2.set_facecolor('black')
+
+                    # Set text color to white
+                    for ax in [ax1, ax2]:
+                        ax.xaxis.label.set_color('lightgray')
+                        ax.yaxis.label.set_color('lightgray')
+                        ax.title.set_color('lightgray')
+                        ax.tick_params(axis='x', colors='lightgray')
+                        ax.tick_params(axis='y', colors='lightgray')
 
                     # Save the chart to a BytesIO object
                     buffer = io.BytesIO()
-                    plt.savefig(buffer, format='png')
+                    plt.savefig(buffer, format='png', facecolor='black')
                     buffer.seek(0)
 
                     # Send the chart as a Discord message
@@ -3326,13 +3337,13 @@ class CurrencySystem(commands.Cog):
                     average_timestamps, average_prices = zip(*average_prices)
 
                     # Plot the average line on the price history chart
-                    ax1.plot(buy_timestamps, buy_prices, linestyle='--', color='green', label='Price')
+                    ax1.plot(buy_timestamps, buy_prices, linestyle='--', color='lightgray', label='Price')
                     if sma is not None and len(sma) == len(sma_timestamps):
-                        ax1.plot(sma_timestamps, sma, color='purple', label=f'SMA ({sma_period}-period)')
+                        ax1.plot(sma_timestamps, sma, color='green', label=f'SMA ({sma_period}-period)')
                     if ema is not None and len(ema) == len(ema_timestamps):
-                        ax1.plot(ema_timestamps, ema, color='blue', label=f'EMA ({ema_period}-period)')
+                        ax1.plot(ema_timestamps, ema, color='yellow', label=f'EMA ({ema_period}-period)')
                     if upper is not None and lower is not None:
-                        ax1.fill_between(bb_timestamps, upper, lower, color='lightblue', alpha=0.5, label='Bollinger Bands')
+                        ax1.fill_between(bb_timestamps, upper, lower, color='brown', alpha=0.5, label='Bollinger Bands')
 
                     ax1.set_title(f"ETF Chart for {etf_symbol}")
                     ax1.set_ylabel("Price")
@@ -3355,7 +3366,7 @@ class CurrencySystem(commands.Cog):
 
                     # Plot RSI on the separate RSI chart
                     if rsi is not None and len(rsi) == len(rsi_timestamps):
-                        ax2.plot(rsi_timestamps, rsi, color='orange', label=f'RSI ({rsi_period}-period)')
+                        ax2.plot(rsi_timestamps, rsi, color='blue', label=f'RSI ({rsi_period}-period)')
                         ax2.set_title(f"RSI Chart for {etf_symbol}")
                         ax2.set_ylabel("RSI")
                         ax2.grid(True)
@@ -3369,10 +3380,24 @@ class CurrencySystem(commands.Cog):
                         ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
                         ax2.tick_params(axis='x', rotation=45)
 
+
+                    # Set the background color of the entire chart to black
+                    ax1.set_facecolor('black')
+                    ax2.set_facecolor('black')
+
+                    # Set text color to white
+                    for ax in [ax1, ax2]:
+                        ax.xaxis.label.set_color('lightgray')
+                        ax.yaxis.label.set_color('lightgray')
+                        ax.title.set_color('lightgray')
+                        ax.tick_params(axis='x', colors='lightgray')
+                        ax.tick_params(axis='y', colors='lightgray')
+
                     # Save the chart to a BytesIO object
                     buffer = io.BytesIO()
-                    plt.savefig(buffer, format='png')
+                    plt.savefig(buffer, format='png', facecolor='black')
                     buffer.seek(0)
+
 
                     # Send the chart as a Discord message
                     file = discord.File(buffer, filename='etf_chart.png')
