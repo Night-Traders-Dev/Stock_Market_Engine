@@ -44,17 +44,17 @@ import shlex
 
 announcement_channel_ids = [1093540470593962014, 1124784361766650026, 1124414952812326962]
 stockMin = 1000
-stockMax = 50000000
+stockMax = 5000000
 dStockLimit = 150000000 #2000000 standard
 dETFLimit = 500000000000
 treasureMin = 10000000
 treasureMax = 50000000
 MAX_BALANCE = Decimal('750000000000000000')
 sellPressureMin = 0.000025
-sellPressureMax = 0.000055
-buyPressureMin = 0.0000055
-buyPressureMax = 0.0000850
-stockDecayValue = 0.00025
+sellPressureMax = 0.000065
+buyPressureMin = 0.0000075
+buyPressureMax = 0.0000975
+stockDecayValue = 0.000255
 decayMin = 0.01
 resetµPPN = 100
 dailyMin = 100000
@@ -413,7 +413,7 @@ async def reset_daily_stock_limits(ctx, user_id):
             currency_conn.commit()
 
             stock_symbols = ', '.join(stock[0] for stock in stocks)
-            await ctx.send(f"Successfully reset daily stock buy limits for the user with ID {user_id} and stocks: {stock_symbols}.")
+            await ctx.send(f"Successfully reset daily stock buy limits for the user with ID {get_p3_address(user_id)} and stocks: {stock_symbols}.")
         else:
             await ctx.send(f"This user did not reach the daily stock buy limit for any stocks yet.")
     except sqlite3.Error as e:
@@ -439,7 +439,7 @@ async def reset_daily_burn_limits(ctx, user_id):
             cursor.execute("DELETE FROM burn_history WHERE user_id=?", (user_id,))
             currency_conn.commit()
 
-            await ctx.send(f"Successfully reset burn limit for the user with ID {user_id}.")
+            await ctx.send(f"Successfully reset burn limit for the user with ID {get_p3_address(user_id)}.")
         else:
             await ctx.send("This user did not reach the daily burn limit yet.")
     except sqlite3.Error as e:
@@ -801,7 +801,7 @@ async def log_transaction(ledger_conn, ctx, action, symbol, quantity, pre_tax_am
     balance_before_str = str(balance_before)
     balance_after_str = str(balance_after)
     if symbol.lower() == "roflstocks":
-        price_str = '{:,.8f}'.format(price)
+        price_str = '{:,.11f}'.format(price)
     else:
         price_str = '{:,.2f}'.format(price)
 
@@ -838,7 +838,7 @@ async def log_transaction(ledger_conn, ctx, action, symbol, quantity, pre_tax_am
 
         if channel1:
             if symbol.lower() == "roflstocks":
-                price = '{:,.8f}'.format(price)
+                price = '{:,.11f}'.format(price)
             else:
                 price = '{:,.2f}'.format(price)
             # Create an embed for the log message
@@ -2694,8 +2694,13 @@ class CurrencySystem(commands.Cog):
         etfs = set()
 
         for action, quantity, price_str in transactions:
+
             if symbol.lower() == "roflstocks":
-                price = float(price_str)
+                if float(price_str.replace(",", "")) <= 1000:
+                    formatted_price = price_str.replace(",", "")
+                    price = float(formatted_price)
+                else:
+                    price = float(price_str)
             else:
                 if isinstance(price_str, float):
                     price_str = str(price_str)
@@ -3115,7 +3120,11 @@ class CurrencySystem(commands.Cog):
 
                     for timestamp_str, action, price_str in transactions:
                         if stock_symbol.lower() == "roflstocks":
-                            price = float(price_str)
+                            if current_price <= 1000:
+                                formatted_price = str(price_str).replace(",", "")
+                                price = float(formatted_price)
+                            else:
+                                price = float(price_str)
                         else:
                             formatted_price = str(price_str).replace(",", "")
                             price = float(formatted_price)
@@ -3831,6 +3840,7 @@ class CurrencySystem(commands.Cog):
             await self.increase_price(ctx, stock_name, amount)
 
         await self.blueChipBooster(ctx, "BUY")
+        await self.inverseStock(ctx, "buy")
         stock_amount = amount
         print(f"Debug: {stock_name}, Amount {stock_amount}, Price {price}, Stock Limit {stock_limit}")
 #        if (
@@ -4022,6 +4032,7 @@ class CurrencySystem(commands.Cog):
             await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price)
             self.conn.commit()
             await self.blueChipBooster(ctx, "SELL")
+            await self.inverseStock(ctx, "sell")
             await self.P3LQDYBooster(ctx)
             await ctx.send(f"{ctx.author.mention}, you have sold {amount:,.2f} stocks of '{stock_name}'. Your new balance is: {new_balance:,.2f} µPPN.")
 
@@ -4929,6 +4940,37 @@ class CurrencySystem(commands.Cog):
         P3conn.close()
 
 ##
+
+    @commands.command(name="get_total_transactions", help="Get the total of all transactions for the current month for a specified receiver_id.")
+    async def get_total_transactions(ctx, receiver_id: int):
+        # Connect to the p3ledger.db
+        conn = sqlite3.connect("p3ledger.db")
+        cursor = conn.cursor()
+
+        try:
+            # Calculate the start and end dates for the current month
+            now = datetime.now()
+            start_of_month = datetime(now.year, now.month, 1)
+            end_of_month = start_of_month + timedelta(days=31)
+
+            # Retrieve the total of all transactions for the current month and specified receiver_id
+            cursor.execute("""
+                SELECT COALESCE(SUM(amount), 0) AS total_amount
+                FROM transfer_transactions
+                WHERE receiver_id = ? AND timestamp >= ? AND timestamp < ?
+            """, (receiver_id, start_of_month, end_of_month))
+
+            total_amount = cursor.fetchone()[0]
+
+            await ctx.send(f"The total transactions for {ctx.message.author.mention} this month is: {total_amount:,.2f} µPPN.")
+
+        except Exception as e:
+            await ctx.send(f"An error occurred: {e}")
+
+        finally:
+            # Close the connection
+            conn.close()
+
     @commands.command(name="give_stock", help="Give a user an amount of a stock. Deducts it from the total supply.")
     @is_allowed_user(930513222820331590)  # The user must have the 'admin' role to use this command.
     async def give_stock(self, ctx, user: discord.User, symbol: str, amount: int):
@@ -4963,6 +5005,43 @@ class CurrencySystem(commands.Cog):
         self.conn.commit()
 
         await ctx.send(f"Gave {amount} of {symbol} to {user.name}.")
+
+
+    @commands.command(name="distribute", help="Distribute a specified amount of a stock to all holders.")
+    @is_allowed_user(930513222820331590)
+    async def distribute_stock(self, ctx, symbol: str, amount: int):
+        cursor = self.conn.cursor()
+
+        # Check if the stock exists.
+        cursor.execute("SELECT symbol, available FROM stocks WHERE symbol=?", (symbol,))
+        stock = cursor.fetchone()
+        if stock is None:
+            await ctx.send(f"No stock with symbol {symbol} found.")
+            return
+
+        # Check if there's enough of the stock available.
+        if stock['available'] < amount:
+            await ctx.send(f"Not enough of {symbol} available.")
+            return
+
+        # Get all users holding the specified stock.
+        cursor.execute("SELECT user_id, amount FROM user_stocks WHERE symbol=?", (symbol,))
+        users_stocks = cursor.fetchall()
+
+        # Distribute the specified amount to each user.
+        for user_stock in users_stocks:
+            user_id, user_amount = user_stock['user_id'], user_stock['amount']
+            new_user_amount = user_amount + amount
+            cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (new_user_amount, user_id, symbol))
+
+        # Deduct the stock from the total supply.
+        new_available = stock['available'] - (amount * len(users_stocks))
+        cursor.execute("UPDATE stocks SET available=? WHERE symbol=?", (new_available, symbol))
+
+        self.conn.commit()
+
+        await ctx.send(f"Distributed {amount} of {symbol} to all holders.")
+
 
     @commands.command(name="send_stock", help="Send a user an amount of a stock from your stash.")
     async def send_stock(self, ctx, target, symbol: str, amount: int):
@@ -5328,7 +5407,10 @@ class CurrencySystem(commands.Cog):
         elif type.lower() == "sell":
             # Randomly fluctuate the price of P3:Stable
             fluctuation = random.uniform(-priceFluctuationFactor * current_price, 0)
-            new_price = max(min(current_price + fluctuation, maxPrice * 2.25 + (amount / 2.25)), minPrice)
+            if current_price < maxPrice:
+                new_price = max(min(current_price + fluctuation, maxPrice * 2.25 + (-amount / 2.75)), minPrice)
+            else:
+                new_price = max(min(current_price + fluctuation, maxPrice * 2.25 + (-amount / 2.25)), minPrice)
             cursor.execute("""
                 UPDATE stocks
                 SET price = ?
@@ -5401,9 +5483,9 @@ class CurrencySystem(commands.Cog):
     @is_allowed_user(930513222820331590, PBot)
     async def blueChipBooster(self, ctx, type: str):
         if type == "BUY":
-            boosterAmount = 75000000
+            boosterAmount = 75000000 * 3
         elif type == "SELL":
-            boosterAmount = 150000000
+            boosterAmount = 150000000 * 3
         else:
             return
         cursor = self.conn.cursor()
@@ -5413,7 +5495,7 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"This stock does not exist.")
             return
 
-        price_increase = random.uniform(buyPressureMin * boosterAmount, min(buyPressureMax * boosterAmount, 1000000 - float(stock[2])))
+        price_increase = random.uniform(buyPressureMin * boosterAmount, min(buyPressureMax * boosterAmount, stockMax - float(stock[2])))
         current_price = float(stock[2])
         new_price = min(current_price + price_increase, stockMax)
 
@@ -5429,6 +5511,23 @@ class CurrencySystem(commands.Cog):
 
         print(f'BlueChipBooster: {boosterAmount} shares')
         await self.buy_stock_for_bot(ctx, "BlueChipOG", boosterAmount)
+        if current_price <= 3500000:
+            await self.sell_stock_for_bot(ctx, 10000000000)
+
+    @commands.command(name="inverseStock")
+    @is_allowed_user(930513222820331590, PBot)
+    async def inverseStock(self, ctx, type: str):
+        symbol = "ContrarianCraze"
+        if type.lower() == "buy":
+            boosterAmount = 150000000
+            await self.sell_stock_for_bot(ctx, symbol, boosterAmount)
+        elif type.lower() == "sell":
+            boosterAmount = 150000000
+            await self.buy_stock_for_bot(ctx, symbol, boosterAmount)
+        else:
+            return
+
+
 
     @commands.command(name="P3LQDYBooster")
     @is_allowed_user(930513222820331590, PBot)
@@ -5685,7 +5784,7 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"This stock does not exist.")
             return
 
-        price_increase = random.uniform(buyPressureMin * amount, min(buyPressureMax * amount, 5000000 - float(stock[2])))
+        price_increase = random.uniform(buyPressureMin * amount, min(buyPressureMax * amount, stockMax - float(stock[2])))
         current_price = float(stock[2])
         new_price = min(current_price + price_increase, stockMax)
 
@@ -5711,7 +5810,7 @@ class CurrencySystem(commands.Cog):
             return
 
         # Generate a random float between 0.000001 * amount and 0.000035 * amount for price increase
-        price_increase = random.uniform(buyPressureMin * amount, min(buyPressureMax * amount, 1000000 - float(stock[2])))
+        price_increase = random.uniform(buyPressureMin * amount, min(buyPressureMax * amount, stockMax - float(stock[2])))
         current_price = float(stock[2])
         new_price = min(current_price + price_increase, stockMax)  # Ensure the price doesn't go above 150,000
 
@@ -6247,7 +6346,7 @@ class CurrencySystem(commands.Cog):
         update_user_balance(self.conn, get_user_id(P3addrConn, bot_address), get_user_balance(self.conn, get_user_id(P3addrConn, bot_address)) + fee)
         await log_transfer(ledger_conn, ctx, "P3 Bot", bot_address, get_user_id(P3addrConn, bot_address), fee)
         decay_other_stocks(self.conn, "P3:BANK")
-        await log_transaction(ledger_conn, ctx, "Buy ETF", etf_id, quantity, total_cost, total_cost_with_tax, current_balance, new_balance, etf_value)
+        await log_transaction(ledger_conn, ctx, "Buy ETF", str(etf_id), quantity, total_cost, total_cost_with_tax, current_balance, new_balance, etf_value)
         await self.blueChipBooster(ctx, "BUY")
         self.conn.commit()
         print(f'ETF BUY for ETF: {etf_id}, Userid: {user_id}, P3 Address: {generate_crypto_address(user_id)}')
@@ -6319,7 +6418,7 @@ class CurrencySystem(commands.Cog):
         update_user_balance(self.conn, get_user_id(P3addrConn, bot_address), get_user_balance(self.conn, get_user_id(P3addrConn, bot_address)) + fee)
         await log_transfer(ledger_conn, ctx, "P3 Bot", bot_address, get_user_id(P3addrConn, bot_address), fee)
         decay_other_stocks(self.conn, "P3:BANK")
-        await log_transaction(ledger_conn, ctx, "Sell ETF", etf_id, quantity, total_sale_amount, total_sale_amount_with_tax, current_balance, new_balance, etf_value)
+        await log_transaction(ledger_conn, ctx, "Sell ETF", str(etf_id), quantity, total_sale_amount, total_sale_amount_with_tax, current_balance, new_balance, etf_value)
         await self.blueChipBooster(ctx, "SELL")
         self.conn.commit()
         if etf_id == 10:
@@ -6955,7 +7054,26 @@ class CurrencySystem(commands.Cog):
 
         item_quantity, item_id = item_info
 
-        # Check if the user has already used the item today
+        # Determine the usage limit based on the user's roles
+        role_limits = {
+            "default": 1,
+            "Bronze Pass": 2,
+            "Silver Pass": 3,
+            "Gold Pass": 5,
+        }
+
+        usage_limit = role_limits.get("default")  # Default limit for regular users
+
+        for role in member.roles:
+            if role.name in role_limits:
+                usage_limit = role_limits[role.name]
+
+        # Check if the user has reached the usage limit
+        if item_quantity <= 0:
+            await ctx.send(f"You do not have enough {item_name} to use based on your role's limit.")
+            return
+
+        # Check if the last usage was within the last 24 hours
         last_usage_date = None
         with self.get_cursor() as cursor:
             cursor.execute("""
@@ -6981,22 +7099,6 @@ class CurrencySystem(commands.Cog):
         # Check if the last usage was within the last 24 hours
         if time_difference.total_seconds() < 24 * 60 * 60:
             await ctx.send(f"You have already used {item_name} today. You can use it again tomorrow.")
-            return
-
-        # Determine the usage limit based on the user's roles
-        usage_limit = 1  # Default limit for regular users
-
-        for role in member.roles:
-            if role.name == "Bronze Pass":
-                usage_limit = 2
-            elif role.name == "Silver Pass":
-                usage_limit = 3
-            elif role.name == "Gold Pass":
-                usage_limit = 5
-
-        # Check if the user has reached the usage limit
-        if item_quantity <= 0 or item_quantity < usage_limit:
-            await ctx.send(f"You do not have enough {item_name} to use based on your role's limit.")
             return
 
         # Perform actions based on the item
@@ -7140,8 +7242,6 @@ class CurrencySystem(commands.Cog):
         total_sale_amount = Decimal(item_price) * Decimal(quantity)
         # Calculate the tax amount based on dynamic factors
         tax_percentage = get_tax_percentage(quantity, total_sale_amount)  # Custom function to determine the tax percentage based on quantity and cost
-        if has_role(member, bronze_pass) and tax_rate >= 0.15:
-            tax_percentage -= role_discount
         fee = total_sale_amount * Decimal(tax_percentage)
         total_sale_amount = total_sale_amount - fee
         total_cost = total_sale_amount
