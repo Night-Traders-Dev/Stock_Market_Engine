@@ -40,6 +40,8 @@ import shlex
 
 
 
+
+
 # Hardcoded Variables
 
 announcement_channel_ids = [1093540470593962014, 1124784361766650026, 1124414952812326962]
@@ -49,7 +51,7 @@ dStockLimit = 150000000 #2000000 standard
 dETFLimit = 500000000000
 treasureMin = 10000000
 treasureMax = 50000000
-MAX_BALANCE = Decimal('1000000000000000000')
+MAX_BALANCE = Decimal('2500000000000000000')
 sellPressureMin = 0.000025
 sellPressureMax = 0.000065
 buyPressureMin = 0.0000075
@@ -65,6 +67,8 @@ minBet = 10000
 maxBet = 500000000
 last_buy_time = {}
 last_sell_time = {}
+user_transactions = {}
+user_locks = {}
 inverseStocks = ["ContrarianCraze", "PolyInverse", "LOL"]
 
 ## One-time pass roles
@@ -314,56 +318,94 @@ def create_multipage_embeds(data, title):
 
     return pages
 
+# Function to set the user's transaction status
+def set_user_in_transaction(user_id, status):
+    user_locks[user_id] = asyncio.Lock()
 
+# Function to check if the user is in a transaction
+def is_user_in_transaction(user_id):
+    return user_id in user_locks and user_locks[user_id].locked()
 
+# Function to acquire a lock for the user
+async def acquire_user_lock(user_id):
+    if user_id not in user_locks:
+        user_locks[user_id] = asyncio.Lock()
+    await user_locks[user_id].acquire()
 
-async def check_impact(cursor, ctx, stock_name: str, amount: float):
+# Function to release the lock for the user
+def release_user_lock(user_id):
+    if user_id in user_locks and user_locks[user_id].locked():
+        user_locks[user_id].release()
 
-    # Get stock details
-    cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-    stock = cursor.fetchone()
+async def check_impact(cursor, ctx, stock_name: str, amount: float, is_buy: bool):
+    # Check if the user has an ongoing transaction
+    if is_user_in_transaction(ctx.author.id):
+        await ctx.send("You already have an ongoing transaction. Please complete or cancel it before initiating a new one.")
+        return "ongoing_transaction"
 
-    if stock is None:
-        await ctx.send(f"This stock does not exist.")
-        return
+    # Acquire the lock for the user
+    async with acquire_user_lock(ctx.author.id):
+        # Set the user to be in a transaction
+        set_user_in_transaction(ctx.author.id, True)
 
-    # Assuming `price` is the third column
-    stock_price = float(stock[2])
-    subtotal = stock_price * amount
+        # Get stock details
+        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+        stock = cursor.fetchone()
 
+        if stock is None:
+            await ctx.send(f"This stock does not exist.")
+            set_user_in_transaction(ctx.author.id, False)  # Reset user transaction status
+            return
 
-    # Calculate potential price decrease
-    price_decrease = random.uniform(sellPressureMin * amount, min(sellPressureMax * amount, stock_price))
-    potential_stock_price = max(stock_price - price_decrease, 0)  # Ensure the price doesn't go below 0
+        # Assuming `price` is the third column
+        stock_price = float(stock[2])
+        subtotal = stock_price * amount
 
-    # Calculate impact percentage
-    impact_percentage = ((stock_price - potential_stock_price) / stock_price) * 100
-    print(f"{generate_crypto_address(ctx.author.id)}: Selling {amount:,} shares of {stock_name} with an impact of {impact_percentage:2f}%")
+        if is_buy:
+            # Calculate potential price increase for buys
+            price_increase = random.uniform(buyPressureMin * amount, min(buyPressureMax * amount, stockMax - stock_price))
+            potential_stock_price = min(stock_price + price_increase, stockMax)
+        else:
+            # Calculate potential price decrease for sells
+            price_decrease = random.uniform(sellPressureMin * amount, min(sellPressureMax * amount, stock_price))
+            potential_stock_price = max(stock_price - price_decrease, 0)  # Ensure the price doesn't go below 0
 
-    # Check if impact percentage is over 10%
-    if impact_percentage > 10:
-        confirmation_message = await ctx.send(
-            f"The impact of this sell is estimated to be {impact_percentage:.2f}%. "
-            f"Are you sure you want to continue? Type `confirm` and press enter to proceed."
-        )
+        # Calculate impact percentage
+        impact_percentage = ((potential_stock_price - stock_price) / stock_price) * 100
+        action = "buying" if is_buy else "selling"
+        print(f"{generate_crypto_address(ctx.author.id)}: {action} {amount:,} shares of {stock_name} with an impact of {impact_percentage:.2f}%")
 
-        try:
-            # Wait for user confirmation
-            confirm_response = await ctx.bot.wait_for(
-                "message",
-                check=lambda msg: msg.author == ctx.author and msg.channel == ctx.channel and msg.content.lower() == "confirm",
-                timeout=30,
+        # Check if impact percentage is over 10%
+        if impact_percentage > 10:
+            confirmation_message = await ctx.send(
+                f"The impact of this {action} is estimated to be {impact_percentage:.2f}%. "
+                f"Are you sure you want to continue? Type `confirm` and press enter to proceed. "
+                f"To cancel, type `stop`, `no`, `quit`, or `cancel`."
             )
 
-            # Check if the user confirmed
-            if confirm_response:
-                await ctx.send("Sell confirmed. Proceeding with the sell.")
-            else:
-                await ctx.send("Sell canceled.")
+            try:
+                # Wait for user confirmation
+                confirm_response = await ctx.bot.wait_for(
+                    "message",
+                    check=lambda msg: msg.author == ctx.author and msg.channel == ctx.channel and msg.content.lower() in ["confirm", "stop", "no", "quit", "cancel"],
+                    timeout=30,
+                )
+
+                # Check if the user confirmed
+                if confirm_response.content.lower() == "confirm":
+                    await ctx.send(f"{action.capitalize()} confirmed. Proceeding with the {action}.")
+                else:
+                    await ctx.send(f"{action.capitalize()} canceled.")
+                    set_user_in_transaction(ctx.author.id, False)  # Reset user transaction status
+                    return "canceled"
+            except asyncio.TimeoutError:
+                await ctx.send(f"{action.capitalize()} confirmation timed out. {action.capitalize()} canceled.")
+                set_user_in_transaction(ctx.author.id, False)  # Reset user transaction status
                 return "canceled"
-        except asyncio.TimeoutError:
-            await ctx.send("Sell confirmation timed out. Sell canceled.")
-            return "canceled"
+
+        # Reset user transaction status
+        set_user_in_transaction(ctx.author.id, False)
+
 
 async def check_and_notify_address(ctx):
     # Connect to the P3addr.db database
@@ -2804,7 +2846,7 @@ class CurrencySystem(commands.Cog):
         for action, quantity, price_str in transactions:
 
             if symbol.lower() == "roflstocks":
-                if float(price_str.replace(",", "")) <= 1000:
+                if isinstance(price_str, str):
                     formatted_price = price_str.replace(",", "")
                     price = float(formatted_price)
                 else:
@@ -3228,7 +3270,7 @@ class CurrencySystem(commands.Cog):
 
                     for timestamp_str, action, price_str in transactions:
                         if stock_symbol.lower() == "roflstocks":
-                            if current_price <= 1000:
+                            if isinstance(price_str, str):
                                 formatted_price = str(price_str).replace(",", "")
                                 price = float(formatted_price)
                             else:
@@ -3453,6 +3495,128 @@ class CurrencySystem(commands.Cog):
 
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred: {str(e)}")
+
+
+
+    @commands.command(name="tax_refund", help="Distribute this month's 10% of received funds to all users in the server.")
+    @is_allowed_user(930513222820331590)
+    async def tax_refund(self, ctx, debug: bool = False):
+        try:
+            # Connect to the SQLite databases
+            ledger_conn = sqlite3.connect("p3ledger.db")
+            P3conn = sqlite3.connect("P3addr.db")
+            currency_conn = sqlite3.connect("currency_system.db")
+            currency_cursor = currency_conn.cursor()
+
+
+            # Retrieve transfer transactions for the current month where the bot is the receiver
+            current_month = datetime.now().month
+            ledger_cursor = ledger_conn.cursor()
+            ledger_cursor.execute("SELECT sender_id, amount FROM transfer_transactions WHERE receiver_id = ? AND strftime('%m', timestamp) = ?;", (str(self.bot.user.id), str(current_month)))
+            received_tokens = ledger_cursor.fetchall()
+
+            # Calculate total amount for the current month
+            total_amount = sum(received_token[1] for received_token in received_tokens)
+
+            # Calculate 10% of the total amount
+            refund_amount = total_amount * 0.1
+
+            # Query user_addresses to get the list of users
+            P3cursor = P3conn.cursor()
+            P3cursor.execute("SELECT user_id, p3_address FROM user_addresses")
+            users = P3cursor.fetchall()
+
+            # Calculate refund amount per user
+            num_recipients = len(users)
+            individual_refund = refund_amount / num_recipients
+
+            # Distribute the refund to all users (except the bot and other bots)
+            for user_id, p3_address in users:
+                try:
+                    recipient_user = await self.bot.fetch_user(int(user_id))
+                    if recipient_user and not recipient_user.bot and str(user_id) != str(self.bot.user.id):
+                        # Convert individual_refund to Decimal before adding
+                        individual_refund_decimal = Decimal(str(individual_refund))
+
+                        # Print debug information
+                        if debug:
+                            print(f"User ID: {user_id}, P3 Address: {p3_address}, Refund Amount: {individual_refund_decimal:,.2f}")
+                        else:
+                            # Add the refund amount to the recipient's balance
+                            update_user_balance(currency_conn, int(user_id), get_user_balance(currency_conn, int(user_id)) + individual_refund_decimal)
+
+                            # Log the tax refund
+                            await log_transfer(ledger_conn, ctx, "P3 Bot", ctx.author.name, int(user_id), individual_refund_decimal)
+
+                except discord.NotFound:
+                    print(f"User not found with ID: {user_id}")
+
+            # Close the database connections
+            ledger_conn.close()
+            P3conn.close()
+            currency_conn.close()
+
+            # Send a confirmation message
+            await ctx.send(f"Tax refund distributed to {num_recipients} users.")
+
+        except Exception as e:
+            print(f"Error in tax_refund: {e}")
+            await ctx.send("An error occurred while processing the tax refund.")
+
+
+
+
+
+
+
+
+
+
+    @commands.command(name="CTR", aliases=["calculate_tax_refund"])
+    async def calculate_tax_refund(self, ctx):  # Add the 'self' parameter
+        try:
+            # Connect to the SQLite databases
+            P3conn = sqlite3.connect("P3addr.db")
+            ledger_conn = sqlite3.connect("p3ledger.db")
+
+            # Calculate the start date of the current month
+            current_month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+            # Retrieve transfer transactions where the bot is the receiver for the current month
+            ledger_cursor = ledger_conn.cursor()
+            ledger_cursor.execute("SELECT sender_id, amount FROM transfer_transactions WHERE receiver_id = ? AND timestamp >= ?;", (str(self.bot.user.id), current_month_start))
+            received_tokens = ledger_cursor.fetchall()
+
+            # Calculate total amount
+            total_amount = sum(received_token[1] for received_token in received_tokens)
+
+            # Calculate 10% of the total amount
+            refund_amount = total_amount * 0.1
+
+            # Query user_addresses to get the list of users
+            P3cursor = P3conn.cursor()
+            P3cursor.execute("SELECT user_id, p3_address FROM user_addresses")
+            users = P3cursor.fetchall()
+
+            # Calculate number of recipients
+            num_recipients = len(users)
+
+            # Calculate refund amount per user
+            individual_refund = refund_amount / num_recipients
+
+            # Close the database connections
+            P3conn.close()
+            ledger_conn.close()
+
+            # Send the results to the user
+            await ctx.send(f"Total amount received this month: {total_amount:,.2f} tokens")
+            await ctx.send(f"10% of the total amount: {refund_amount:,.2f} tokens")
+            await ctx.send(f"Number of recipients: {num_recipients}")
+            await ctx.send(f"Tax refund amount per user: {individual_refund:,.2f} tokens")
+
+        except Exception as e:
+            print(f"Error in calculate_tax_refund: {e}")
+            await ctx.send("An error occurred while calculating the tax refund.")
 
 
 
@@ -3700,73 +3864,84 @@ class CurrencySystem(commands.Cog):
         buyer_id = ctx.author.id
         user_id = ctx.author.id
         member = ctx.guild.get_member(user_id)
-
-
         cursor = self.conn.cursor()
+        # Call the check_impact function to handle impact calculation and confirmation
+#        result = await check_impact(cursor, ctx, stock_name, amount, is_buy=False)
+        result = "bugged"
+        # Check the result and perform further actions if needed
+        if result == "canceled":
+            # Handle canceled transaction
+            pass
+        elif result == "ongoing_transaction":
+            # Handle ongoing transaction
+            pass
+        else:
+
+
 #        result, last_purchase_time, remaining_time = sell_check(cursor, user_id, stock_name, "30m")
 #        if result:
 #            print(f"You can not purchase {stock_name} for another {remaining_time}")
-        if amount <= 0:
-            await ctx.send("Amount must be a positive number.")
-            return
+            if amount <= 0:
+                await ctx.send("Amount must be a positive number.")
+                return
 
 
         # Check if the stock_name is "TitanForge" and set a different limit
-        if stock_name.lower() == "p3:stable":
-            stock_limit = float('inf')  # Infinite limit for TitanForge
-        elif stock_name.lower() == "roflstocks":
-            stock_limit = dStockLimit * 50
-        elif stock_name.lower() == "contrariancraze":
-            stock_limit = dStockLimit * 25
-        else:
-            if has_role(member, bronze_pass):
-                stock_limit = dStockLimit * 1.5
+            if stock_name.lower() == "p3:stable":
+                stock_limit = float('inf')  # Infinite limit for TitanForge
+            elif stock_name.lower() == "roflstocks":
+                stock_limit = dStockLimit * 50
+            elif stock_name.lower() == "contrariancraze":
+                stock_limit = dStockLimit * 25
             else:
-                stock_limit = dStockLimit
+                if has_role(member, bronze_pass):
+                    stock_limit = dStockLimit * 1.5
+                else:
+                    stock_limit = dStockLimit
 
-        if amount == 0:
-            await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
-            return
+            if amount == 0:
+                await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
+                return
 
-        # Retrieve stock information
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-        stock = cursor.fetchone()
+            # Retrieve stock information
+            cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+            stock = cursor.fetchone()
 
-        if stock is None:
-            await ctx.send(f"{ctx.author.mention}, this stock does not exist.")
-            return
+            if stock is None:
+                await ctx.send(f"{ctx.author.mention}, this stock does not exist.")
+                return
 
-        price = Decimal(stock[2])  # Assuming stock[2] is the price
+            price = Decimal(stock[2])  # Assuming stock[2] is the price
 
-        # Get the total amount bought today by the user for this stock
-        cursor.execute("""
-            SELECT SUM(amount), MAX(timestamp)
-            FROM user_daily_buys
-            WHERE user_id=? AND symbol=? AND DATE(timestamp)=DATE('now')
-        """, (buyer_id, stock_name))
+            # Get the total amount bought today by the user for this stock
+            cursor.execute("""
+                SELECT SUM(amount), MAX(timestamp)
+                FROM user_daily_buys
+                WHERE user_id=? AND symbol=? AND DATE(timestamp)=DATE('now')
+            """, (buyer_id, stock_name))
 
-        daily_bought_record = cursor.fetchone()
-        daily_bought = daily_bought_record[0] if daily_bought_record and daily_bought_record[0] is not None else 0
-        last_purchase_time = daily_bought_record[1] if daily_bought_record and daily_bought_record[1] is not None else None
+            daily_bought_record = cursor.fetchone()
+            daily_bought = daily_bought_record[0] if daily_bought_record and daily_bought_record[0] is not None else 0
+            last_purchase_time = daily_bought_record[1] if daily_bought_record and daily_bought_record[1] is not None else None
 
-        if user_id == jacob:
-            stock_limit = float('inf')
-        if daily_bought + amount > stock_limit:
-            remaining_amount = stock_limit - daily_bought
+            if user_id == jacob:
+                stock_limit = float('inf')
+            if daily_bought + amount > stock_limit:
+                remaining_amount = stock_limit - daily_bought
 
-            # Calculate the time remaining until they can buy again
-            if last_purchase_time:
-                last_purchase_datetime = datetime.strptime(last_purchase_time, '%Y-%m-%d %H:%M:%S')
-                time_until_reset = (last_purchase_datetime + timedelta(days=1)) - datetime.now()
-                hours, remainder = divmod(time_until_reset.seconds, 3600)
-                minutes, _ = divmod(remainder, 60)
-                time_remaining_str = f"{hours} hours and {minutes} minutes"
-            else:
-                time_remaining_str = "24 hours"
+                # Calculate the time remaining until they can buy again
+                if last_purchase_time:
+                    last_purchase_datetime = datetime.strptime(last_purchase_time, '%Y-%m-%d %H:%M:%S')
+                    time_until_reset = (last_purchase_datetime + timedelta(days=1)) - datetime.now()
+                    hours, remainder = divmod(time_until_reset.seconds, 3600)
+                    minutes, _ = divmod(remainder, 60)
+                    time_remaining_str = f"{hours} hours and {minutes} minutes"
+                else:
+                    time_remaining_str = "24 hours"
 
-            await ctx.send(f"{ctx.author.mention}, you have reached your daily buy limit for {stock_name} stocks. "
-                           f"You can buy {remaining_amount} more after {time_remaining_str}.")
-            return
+                await ctx.send(f"{ctx.author.mention}, you have reached your daily buy limit for {stock_name} stocks. "
+                               f"You can buy {remaining_amount} more after {time_remaining_str}.")
+                return
 
         # Check if there are matching orders in the order book
 #        cursor.execute("SELECT user_id, price, quantity FROM limit_orders WHERE symbol=? ORDER BY price ASC, quantity ASC", (stock_name,))
@@ -3877,94 +4052,94 @@ class CurrencySystem(commands.Cog):
 
 #                    break  # Exit the loop after processing the order
 
-        # Proceed with the market buy if there's still remaining amount to buy
-        if amount > 0:# and total_amount_bought == 0:
-            cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-            stock = cursor.fetchone()
-            if stock is None:
-                await ctx.send(f"{ctx.author.mention}, this stock does not exist.")
+            # Proceed with the market buy if there's still remaining amount to buy
+            if amount > 0:# and total_amount_bought == 0:
+                cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+                stock = cursor.fetchone()
+                if stock is None:
+                    await ctx.send(f"{ctx.author.mention}, this stock does not exist.")
+                    return
+
+            available, price, total_supply = int(stock[4]), Decimal(stock[2]), int(stock[3])  # Assuming stock[3] is total supply
+
+            # Check the existing amount of this stock owned by the user
+            cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (user_id, stock_name))
+            user_stock = cursor.fetchone()
+            user_owned = int(user_stock[0]) if user_stock else 0
+
+            if (user_owned + amount) > (total_supply * 0.51):
+                await ctx.send(f"{ctx.author.mention}, you cannot own more than 51% of the total supply of {stock_name} stocks.")
                 return
 
-        available, price, total_supply = int(stock[4]), Decimal(stock[2]), int(stock[3])  # Assuming stock[3] is total supply
+            if amount > available:
+                await ctx.send(f"{ctx.author.mention}, there are only {available} {stock_name} stocks available.")
+                return
 
-        # Check the existing amount of this stock owned by the user
-        cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (user_id, stock_name))
-        user_stock = cursor.fetchone()
-        user_owned = int(user_stock[0]) if user_stock else 0
+            cost = price * Decimal(amount)
+            tax_percentage = 0.15
+            fee = cost * Decimal(tax_percentage)
+            total_cost = cost + fee
 
-        if (user_owned + amount) > (total_supply * 0.51):
-            await ctx.send(f"{ctx.author.mention}, you cannot own more than 51% of the total supply of {stock_name} stocks.")
-            return
+            current_balance = get_user_balance(self.conn, user_id)
 
-        if amount > available:
-            await ctx.send(f"{ctx.author.mention}, there are only {available} {stock_name} stocks available.")
-            return
+            if total_cost > current_balance:
+                # Calculate the missing amount needed to complete the transaction including tax.
+                missing_amount = total_cost - current_balance
+                await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy these stocks. You need {missing_amount:,.2f} more µPPN, including tax, to complete this purchase.")
+                return
 
-        cost = price * Decimal(amount)
-        tax_percentage = 0.15
-        fee = cost * Decimal(tax_percentage)
-        total_cost = cost + fee
+            # Update the user's balance
+            new_balance = current_balance - total_cost
 
-        current_balance = get_user_balance(self.conn, user_id)
+            update_user_balance(self.conn, user_id, new_balance)
 
-        if total_cost > current_balance:
-            # Calculate the missing amount needed to complete the transaction including tax.
-            missing_amount = total_cost - current_balance
-            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy these stocks. You need {missing_amount:,.2f} more µPPN, including tax, to complete this purchase.")
-            return
+            update_user_stocks(user_id, stock_name, amount, "buy")
 
-        # Update the user's balance
-        new_balance = current_balance - total_cost
-
-        update_user_balance(self.conn, user_id, new_balance)
-
-        update_user_stocks(user_id, stock_name, amount, "buy")
-
-        await update_available_stock(ctx, stock_name, amount, "buy")
-        # Transfer the tax amount to the bot's address P3:03da907038
-        P3addrConn = sqlite3.connect("P3addr.db")
-        bot_address = "P3:03da907038"
-        update_user_balance(self.conn, get_user_id(P3addrConn, bot_address), get_user_balance(self.conn, get_user_id(P3addrConn, bot_address)) + fee)
-        await log_transfer(ledger_conn, ctx, "P3 Bot", bot_address, get_user_id(P3addrConn, bot_address), fee)
+            await update_available_stock(ctx, stock_name, amount, "buy")
+            # Transfer the tax amount to the bot's address P3:03da907038
+            P3addrConn = sqlite3.connect("P3addr.db")
+            bot_address = "P3:03da907038"
+            update_user_balance(self.conn, get_user_id(P3addrConn, bot_address), get_user_balance(self.conn, get_user_id(P3addrConn, bot_address)) + fee)
+            await log_transfer(ledger_conn, ctx, "P3 Bot", bot_address, get_user_id(P3addrConn, bot_address), fee)
 
 
-        # Record this transaction in the user_daily_buys table
-        await record_user_daily_buy(cursor, user_id, stock_name, amount)
+            # Record this transaction in the user_daily_buys table
+            await record_user_daily_buy(cursor, user_id, stock_name, amount)
 
-        # Check if the user is part of a trading team
-        cursor.execute("SELECT team_id FROM team_members WHERE user_id=?", (user_id,))
-        team_record = cursor.fetchone()
-        if team_record:
-            team_id = team_record[0]
-            # Record the team's transaction
-            record_team_transaction(self.conn, team_id, stock_name, amount, price, "buy")
-            # Calculate and update the team's profit/loss
-            calculate_team_profit_loss(self.conn, team_id)
+            # Check if the user is part of a trading team
+            cursor.execute("SELECT team_id FROM team_members WHERE user_id=?", (user_id,))
+            team_record = cursor.fetchone()
+            if team_record:
+                team_id = team_record[0]
+                # Record the team's transaction
+                record_team_transaction(self.conn, team_id, stock_name, amount, price, "buy")
+                # Calculate and update the team's profit/loss
+                calculate_team_profit_loss(self.conn, team_id)
 
-        decay_other_stocks(self.conn, stock_name)
-        if stock_name == ('P3:Stable'):
-            await self.stableManager(ctx, 'BUY', amount)
-        elif stock_name == ('ROFLStocks'):
-            await self.memeManager(ctx, 'BUY', amount)
-        else:
-            await self.increase_price(ctx, stock_name, amount)
+            decay_other_stocks(self.conn, stock_name)
+            if stock_name == ('P3:Stable'):
+                await self.stableManager(ctx, 'BUY', amount)
+            elif stock_name == ('ROFLStocks'):
+                await self.memeManager(ctx, 'BUY', amount)
+            else:
+                await self.increase_price(ctx, stock_name, amount)
 
-        await self.blueChipBooster(ctx, "BUY")
-        await self.inverseStock(ctx, "buy")
-        stock_amount = amount
-        print(f"Debug: {stock_name}, Amount {stock_amount}, Price {price}, Stock Limit {stock_limit}")
+            await self.blueChipBooster(ctx, "BUY")
+            await self.inverseStock(ctx, "buy")
+            stock_amount = amount
+            print(f"Debug: {stock_name}, Amount {stock_amount}, Price {price}, Stock Limit {stock_limit}")
 #        if (
 #            stock_name.lower() == "p3:lqdy"
 #            and price <= 1000000
 #            and stock_amount <= stock_limit
 #        ):
 #            await self.reward_share_holders(ctx, "p3:lqdy")
-        self.conn.commit()
-        if amount == 0:
-            print(f'Fix for 0 amount buy after order book')
-        else:
-            await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, price, "True")
-            await ctx.send(f"{ctx.author.mention}, you have bought {amount} {stock_name} stocks. Your new balance is: {new_balance:,.2f} µPPN.")
+            self.conn.commit()
+            if amount == 0:
+                print(f'Fix for 0 amount buy after order book')
+            else:
+                await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, price, "True")
+                await ctx.send(f"{ctx.author.mention}, you have bought {amount} {stock_name} stocks. Your new balance is: {new_balance:,.2f} µPPN.")
 
 
 
@@ -3973,15 +4148,29 @@ class CurrencySystem(commands.Cog):
     async def sell(self, ctx, stock_name: str, amount: int):
         user_id = ctx.author.id
         member = ctx.guild.get_member(user_id)
-
-        if amount <= 0:
-            await ctx.send("Amount must be a positive number.")
-            return
-
-
-
-        await ctx.message.delete()
+        # Check if the user is already in a transaction
+        # Call the check_impact function to handle impact calculation and confirmation
         cursor = self.conn.cursor()
+#        result = await check_impact(cursor, ctx, stock_name, amount, is_buy=False)
+        result = "bugged"
+
+        # Check the result and perform further actions if needed
+        if result == "canceled":
+            # Handle canceled transaction
+            pass
+        elif result == "ongoing_transaction":
+            # Handle ongoing transaction
+            pass
+        else:
+
+
+            if amount <= 0:
+                await ctx.send("Amount must be a positive number.")
+                return
+
+
+
+            await ctx.message.delete()
 
 
 #        result, last_purchase_time, remaining_time = buy_check(cursor, user_id, stock_name, "30m")
@@ -3991,160 +4180,156 @@ class CurrencySystem(commands.Cog):
 #        else:
 #            print("Buy:False")
 
-        # Check if the user recently bought stocks
-        cursor.execute("SELECT timestamp FROM user_daily_buys WHERE user_id=? AND symbol=? ORDER BY timestamp DESC LIMIT 1", (user_id, stock_name))
-        last_buy_timestamp = cursor.fetchone()
+            # Check if the user recently bought stocks
+            cursor.execute("SELECT timestamp FROM user_daily_buys WHERE user_id=? AND symbol=? ORDER BY timestamp DESC LIMIT 1", (user_id, stock_name))
+            last_buy_timestamp = cursor.fetchone()
 
-        if last_buy_timestamp:
-            last_buy_timestamp = datetime.strptime(last_buy_timestamp[0], "%Y-%m-%d %H:%M:%S")
-            current_time = datetime.utcnow()
-            time_difference = current_time - last_buy_timestamp
+            if last_buy_timestamp:
+                last_buy_timestamp = datetime.strptime(last_buy_timestamp[0], "%Y-%m-%d %H:%M:%S")
+                current_time = datetime.utcnow()
+                time_difference = current_time - last_buy_timestamp
 
-            if time_difference.total_seconds() < 1800:  # 1800 seconds = 30 minutes
-                remaining_time = timedelta(seconds=1800) - time_difference
-                if user_id != jacob:
-                    await ctx.send(f"{ctx.author.mention}, you cannot sell {stock_name} stocks within {remaining_time}.")
+                if time_difference.total_seconds() < 1800:  # 1800 seconds = 30 minutes
+                    remaining_time = timedelta(seconds=1800) - time_difference
+                    if user_id != jacob:
+                        await ctx.send(f"{ctx.author.mention}, you cannot sell {stock_name} stocks within {remaining_time}.")
+                        return
+
+            cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (user_id, stock_name))
+            user_stock = cursor.fetchone()
+            if not user_stock or int(user_stock[0]) < amount:
+                await ctx.send(f"{ctx.author.mention}, you do not have enough {stock_name} stocks to sell.")
+                return
+
+            cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+            stock = cursor.fetchone()
+            if stock is None:
+                await ctx.send(f"{ctx.author.mention}, this stock does not exist.")
+                return
+
+            price = Decimal(stock[2])
+            earnings = price * Decimal(amount)
+            tax_percentage = get_tax_percentage(amount, earnings)  # Custom function to determine the tax percentage based on quantity and earnings
+            if has_role(member, bronze_pass):
+                tax_percentage -= role_discount
+            fee = earnings * Decimal(tax_percentage)
+            total_earnings = earnings - fee
+
+            current_balance = get_user_balance(self.conn, user_id)
+            new_balance = current_balance + total_earnings
+            # Transfer the tax amount to the bot's address P3:03da907038
+            P3addrConn = sqlite3.connect("P3addr.db")
+            bot_address = "P3:03da907038"
+            update_user_balance(self.conn, get_user_id(P3addrConn, bot_address), get_user_balance(self.conn, get_user_id(P3addrConn, bot_address)) + fee)
+            await log_transfer(ledger_conn, ctx, "P3 Bot", bot_address, get_user_id(P3addrConn, bot_address), fee)
+
+            try:
+                update_user_balance(self.conn, user_id, new_balance)
+            except ValueError as e:
+                await ctx.send(f"{ctx.author.mention}, an error occurred while updating the user balance. Error: {str(e)}")
+                return
+
+            # Check for buy orders in the order book
+            cursor.execute("SELECT user_id, price, quantity FROM limit_orders WHERE symbol=? ORDER BY price DESC, quantity DESC", (stock_name,))
+            orders = cursor.fetchall()
+
+            for order in orders:
+                buyer_id, order_price, order_quantity = order
+
+                if order_price >= price:
+                    # Execute the order from the order book
+
+                    # Update seller's balance
+                    cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
+                    seller_balance = cursor.fetchone()['balance']
+                    new_seller_balance = seller_balance + total_earnings
+                    update_user_balance(self.conn, user_id, new_seller_balance)
+
+                    # Update buyer's stocks
+                    cursor.execute("""
+                        INSERT INTO user_stocks (user_id, symbol, amount)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(user_id, symbol) DO UPDATE SET amount = amount + ?
+                    """, (buyer_id, stock_name, order_quantity, order_quantity))
+
+                    # Update order book
+                    new_quantity = order_quantity - amount
+                    if new_quantity == 0:
+                        cursor.execute("DELETE FROM limit_orders WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
+                                       (buyer_id, stock_name, order_price, order_quantity))
+                    else:
+                        cursor.execute("UPDATE limit_orders SET quantity=? WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
+                                       (new_quantity, buyer_id, stock_name, order_price, order_quantity))
+
+                    self.conn.commit()
+
+                    formatted_seller_balance = f"{new_seller_balance:,.2f}"
+                    await log_transaction(ledger_conn, ctx, "Sell Order Book", stock_name, order_quantity, total_earnings, total_earnings, seller_balance, formatted_seller_balance, price, "True")
+
+                    # Notify the buyer in DM
+                    buyer = self.bot.get_user(buyer_id)
+                    if buyer:
+                        try:
+                            await buyer.send(f"Your buy order for {order_quantity:,.2f} stocks of '{stock_name}' at {order_price:,.2f} each has been filled. "
+                                             f"Total: {total_earnings:,.2f} µPPN. New balance: {formatted_seller_balance} µPPN.")
+                        except discord.errors.Forbidden:
+                            print(f"Unable to send a message to the buyer with ID {buyer_id}. They may have blocked DMs or disabled them.")
+
+                    await ctx.send(f"{ctx.author.mention}, you have sold {amount:,.2f} stocks of '{stock_name}' to a buy order from the order book. Your new balance is: {formatted_seller_balance} µPPN.")
+
+                    amount -= order_quantity  # Subtract the sold quantity from the requested amount
+
+                    if amount == 0:
+                        # If the requested amount is fully sold, exit the loop
+                        break
+
+            # Proceed with the sell order if there's still remaining amount to sell
+            if amount > 0:
+                cursor.execute("""
+                    UPDATE user_stocks
+                    SET amount = amount - ?
+                    WHERE user_id = ? AND symbol = ?
+                """, (amount, user_id, stock_name))
+
+                cursor.execute("""
+                    UPDATE stocks
+                    SET available = available + ?
+                    WHERE symbol = ?
+                """, (amount, stock_name))
+                decay_other_stocks(self.conn, stock_name)
+
+                # Check if the user is part of a trading team
+                cursor.execute("SELECT team_id FROM team_members WHERE user_id=?", (user_id,))
+                team_record = cursor.fetchone()
+                if team_record:
+                    team_id = team_record[0]
+                    # Record the team's transaction
+                    record_team_transaction(self.conn, team_id, stock_name, amount, price, "sell")
+                    # Calculate and update the team's profit/loss
+                    calculate_team_profit_loss(self.conn, team_id)
+
+                # Record this transaction in the user_daily_buys table
+                try:
+                    cursor.execute("""
+                        INSERT INTO user_daily_sells (user_id, symbol, amount, timestamp)
+                        VALUES (?, ?, ?, datetime('now'))
+                    """, (user_id, stock_name, amount))
+                except sqlite3.Error as e:
+                    await ctx.send(f"{ctx.author.mention}, an error occurred while updating daily stock limit. Error: {str(e)}")
                     return
 
-        cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (user_id, stock_name))
-        user_stock = cursor.fetchone()
-        if not user_stock or int(user_stock[0]) < amount:
-            await ctx.send(f"{ctx.author.mention}, you do not have enough {stock_name} stocks to sell.")
-            return
-
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-        stock = cursor.fetchone()
-        if stock is None:
-            await ctx.send(f"{ctx.author.mention}, this stock does not exist.")
-            return
-        if stock_name.lower() != "roflstocks":
-            result = await check_impact(cursor, ctx, stock_name, float(amount))
-            if result == "canceled":
-                cursor.close()
-                return
-        price = Decimal(stock[2])
-        earnings = price * Decimal(amount)
-        tax_percentage = get_tax_percentage(amount, earnings)  # Custom function to determine the tax percentage based on quantity and earnings
-        if has_role(member, bronze_pass):
-            tax_percentage -= role_discount
-        fee = earnings * Decimal(tax_percentage)
-        total_earnings = earnings - fee
-
-        current_balance = get_user_balance(self.conn, user_id)
-        new_balance = current_balance + total_earnings
-        # Transfer the tax amount to the bot's address P3:03da907038
-        P3addrConn = sqlite3.connect("P3addr.db")
-        bot_address = "P3:03da907038"
-        update_user_balance(self.conn, get_user_id(P3addrConn, bot_address), get_user_balance(self.conn, get_user_id(P3addrConn, bot_address)) + fee)
-        await log_transfer(ledger_conn, ctx, "P3 Bot", bot_address, get_user_id(P3addrConn, bot_address), fee)
-
-        try:
-            update_user_balance(self.conn, user_id, new_balance)
-        except ValueError as e:
-            await ctx.send(f"{ctx.author.mention}, an error occurred while updating the user balance. Error: {str(e)}")
-            return
-
-        # Check for buy orders in the order book
-        cursor.execute("SELECT user_id, price, quantity FROM limit_orders WHERE symbol=? ORDER BY price DESC, quantity DESC", (stock_name,))
-        orders = cursor.fetchall()
-
-        for order in orders:
-            buyer_id, order_price, order_quantity = order
-
-            if order_price >= price:
-                # Execute the order from the order book
-
-                # Update seller's balance
-                cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
-                seller_balance = cursor.fetchone()['balance']
-                new_seller_balance = seller_balance + total_earnings
-                update_user_balance(self.conn, user_id, new_seller_balance)
-
-                # Update buyer's stocks
-                cursor.execute("""
-                    INSERT INTO user_stocks (user_id, symbol, amount)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(user_id, symbol) DO UPDATE SET amount = amount + ?
-                """, (buyer_id, stock_name, order_quantity, order_quantity))
-
-                # Update order book
-                new_quantity = order_quantity - amount
-                if new_quantity == 0:
-                    cursor.execute("DELETE FROM limit_orders WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
-                                   (buyer_id, stock_name, order_price, order_quantity))
+                if stock_name == ('P3:Stable'):
+                    await self.stableManager(ctx, 'sell', amount)
+                elif stock_name == ('ROFLStocks'):
+                    await self.memeManager(ctx, 'sell', amount)
                 else:
-                    cursor.execute("UPDATE limit_orders SET quantity=? WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
-                                   (new_quantity, buyer_id, stock_name, order_price, order_quantity))
-
+                    await self.decrease_price(ctx, stock_name, amount)
+                await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price, "True")
                 self.conn.commit()
-
-                formatted_seller_balance = f"{new_seller_balance:,.2f}"
-                await log_transaction(ledger_conn, ctx, "Sell Order Book", stock_name, order_quantity, total_earnings, total_earnings, seller_balance, formatted_seller_balance, price, "True")
-
-                # Notify the buyer in DM
-                buyer = self.bot.get_user(buyer_id)
-                if buyer:
-                    try:
-                        await buyer.send(f"Your buy order for {order_quantity:,.2f} stocks of '{stock_name}' at {order_price:,.2f} each has been filled. "
-                                         f"Total: {total_earnings:,.2f} µPPN. New balance: {formatted_seller_balance} µPPN.")
-                    except discord.errors.Forbidden:
-                        print(f"Unable to send a message to the buyer with ID {buyer_id}. They may have blocked DMs or disabled them.")
-
-                await ctx.send(f"{ctx.author.mention}, you have sold {amount:,.2f} stocks of '{stock_name}' to a buy order from the order book. Your new balance is: {formatted_seller_balance} µPPN.")
-
-                amount -= order_quantity  # Subtract the sold quantity from the requested amount
-
-                if amount == 0:
-                    # If the requested amount is fully sold, exit the loop
-                    break
-
-        # Proceed with the sell order if there's still remaining amount to sell
-        if amount > 0:
-            cursor.execute("""
-                UPDATE user_stocks
-                SET amount = amount - ?
-                WHERE user_id = ? AND symbol = ?
-            """, (amount, user_id, stock_name))
-
-            cursor.execute("""
-                UPDATE stocks
-                SET available = available + ?
-                WHERE symbol = ?
-            """, (amount, stock_name))
-            decay_other_stocks(self.conn, stock_name)
-
-            # Check if the user is part of a trading team
-            cursor.execute("SELECT team_id FROM team_members WHERE user_id=?", (user_id,))
-            team_record = cursor.fetchone()
-            if team_record:
-                team_id = team_record[0]
-                # Record the team's transaction
-                record_team_transaction(self.conn, team_id, stock_name, amount, price, "sell")
-                # Calculate and update the team's profit/loss
-                calculate_team_profit_loss(self.conn, team_id)
-
-            # Record this transaction in the user_daily_buys table
-            try:
-                cursor.execute("""
-                    INSERT INTO user_daily_sells (user_id, symbol, amount, timestamp)
-                    VALUES (?, ?, ?, datetime('now'))
-                """, (user_id, stock_name, amount))
-            except sqlite3.Error as e:
-                await ctx.send(f"{ctx.author.mention}, an error occurred while updating daily stock limit. Error: {str(e)}")
-                return
-
-            if stock_name == ('P3:Stable'):
-                await self.stableManager(ctx, 'sell', amount)
-            elif stock_name == ('ROFLStocks'):
-                await self.memeManager(ctx, 'sell', amount)
-            else:
-                await self.decrease_price(ctx, stock_name, amount)
-            await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price, "True")
-            self.conn.commit()
-            await self.blueChipBooster(ctx, "SELL")
-            await self.inverseStock(ctx, "sell")
-            await self.P3LQDYBooster(ctx)
-            await ctx.send(f"{ctx.author.mention}, you have sold {amount:,.2f} stocks of '{stock_name}'. Your new balance is: {new_balance:,.2f} µPPN.")
+                await self.blueChipBooster(ctx, "SELL")
+                await self.inverseStock(ctx, "sell")
+                await self.P3LQDYBooster(ctx)
+                await ctx.send(f"{ctx.author.mention}, you have sold {amount:,.2f} stocks of '{stock_name}'. Your new balance is: {new_balance:,.2f} µPPN.")
 
 
 
@@ -5543,12 +5728,10 @@ class CurrencySystem(commands.Cog):
     async def stableManager(self, ctx, type: str, amount: int):
         cursor = self.conn.cursor()
 
-        reserveStocks = ["P3:Gold-Reserve", "BlueChipOG"]
+        reserveStocks = ["P3:Gold-Reserve", "BlueChipOG", "P3:Copper-Reserve"]
         stableStock = "P3:Stable"
 
         shareLimit = 1000000000
-
-
 
         if amount >= shareLimit:
             shares_amount = shareLimit
@@ -5558,8 +5741,9 @@ class CurrencySystem(commands.Cog):
         if type.lower() == "buy":
             for stock_name in reserveStocks:
                 await self.sell_stock_for_bot(ctx, stock_name, shares_amount)
-            # Randomly fluctuate the price of P3:Stable
-            new_price = random.uniform(850, 2500)
+
+            # Randomly fluctuate the price of P3:Stable within the specified range
+            new_price = random.uniform(850, 3500)
             cursor.execute("""
                 UPDATE stocks
                 SET price = ?
@@ -5573,8 +5757,8 @@ class CurrencySystem(commands.Cog):
             for stock_name in reserveStocks:
                 await self.buy_stock_for_bot(ctx, stock_name, shares_amount * 2)
 
-            # Randomly fluctuate the price of P3:Stable
-            new_price = random.uniform(850, 2500)
+            # Randomly fluctuate the price of P3:Stable within the specified range
+            new_price = random.uniform(850, 3500)
             cursor.execute("""
                 UPDATE stocks
                 SET price = ?
@@ -5586,6 +5770,7 @@ class CurrencySystem(commands.Cog):
 
         else:
             await ctx.send("Invalid operation. Use 'buy' or 'sell'.")
+
 
 
 
@@ -5624,6 +5809,15 @@ class CurrencySystem(commands.Cog):
         goldReservePrice = await get_stock_price(self.conn, "P3:Gold-Reserve")
         if goldReservePrice >= 5000000:
             await self.sell_stock_for_bot(ctx, "P3:Gold-Reserve", 10000000000000)
+        silverReservePrice = await get_stock_price(self.conn, "P3:Silver-Reserve")
+        if silverReservePrice >= 5000000:
+            await self.sell_stock_for_bot(ctx, "P3:Silver-Reserve", 10000000000000)
+        copperReservePrice = await get_stock_price(self.conn, "P3:Copper-Reserve")
+        if copperReservePrice >= 5000000:
+            await self.sell_stock_for_bot(ctx, "P3:Copper-Reserve", 10000000000000)
+        platinumReservePrice = await get_stock_price(self.conn, "P3:Platinum-Reserve")
+        if platinumReservePrice >= 5000000:
+            await self.sell_stock_for_bot(ctx, "P3:Platinum-Reserve", 10000000000000)
         if current_price >= 3500000:
             await self.sell_stock_for_bot(ctx, "BlueChipOG", 1000000000000)
 
@@ -5684,14 +5878,14 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @commands.command(name="goldReserveBooster")
+    @commands.command(name="metalReserveBooster")
     @is_allowed_user(930513222820331590, PBot)
-    async def goldReserveBooster(self, ctx, boosterAmount: float):
+    async def metalReserveBooster(self, ctx, metal: str, boosterAmount: float):
         if boosterAmount >= 500000000:
             boosterAmount = (boosterAmount * 0.5 * 0.25 * 0.26 * 0.5)
         else:
             boosterAmount = 25000000
-        stock_name = "P3:Gold-Reserve"
+        stock_name = metal
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
         stock = cursor.fetchone()
@@ -5947,7 +6141,8 @@ class CurrencySystem(commands.Cog):
         if stock is None:
             await ctx.send(f"This stock does not exist.")
             return
-
+        # Set stockMin based on whether the stock is in inverseStocks
+        stockMin = 10000 if stock_name in inverseStocks else 1000
         # Generate a random float between 0.000011 * amount and 0.00005 * amount for price decrease
         price_decrease = random.uniform(sellPressureMin * amount, min(sellPressureMax * amount, float(stock[2])))
         current_price = float(stock[2])
@@ -5975,7 +6170,8 @@ class CurrencySystem(commands.Cog):
         if stock is None:
             await ctx.send(f"This stock does not exist.")
             return
-
+        # Set stockMin based on whether the stock is in inverseStocks
+        stockMin = 10000 if stock_name in inverseStocks else 1000
         # Generate a random float between 0.000011 * amount and 0.00005 * amount for price decrease
         price_decrease = random.uniform(sellPressureMin * amount, min(sellPressureMax * amount, float(stock[2])))
         current_price = float(stock[2])
@@ -7199,9 +7395,13 @@ class CurrencySystem(commands.Cog):
 
         await ctx.send(f"{ctx.author.mention}, you have successfully bought {quantity} {item_name}. Your new balance is: {new_balance:,.2f} µPPN.")
         if item_name == "Gold":
-            await self.goldReserveBooster(ctx, quantity)
-
-
+            await self.metalReserveBooster(ctx, "P3:Gold-Reserve" ,quantity)
+        elif item_name == "Copper":
+            await self.metalReserveBooster(ctx, "P3:Copper-Reserve" ,quantity)
+        elif item_name == "Silver":
+            await self.metalReserveBooster(ctx, "P3:Silver-Reserve" ,quantity)
+        elif item_name == "Platinum":
+            await self.metalReserveBooster(ctx, "P3:Platinum-Reserve" ,quantity)
 
     @commands.command(name="sell_item", help="Sell an item from your inventory.")
     async def sell_item(self, ctx, item_name: str, quantity: int):
