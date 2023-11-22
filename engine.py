@@ -3210,7 +3210,6 @@ class CurrencySystem(commands.Cog):
             )
             embed.set_thumbnail(url="attachment://market-stats.jpg")
             embed.add_field(name="Total ETF Value", value=f"{formatted_total_etf_value} µPPN", inline=False)
-            embed.add_field(name="Total Market Cap", value=f"{formatted_total_market_cap} µPPN", inline=False)
             embed.add_field(name="Total Market Volume", value=f"{formatted_total_market_volume} shares", inline=False)
             embed.add_field(name="Top 5 Undervalued Stocks", value=formatted_undervalued_stocks, inline=False)
             embed.add_field(name="Top 5 Overvalued Stocks", value=formatted_overvalued_stocks, inline=False)
@@ -3225,6 +3224,7 @@ class CurrencySystem(commands.Cog):
 
             # Send the embed as a message
             await ctx.send(embed=embed)
+            await self.calculate_tax_refund(ctx, "current")
 
             # Close the database connections
             currency_conn.close()
@@ -3565,26 +3565,30 @@ class CurrencySystem(commands.Cog):
 
 
 
-
-
-
-
-
-
-
     @commands.command(name="CTR", aliases=["calculate_tax_refund"])
-    async def calculate_tax_refund(self, ctx):  # Add the 'self' parameter
+    async def calculate_tax_refund(self, ctx, option: str = "current"):  # Add the 'self' parameter
         try:
             # Connect to the SQLite databases
             P3conn = sqlite3.connect("P3addr.db")
             ledger_conn = sqlite3.connect("p3ledger.db")
 
-            # Calculate the start date of the current month
-            current_month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            # Calculate the start date based on the option
+            if option.lower() == "last":
+                current_month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                last_month_start = current_month_start - timedelta(days=1)
+                last_month_start = last_month_start.replace(day=1)
+                start_date = last_month_start
+                title_prefix = "Last Month"
+            elif option.lower() == "total":
+                start_date = datetime.min
+                title_prefix = "Total History"
+            else:
+                start_date = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                title_prefix = "This Month"
 
-            # Retrieve transfer transactions where the bot is the receiver for the current month
+            # Retrieve transfer transactions where the bot is the receiver for the selected period
             ledger_cursor = ledger_conn.cursor()
-            ledger_cursor.execute("SELECT sender_id, amount FROM transfer_transactions WHERE receiver_id = ? AND timestamp >= ?;", (str(self.bot.user.id), current_month_start))
+            ledger_cursor.execute("SELECT sender_id, amount, timestamp FROM transfer_transactions WHERE receiver_id = ? AND timestamp >= ?;", (str(self.bot.user.id), start_date))
             received_tokens = ledger_cursor.fetchall()
 
             # Calculate total amount
@@ -3604,19 +3608,36 @@ class CurrencySystem(commands.Cog):
             # Calculate refund amount per user
             individual_refund = refund_amount / num_recipients
 
+            # Calculate tax collected in the last 1, 6, 12, and 24 hours
+            current_time = datetime.now()
+            tax_last_1_hour = sum(received_token[1] for received_token in received_tokens if current_time - timedelta(hours=1) <= datetime.strptime(received_token[2], "%Y-%m-%d %H:%M:%S") <= current_time)
+            tax_last_6_hours = sum(received_token[1] for received_token in received_tokens if current_time - timedelta(hours=6) <= datetime.strptime(received_token[2], "%Y-%m-%d %H:%M:%S") <= current_time)
+            tax_last_12_hours = sum(received_token[1] for received_token in received_tokens if current_time - timedelta(hours=12) <= datetime.strptime(received_token[2], "%Y-%m-%d %H:%M:%S") <= current_time)
+            tax_last_24_hours = sum(received_token[1] for received_token in received_tokens if current_time - timedelta(days=1) <= datetime.strptime(received_token[2], "%Y-%m-%d %H:%M:%S") <= current_time)
+
             # Close the database connections
             P3conn.close()
             ledger_conn.close()
 
-            # Send the results to the user
-            await ctx.send(f"Total amount received this month: {total_amount:,.2f} tokens")
-            await ctx.send(f"10% of the total amount: {refund_amount:,.2f} tokens")
-            await ctx.send(f"Number of recipients: {num_recipients}")
-            await ctx.send(f"Tax refund amount per user: {individual_refund:,.2f} tokens")
+            # Create an embed with emojis
+            embed = discord.Embed(title=f"💸 {title_prefix} Tax Refund Calculation 💸", color=0x42F56C)
+            embed.add_field(name="💰 Total amount received", value=f"{total_amount:,.2f} tokens", inline=False)
+            embed.add_field(name="💸 10% of the total amount", value=f"{refund_amount:,.2f} tokens", inline=False)
+            embed.add_field(name="👥 Number of recipients", value=f"{num_recipients}", inline=False)
+            embed.add_field(name="💳 Tax refund amount per user", value=f"{individual_refund:,.2f} tokens", inline=False)
+            embed.add_field(name="🕒 Tax collected in the last 1 hour", value=f"{tax_last_1_hour:,.2f} tokens", inline=False)
+            embed.add_field(name="🕕 Tax collected in the last 6 hours", value=f"{tax_last_6_hours:,.2f} tokens", inline=False)
+            embed.add_field(name="🕛 Tax collected in the last 12 hours", value=f"{tax_last_12_hours:,.2f} tokens", inline=False)
+            embed.add_field(name="🕧 Tax collected in the last 24 hours", value=f"{tax_last_24_hours:,.2f} tokens", inline=False)
+
+            # Send the embed to the user
+            await ctx.send(embed=embed)
 
         except Exception as e:
             print(f"Error in calculate_tax_refund: {e}")
             await ctx.send("An error occurred while calculating the tax refund.")
+
+
 
 
 
@@ -4875,36 +4896,40 @@ class CurrencySystem(commands.Cog):
 
 # Stock Tools
 
-    @commands.command(name='topstocks', help='Shows the top 5 highest and lowest price stocks with available quantities.')
-    async def topstocks(self, ctx):
+    @commands.command(name='topstocks', help='Shows the top stocks based on specified criteria.')
+    async def topstocks(self, ctx, option: str = 'mixed'):
         cursor = self.conn.cursor()
 
         try:
-            # Get the top 5 highest price stocks with available quantities
-            cursor.execute("SELECT symbol, price, available FROM stocks ORDER BY price DESC LIMIT 5")
-            top_high_stocks = cursor.fetchall()
+            if option.lower() == 'high':
+                # Get the top 10 highest price stocks with available quantities
+                cursor.execute("SELECT symbol, price, available FROM stocks ORDER BY price DESC LIMIT 10")
+                top_stocks = cursor.fetchall()
+                title = 'Top 10 Highest Price Stocks'
 
-            # Get the top 5 lowest price stocks with available quantities
-            cursor.execute("SELECT symbol, price, available FROM stocks ORDER BY price ASC LIMIT 5")
-            top_low_stocks = cursor.fetchall()
+            elif option.lower() == 'low':
+                # Get the top 10 lowest price stocks with available quantities
+                cursor.execute("SELECT symbol, price, available FROM stocks ORDER BY price ASC LIMIT 10")
+                top_stocks = cursor.fetchall()
+                title = 'Top 10 Lowest Price Stocks'
+
+            else:
+                # Get the top 5 highest price stocks and the top 5 lowest price stocks with available quantities
+                cursor.execute("SELECT symbol, price, available FROM stocks ORDER BY price DESC LIMIT 5")
+                top_high_stocks = cursor.fetchall()
+                cursor.execute("SELECT symbol, price, available FROM stocks ORDER BY price ASC LIMIT 5")
+                top_low_stocks = cursor.fetchall()
+                top_stocks = top_high_stocks + top_low_stocks
+                title = 'Top 5 Highest and Lowest Price Stocks'
 
             # Create the embed
-            embed = discord.Embed(title='Top 5 Highest and Lowest Price Stocks', color=discord.Color.blue())
+            embed = discord.Embed(title=title, color=discord.Color.blue())
 
-            # Add fields for the top 5 highest price stocks
-            for i, (symbol, price, available) in enumerate(top_high_stocks, start=1):
+            # Add fields for the top stocks
+            for i, (symbol, price, available) in enumerate(top_stocks, start=1):
                 decimal_places = 8 if price < 0.01 else 2
                 embed.add_field(
-                    name=f"High #{i}: {symbol}",
-                    value=f"Price: {price:,.{decimal_places}f} µPPN\nAvailable: {available:,}",
-                    inline=False
-                )
-
-            # Add fields for the top 5 lowest price stocks
-            for i, (symbol, price, available) in enumerate(top_low_stocks, start=1):
-                decimal_places = 8 if price < 0.01 else 2
-                embed.add_field(
-                    name=f"Low #{i}: {symbol}",
+                    name=f"#{i}: {symbol}",
                     value=f"Price: {price:,.{decimal_places}f} µPPN\nAvailable: {available:,}",
                     inline=False
                 )
@@ -4924,6 +4949,7 @@ class CurrencySystem(commands.Cog):
 
             # Inform the user that an error occurred
             await ctx.send(f"An unexpected error occurred. Please try again later.")
+
 
     @commands.command(name="treasure_chest", help="Opens a treasure chest and gives you shares of a stock.")
     @is_allowed_user(930513222820331590)
