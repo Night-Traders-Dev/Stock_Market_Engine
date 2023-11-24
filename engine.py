@@ -2400,11 +2400,10 @@ class CurrencySystem(commands.Cog):
             cursor = self.conn.cursor()
 
             # Get the current value of the ETF
-            cursor.execute("SELECT value FROM etfs WHERE etf_id = ?", (etf_id,))
-            result = cursor.fetchone()
+            result = await get_etf_value(self.conn, etf_id)
             if result:
-                etf_value = result[0]
-                await ctx.send(f"Current value of ETF with ID {etf_id}: {etf_value} µPPN")
+                etf_value = result
+                await ctx.send(f"Current value of ETF with ID {etf_id}: {etf_value:,.2f} µPPN")
             else:
                 await ctx.send(f"ETF with ID {etf_id} does not exist.")
 
@@ -2419,7 +2418,7 @@ class CurrencySystem(commands.Cog):
             top_holders = cursor.fetchall()
 
             if top_holders:
-                top_holders_str = "\n".join([f"{generate_crypto_address(user_id)} - {quantity} shares" for user_id, quantity in top_holders])
+                top_holders_str = "\n".join([f"{generate_crypto_address(user_id)} - {quantity:,.2f} shares" for user_id, quantity in top_holders])
                 await ctx.send(f"Top holders of ETF with ID {etf_id}:\n{top_holders_str}")
             else:
                 await ctx.send(f"No one currently holds shares in ETF with ID {etf_id}.")
@@ -3608,9 +3607,11 @@ class CurrencySystem(commands.Cog):
             # Calculate refund amount per user
             individual_refund = refund_amount / num_recipients
 
-            # Calculate tax collected in the last 1, 6, 12, and 24 hours
+            # Calculate tax collected in the last 1, 5, 30, 6, 12, and 24 hours
             current_time = datetime.now()
             tax_last_1_hour = sum(received_token[1] for received_token in received_tokens if current_time - timedelta(hours=1) <= datetime.strptime(received_token[2], "%Y-%m-%d %H:%M:%S") <= current_time)
+            tax_last_5_minutes = sum(received_token[1] for received_token in received_tokens if current_time - timedelta(minutes=5) <= datetime.strptime(received_token[2], "%Y-%m-%d %H:%M:%S") <= current_time)
+            tax_last_30_minutes = sum(received_token[1] for received_token in received_tokens if current_time - timedelta(minutes=30) <= datetime.strptime(received_token[2], "%Y-%m-%d %H:%M:%S") <= current_time)
             tax_last_6_hours = sum(received_token[1] for received_token in received_tokens if current_time - timedelta(hours=6) <= datetime.strptime(received_token[2], "%Y-%m-%d %H:%M:%S") <= current_time)
             tax_last_12_hours = sum(received_token[1] for received_token in received_tokens if current_time - timedelta(hours=12) <= datetime.strptime(received_token[2], "%Y-%m-%d %H:%M:%S") <= current_time)
             tax_last_24_hours = sum(received_token[1] for received_token in received_tokens if current_time - timedelta(days=1) <= datetime.strptime(received_token[2], "%Y-%m-%d %H:%M:%S") <= current_time)
@@ -3625,6 +3626,8 @@ class CurrencySystem(commands.Cog):
             embed.add_field(name="💸 10% of the total amount", value=f"{refund_amount:,.2f} tokens", inline=False)
             embed.add_field(name="👥 Number of recipients", value=f"{num_recipients}", inline=False)
             embed.add_field(name="💳 Tax refund amount per user", value=f"{individual_refund:,.2f} tokens", inline=False)
+            embed.add_field(name="🕕 Tax collected in the last 5 minutes", value=f"{tax_last_5_minutes:,.2f} tokens", inline=False)
+            embed.add_field(name="🕤 Tax collected in the last 30 minutes", value=f"{tax_last_30_minutes:,.2f} tokens", inline=False)
             embed.add_field(name="🕒 Tax collected in the last 1 hour", value=f"{tax_last_1_hour:,.2f} tokens", inline=False)
             embed.add_field(name="🕕 Tax collected in the last 6 hours", value=f"{tax_last_6_hours:,.2f} tokens", inline=False)
             embed.add_field(name="🕛 Tax collected in the last 12 hours", value=f"{tax_last_12_hours:,.2f} tokens", inline=False)
@@ -3636,6 +3639,7 @@ class CurrencySystem(commands.Cog):
         except Exception as e:
             print(f"Error in calculate_tax_refund: {e}")
             await ctx.send("An error occurred while calculating the tax refund.")
+
 
 
 
@@ -3881,7 +3885,29 @@ class CurrencySystem(commands.Cog):
 
 # Buy Stock
     @commands.command(name="buy", aliases=["buy_stock"], help="Buy stocks. Provide the stock name and amount.")
-    async def buy(self, ctx, stock_name: str, amount: int):
+    async def buy(self, ctx, stock_name: str, amount: int, Stable: str = "False"):
+        if Stable.lower() == "stable":
+            stableStock = "P3:Stable"
+            if stock_name == stableStock:
+                await ctx.send(f"Cannot use {stableStock} to purchase this Stock, ETF, or Token")
+                return
+            if ctx.author.id == jacob:
+                print("Testing Stable Argument")
+                buy_stock_price = await get_stock_price(self.conn, stock_name)
+                stable_stock_price = await get_stock_price(self.conn, stableStock)
+                user_owned_stable = self.get_user_stock_amount(ctx.author.id, stableStock)
+                total_buy_cost = Decimal(buy_stock_price) * amount  # Convert to Decimal
+                tax_percentage = Decimal('0.15')  # Convert tax_percentage to Decimal
+                fee = total_buy_cost * tax_percentage
+                total_cost_with_tax = total_buy_cost + fee
+                shares_to_sell = math.ceil(total_cost_with_tax / Decimal(stable_stock_price))
+                if shares_to_sell >= user_owned_stable:
+                    await ctx.send(f"Not enough {stableStock}: {user_owned_stable:,.2f}/{shares_to_sell:,.2f}")
+                    return
+                else:
+                    print(f"Shares to sell for {stableStock}: {shares_to_sell:,.2f}")
+                    await self.sell(ctx, stableStock, shares_to_sell)
+
         buyer_id = ctx.author.id
         user_id = ctx.author.id
         member = ctx.guild.get_member(user_id)
@@ -5629,25 +5655,11 @@ class CurrencySystem(commands.Cog):
 
     @commands.command(name="reward_share_holders", help="Reward P3:Stable shareholders with 7% more shares.")
     @is_allowed_user(930513222820331590)
-    async def reward_share_holders(self, ctx, stock_symbol: str):
+    async def reward_share_holders(self, ctx, stock_symbol: str, stakingYield: float):
         cursor = self.conn.cursor()
 
-
-        if stock_symbol.lower() == "p3:stable":
-            stable_symbol = "P3:Stable"
-            stakingYield = 0.07
-        elif stock_symbol.lower() == "p3:bank":
-            stable_symbol = "P3:BANK"
-            stakingYield = 0.12
-        elif stock_symbol.lower() == "p3:lqdy":
-            stable_symbol = "P3:LQDY"
-            stakingYield = 0.0475
-        else:
-            ctx.send(f"{stock_symbol} is not a Yield Reward Stock")
-            return
-
         # Fetch all users who hold P3:Stable
-        cursor.execute("SELECT user_id, amount FROM user_stocks WHERE symbol=?", (stable_symbol,))
+        cursor.execute("SELECT user_id, amount FROM user_stocks WHERE symbol=?", (stock_symbol,))
         stable_holders = cursor.fetchall()
 
         if not stable_holders:
@@ -5665,25 +5677,23 @@ class CurrencySystem(commands.Cog):
             amount_held = holder['amount']
             if amount_held == 0.0:
                 continue
-            print(f"UserID: {user_id} holds {amount_held} of {stable_symbol}")
+            print(f"UserID: {user_id} holds {amount_held} of {stock_symbol}")
 
             # Calculate the reward (7% of the held amount)
             reward_shares = int(amount_held * stakingYield)
 
             # Update the user's stock holdings with the rewarded shares
             new_amount_held = amount_held + reward_shares
-            cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (new_amount_held, user_id, stable_symbol))
+            cursor.execute("UPDATE user_stocks SET amount=? WHERE user_id=? AND symbol=?", (new_amount_held, user_id, stock_symbol))
 
             total_rewarded_shares += reward_shares
-            await log_stock_transfer(ledger_conn, ctx, "stakingYield", user_id, stable_symbol, reward_shares)
+            await log_stock_transfer(ledger_conn, ctx, "stakingYield", user_id, stock_symbol, reward_shares)
 
 
         self.conn.commit()
 
-        if stock_symbol.lower() != "p3:lqdy":
-            await ctx.send(f"Reward distribution completed. Total {stock_symbol} shares rewarded: {total_rewarded_shares:,.2f} at {stakingYield * 100}%.")
-        else:
-            print(f"{stock_symbol} utility deployed")
+        await ctx.send(f"Reward distribution completed. Total {stock_symbol} shares rewarded: {total_rewarded_shares:,.2f} at {stakingYield * 100}%.")
+
 
     @commands.command(name="memeManager")
     @is_allowed_user(930513222820331590, PBot)
@@ -5804,9 +5814,9 @@ class CurrencySystem(commands.Cog):
     @is_allowed_user(930513222820331590, PBot)
     async def blueChipBooster(self, ctx, type: str):
         if type == "BUY":
-            boosterAmount = 75000000 * 3
+            boosterAmount = 75000000
         elif type == "SELL":
-            boosterAmount = 150000000 * 3
+            boosterAmount = 150000000
         else:
             return
         cursor = self.conn.cursor()
@@ -5829,21 +5839,23 @@ class CurrencySystem(commands.Cog):
 
         self.conn.commit()
         cost = boosterAmount * current_price
+        metalLimSmall = 1000000000
+        metalLimMedium = 10000000000
+        metalLimLarge = 100000000000
 
         print(f'BlueChipBooster: {boosterAmount} shares')
         await self.buy_stock_for_bot(ctx, "BlueChipOG", boosterAmount)
-        goldReservePrice = await get_stock_price(self.conn, "P3:Gold-Reserve")
-        if goldReservePrice >= 5000000:
-            await self.sell_stock_for_bot(ctx, "P3:Gold-Reserve", 10000000000000)
-        silverReservePrice = await get_stock_price(self.conn, "P3:Silver-Reserve")
-        if silverReservePrice >= 5000000:
-            await self.sell_stock_for_bot(ctx, "P3:Silver-Reserve", 10000000000000)
-        copperReservePrice = await get_stock_price(self.conn, "P3:Copper-Reserve")
-        if copperReservePrice >= 5000000:
-            await self.sell_stock_for_bot(ctx, "P3:Copper-Reserve", 10000000000000)
-        platinumReservePrice = await get_stock_price(self.conn, "P3:Platinum-Reserve")
-        if platinumReservePrice >= 5000000:
-            await self.sell_stock_for_bot(ctx, "P3:Platinum-Reserve", 10000000000000)
+        metal_names = ["Gold", "Silver", "Copper", "Platinum"]
+
+        for metal in metal_names:
+            metal_reserve_price = await get_stock_price(self.conn, f"P3:{metal}-Reserve")
+            print(f"P3:{metal}-Reserve at {metal_reserve_price:,.2f}")
+            if metal_reserve_price >= 5000000:
+                await self.sell_stock_for_bot(ctx, f"P3:{metal}-Reserve", metalLimSmall)
+            elif metal_reserve_price >= 7500000:
+                await self.sell_stock_for_bot(ctx, f"P3:{metal}-Reserve", metalLimMedium)
+            elif metal_reserve_price >= 10000000:
+                await self.sell_stock_for_bot(ctx, f"P3:{metal}-Reserve", metalLimLarge)
         if current_price >= 3500000:
             await self.sell_stock_for_bot(ctx, "BlueChipOG", 1000000000000)
 
@@ -5852,10 +5864,10 @@ class CurrencySystem(commands.Cog):
     async def inverseStock(self, ctx, type: str):
         for symbol in inverseStocks:
             if type.lower() == "buy":
-                boosterAmount = 150000000
+                boosterAmount = 75000000
                 await self.sell_stock_for_bot(ctx, symbol, boosterAmount)
             elif type.lower() == "sell":
-                boosterAmount = 150000000
+                boosterAmount = 150000000 * 2
                 await self.buy_stock_for_bot(ctx, symbol, boosterAmount)
             else:
                 return
@@ -7882,7 +7894,7 @@ class CurrencySystem(commands.Cog):
         total = subtotal + tax
 
         # Calculate potential stock price after buy
-        potential_price_increase = random.uniform(0.000001 * amount, min(0.000035 * amount, 1000000 - stock_price))
+        potential_price_increase = random.uniform(buyPressureMin * amount, min(buyPressureMax * amount, stockMax - float(stock[2])))
         potential_stock_price = min(stock_price + potential_price_increase, 1000000)
 
         # Create the embed
@@ -7921,7 +7933,7 @@ class CurrencySystem(commands.Cog):
         total = subtotal - tax  # Subtracting the tax for a sell
 
         # Calculate potential price decrease
-        price_decrease = random.uniform(0.000011 * amount, min(0.00005 * amount, stock_price))
+        price_decrease = random.uniform(sellPressureMin * amount, min(sellPressureMax * amount, float(stock[2])))
         potential_stock_price = max(stock_price - price_decrease, 0)  # Ensure the price doesn't go below 0
 
         # Embed creation
@@ -7933,6 +7945,73 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Potential Stock Price After Sale", value=f"{potential_stock_price:,.2f} µPPN", inline=True)
 
         await ctx.send(embed=embed)
+
+    async def simulate_transaction(self, ctx, transaction_type: str, symbol: str, amount: float):
+        cursor = self.conn.cursor()
+
+        # Fetch the stock details
+        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (symbol,))
+        stock = cursor.fetchone()
+
+        if not stock:
+            return {"error": f"No stock found with symbol: {symbol}"}
+
+        stock_price = float(stock[2])
+
+        if transaction_type.lower() == "buy":
+            # Calculate Subtotal, Tax, and Total for buy transaction
+            subtotal = stock_price * amount
+            tax_percentage = 0.15
+            tax = subtotal * tax_percentage
+            total = subtotal + tax
+
+            # Calculate potential stock price after buy
+            potential_price_increase = random.uniform(buyPressureMin * amount, min(buyPressureMax * amount, stockMax - float(stock[2])))
+            potential_stock_price = min(stock_price + potential_price_increase, 1000000)
+        elif transaction_type.lower() == "sell":
+            # Calculate Subtotal, Tax, and Total for sell transaction
+            subtotal = stock_price * amount
+            tax_percentage = get_tax_percentage(amount, subtotal)
+            tax = subtotal * tax_percentage
+            total = subtotal - tax  # Subtracting the tax for a sell
+
+            # Calculate potential price decrease
+            price_decrease = random.uniform(sellPressureMin * amount, min(sellPressureMax * amount, float(stock[2])))
+            potential_stock_price = max(stock_price - price_decrease, 0)  # Ensure the price doesn't go below 0
+        else:
+            return {"error": "Invalid transaction type. Please use 'buy' or 'sell'"}
+
+        # Return the information as a dictionary
+        return {
+            "symbol": symbol,
+            "transaction_type": transaction_type,
+            "stock_price": stock_price,
+            "subtotal": subtotal,
+            "tax_percentage": tax_percentage,
+            "tax": tax,
+            "total": total,
+            "potential_stock_price": potential_stock_price
+        }
+
+    @commands.command(name='simulate_average_transaction')
+    async def simulate_average_transaction(self, ctx, transaction_type: str, symbol: str, amount: float, iterations: int, debug: bool = False):
+        total_potential_price = 0
+
+        for _ in range(iterations):
+            result = await self.simulate_transaction(ctx, transaction_type, symbol, amount)
+            if "error" in result:
+                await ctx.send(result["error"])
+                return
+
+            total_potential_price += result["potential_stock_price"]
+
+        average_potential_price = total_potential_price / iterations
+        formatted_info = f"Average Potential Stock Price After {iterations} {transaction_type.capitalize()} Transactions: {average_potential_price:.2f} µPPN"
+        if debug:
+            await ctx.send(formatted_info)
+        else:
+            return average_potential_price
+
 
     @commands.command(name='roulette', help='Play roulette. Choose a color (red/black/green) or a number (0-36) or "even"/"odd" and your bet amount.')
     async def roulette(self, ctx, choice: str, bet: int):
