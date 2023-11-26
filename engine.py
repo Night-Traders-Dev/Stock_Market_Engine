@@ -162,6 +162,8 @@ def calculate_hand_value(hand):
 
     return value
 
+# Set the locale to a valid one (e.g., 'en_US.UTF-8')
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 # Create a formatter function to format prices
 def price_formatter(x, pos):
@@ -170,6 +172,7 @@ def price_formatter(x, pos):
         return f"{x:.8f}"
     else:
         return locale.currency(x, grouping=True)
+
 # Helper functions for handling different outcomes in Blackjack
 async def handle_blackjack_win(ctx, user_id, bet, current_balance):
     currency_conn = sqlite3.connect("currency_system.db")
@@ -512,6 +515,34 @@ def update_burn_history(cursor, user_id):
 
 # Economy Engine
 
+
+
+
+
+async def update_stock_price(self, ctx, stock_name: str, amount: float, verbose: bool = True):
+    cursor = self.conn.cursor()
+    cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+    stock = cursor.fetchone()
+    if stock is None:
+        await ctx.send(f"This stock does not exist.")
+        return
+
+    price_increase = random.uniform(buyPressureMin * amount, min(buyPressureMax * amount, stockMax - float(stock[2])))
+    current_price = float(stock[2])
+    new_price = min(current_price + price_increase, stockMax)
+
+    cursor.execute("""
+        UPDATE stocks
+        SET price = ?
+        WHERE symbol = ?
+    """, (new_price, stock_name))
+
+    self.conn.commit()
+
+    if verbose:
+        await ctx.send(f"The price of {stock_name} has increased to {new_price:,.2f}.")
+
+
 def get_global_economy_data(conn):
     cursor = conn.cursor()
 
@@ -552,18 +583,12 @@ def update_user_balance(conn, user_id, new_balance):
         new_balance = Decimal(new_balance)
 
         # Check if new_balance exceeds the maximum allowed
-        if user_id != PBot and user_id != jacob and new_balance > MAX_BALANCE:
+        if user_id not in {PBot, jacob} and new_balance > MAX_BALANCE:
             raise ValueError(f"User balance exceeds the maximum allowed balance of {MAX_BALANCE:,.2f} µPPN.")
 
-
         cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                balance REAL
-            )
-        """)
 
+        # Use a single SQL statement for both table creation and insertion
         cursor.execute("""
             INSERT OR REPLACE INTO users (user_id, balance)
             VALUES (?, ?)
@@ -573,6 +598,7 @@ def update_user_balance(conn, user_id, new_balance):
     except ValueError as e:
         print(f"Error in update_user_balance: {e}")
         raise e
+
 
 
 
@@ -601,20 +627,20 @@ def decay_other_stocks(conn, stock_name_excluded, decay_percentage=stockDecayVal
     conn.commit()
 
 def update_user_stocks(user_id, stocks_reward_symbol, stocks_reward_amount, transaction_type):
-    # Connect to the database
-    conn = sqlite3.connect("currency_system.db")
-    cursor = conn.cursor()
-
     try:
-        if transaction_type.lower() == "buy":
-            # Update stocks table for buying
-            cursor.execute("UPDATE stocks SET available = available - ? WHERE symbol=?", (stocks_reward_amount, stocks_reward_symbol))
-        elif transaction_type.lower() == "sell":
-            # Update stocks table for selling
-            cursor.execute("UPDATE stocks SET available = available + ? WHERE symbol=?", (stocks_reward_amount, stocks_reward_symbol))
-        else:
-            print("Invalid transaction type. Please use 'buy' or 'sell'.")
-            return
+        # Connect to the database
+        conn = sqlite3.connect("currency_system.db")
+        cursor = conn.cursor()
+
+        if transaction_type.lower() not in {"buy", "sell"}:
+            raise ValueError("Invalid transaction type. Please use 'buy' or 'sell'.")
+
+        # Use a single SQL statement with a parameterized query to handle both buy and sell cases
+        cursor.execute(f"""
+            UPDATE stocks
+            SET available = available {'-' if transaction_type.lower() == 'buy' else '+'} ?
+            WHERE symbol = ?
+        """, (stocks_reward_amount, stocks_reward_symbol))
 
         # Insert or update user_stocks table
         cursor.execute("""
@@ -636,36 +662,38 @@ def update_user_stocks(user_id, stocks_reward_symbol, stocks_reward_amount, tran
 
 
 
+
 async def update_available_stock(ctx, stock_name, amount, transaction_type):
-    with conn_pool.acquire() as conn:
-        cursor = conn.cursor()
-        print(f"Debug: UAS Function {stock_name} {amount}")
+    conn = sqlite3.connect("currency_system.db")
+    cursor = conn.cursor()
+    print(f"Debug: UAS Function {stock_name} {amount}")
 
-        try:
-            conn.execute("BEGIN")
+    try:
+        conn.execute("BEGIN")
 
-            if transaction_type.lower() == "buy":
-                cursor.execute("""
-                    UPDATE stocks
-                    SET available = available - ?
-                    WHERE symbol = ?
-                """, (amount, stock_name))
-            elif transaction_type.lower() == "sell":
-                cursor.execute("""
-                    UPDATE stocks
-                    SET available = available + ?
-                    WHERE symbol = ?
-                """, (amount, stock_name))
-            else:
-                await ctx.send(f"{ctx.author.mention}, invalid transaction type. Please use 'buy' or 'sell'.")
-                return
-
-            conn.commit()
-
-        except sqlite3.Error as e:
-            conn.rollback()
-            await ctx.send(f"{ctx.author.mention}, an error occurred while updating available stocks. Error: {str(e)}")
+        if transaction_type.lower() == "buy":
+            cursor.execute("""
+                UPDATE stocks
+                SET available = available - ?
+                WHERE symbol = ?
+            """, (amount, stock_name))
+        elif transaction_type.lower() == "sell":
+            cursor.execute("""
+                UPDATE stocks
+                SET available = available + ?
+                WHERE symbol = ?
+            """, (amount, stock_name))
+        else:
+            await ctx.send(f"{ctx.author.mention}, invalid transaction type. Please use 'buy' or 'sell'.")
             return
+
+        conn.commit()
+
+    except sqlite3.Error as e:
+        conn.rollback()
+        await ctx.send(f"{ctx.author.mention}, an error occurred while updating available stocks. Error: {str(e)}")
+        return
+
 
 def get_user_balance(conn, user_id):
     cursor = conn.cursor()
@@ -1931,7 +1959,7 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @tasks.loop(minutes=1)
+    @tasks.loop(minutes=1.5)
     async def update_topstocks(self):
         try:
             channel_id = 1161735935944306808 # Replace with your actual channel ID
@@ -3235,7 +3263,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="stock_chart", aliases=["chart"], help="Display a price history chart with technical indicators for a stock.")
-    async def stock_chart(self, ctx, stock_symbol, time_period=None, rsi_period=None, sma_period=None, ema_period=None):
+    async def stock_chart(self, ctx, stock_symbol, time_period=None, rsi_period=None, sma_period=None, ema_period=None, price_debug: bool = False):
         try:
             # Connect to the currency_system database
             currency_conn = sqlite3.connect("currency_system.db")
@@ -3262,35 +3290,41 @@ class CurrencySystem(commands.Cog):
                 transactions = ledger_cursor.fetchall()
 
                 if transactions:
-
-            # Separate buy and sell transactions
+                    # Separate buy and sell transactions
                     buy_prices = []
                     sell_prices = []
+                    all_prices = []
 
                     for timestamp_str, action, price_str in transactions:
                         if stock_symbol.lower() == "roflstocks":
-                            if isinstance(price_str, str):
-                                formatted_price = str(price_str).replace(",", "")
-                                price = float(formatted_price)
-                            else:
-                                price = float(price_str)
+                            formatted_price = str(price_str).replace(",", "") if isinstance(price_str, str) else price_str
+                            price = float(formatted_price)
                         else:
                             formatted_price = str(price_str).replace(",", "")
                             price = float(formatted_price)
                         datetime_obj = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # Parse timestamp string
+                        all_prices.append((datetime_obj, price, action))
 
                         if action == 'Buy Stock':
                             buy_prices.append((datetime_obj, price))
                         elif action == 'Sell Stock':
                             sell_prices.append((datetime_obj, price))
 
-                    # Extract datetime objects and prices for buy and sell transactions
-                    buy_timestamps = [entry[0] for entry in buy_prices]
-                    buy_prices = [entry[1] for entry in buy_prices]
-                    sell_timestamps = [entry[0] for entry in sell_prices]
-                    sell_prices = [entry[1] for entry in sell_prices]
-                    # Define a dictionary for time periods
+                    # Sort all prices by timestamp
+                    all_prices.sort(key=lambda x: x[0])
 
+                    # Extract datetime objects and prices for buy and sell transactions
+                    all_prices_np = np.array(all_prices)
+                    timestamps, prices, actions = all_prices_np[:, 0], all_prices_np[:, 1], all_prices_np[:, 2]
+
+                    # Extract datetime objects and prices for buy and sell transactions
+                    buy_prices_np = np.array(buy_prices)
+                    buy_timestamps, buy_prices = buy_prices_np[:, 0], buy_prices_np[:, 1]
+
+                    sell_prices_np = np.array(sell_prices)
+                    sell_timestamps, sell_prices = sell_prices_np[:, 0], sell_prices_np[:, 1]
+
+                    # Define a dictionary for time periods
                     time_periods = {
                         "1h": timedelta(hours=1),
                         "4h": timedelta(hours=4),
@@ -3309,19 +3343,7 @@ class CurrencySystem(commands.Cog):
                         # Add more as needed
                     }
 
-
                     # Calculate the time period dynamically
-#                    if time_period:
-#                        try:
-#                            time_delta = timedelta(**{time_period: 1})
-#                        except TypeError:
-#                            await ctx.send("Invalid time period. Please use a valid format like '1d', '2w', etc.")
-#                            return
-#                    else:
-#                        # Default to 1 week if not provided
-#                        time_delta = timedelta(weeks=24)
-
-                    # Use default values if the user doesn't provide specific information
                     if not time_period or time_period.lower() == "none":
                         time_period = "6m"
 
@@ -3334,17 +3356,18 @@ class CurrencySystem(commands.Cog):
                     if not ema_period or ema_period.lower() == "none":
                         ema_period = 50
 
-
                     # Filter transactions based on the specified time period
                     start_date = datetime.now() - time_periods.get(time_period, timedelta(hours=1))
-                    #start_date = datetime.now() - time_delta
 
-                    buy_prices, buy_timestamps = zip(*[(p, t) for p, t in zip(buy_prices, buy_timestamps) if t >= start_date])
-                    sell_prices, sell_timestamps = zip(*[(p, t) for p, t in zip(sell_prices, sell_timestamps) if t >= start_date])
+                    buy_mask = buy_timestamps >= start_date
+                    sell_mask = sell_timestamps >= start_date
+
+                    buy_prices, buy_timestamps = buy_prices[buy_mask], buy_timestamps[buy_mask]
+                    sell_prices, sell_timestamps = sell_prices[sell_mask], sell_timestamps[sell_mask]
 
                     # Calculate average buy and sell prices
-                    average_buy_price = sum(buy_prices) / len(buy_prices) if buy_prices else 0
-                    average_sell_price = sum(sell_prices) / len(sell_prices) if sell_prices else 0
+                    average_buy_price = np.mean(buy_prices) if buy_prices.size else 0
+                    average_sell_price = np.mean(sell_prices) if sell_prices.size else 0
 
                     # Determine if the stock is overvalued, undervalued, or fair-valued
                     if average_sell_price > 0:
@@ -3359,48 +3382,53 @@ class CurrencySystem(commands.Cog):
                         valuation = "Fair-Valued"
 
                     # Calculate RSI
-                    if len(buy_prices) >= int(rsi_period):
-                        rsi = talib.RSI(np.array(buy_prices), timeperiod=int(rsi_period))
+                    if buy_prices.size >= int(rsi_period):
+                        buy_prices = buy_prices.astype('double')  # Convert to double type
+                        rsi = talib.RSI(buy_prices, timeperiod=int(rsi_period))
                         rsi_timestamps = buy_timestamps[-len(rsi):]  # Match RSI timestamps
                     else:
                         rsi = None  # Insufficient data for RSI
                         rsi_timestamps = []
 
                     # Calculate Simple Moving Average (SMA)
-                    if len(buy_prices) >= int(sma_period):
-                        sma = talib.SMA(np.array(buy_prices), timeperiod=int(sma_period))
+                    if buy_prices.size >= int(sma_period):
+                        sma = talib.SMA(buy_prices, timeperiod=int(sma_period))
                         sma_timestamps = buy_timestamps[-len(sma):]  # Match SMA timestamps
                     else:
                         sma = None  # Insufficient data for SMA
                         sma_timestamps = []
 
                     # Calculate Exponential Moving Average (EMA)
-                    if len(buy_prices) >= int(ema_period):
-                        ema = talib.EMA(np.array(buy_prices), timeperiod=int(ema_period))
+                    if buy_prices.size >= int(ema_period):
+                        ema = talib.EMA(buy_prices, timeperiod=int(ema_period))
                         ema_timestamps = buy_timestamps[-len(ema):]  # Match EMA timestamps
                     else:
                         ema = None  # Insufficient data for EMA
                         ema_timestamps = []
 
                     # Calculate Bollinger Bands
-                    bb_period = min(20, len(buy_prices))  # Adjust the period as needed
-                    if len(buy_prices) >= bb_period:
-                        upper, middle, lower = talib.BBANDS(np.array(buy_prices), timeperiod=bb_period)
+                    bb_period = min(20, buy_prices.size)  # Adjust the period as needed
+                    if buy_prices.size >= bb_period:
+                        upper, middle, lower = talib.BBANDS(buy_prices, timeperiod=bb_period)
                         bb_timestamps = buy_timestamps[-len(upper):]  # Match Bollinger Bands timestamps
                     else:
                         upper, middle, lower = None, None, None  # Insufficient data for Bollinger Bands
                         bb_timestamps = []
 
-                    # Create a price history chart with all indicators and a separate RSI chart
-                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), gridspec_kw={'height_ratios': [3, 1]})
+                    # Calculate MACD
+                    if buy_prices.size >= 26:
+                        macd, signal, _ = talib.MACD(buy_prices, fastperiod=12, slowperiod=26, signalperiod=9)
+                        macd_timestamps = buy_timestamps[-len(macd):]  # Match MACD timestamps
+                    else:
+                        macd = None  # Insufficient data for MACD
+                        signal = None
+                        macd_timestamps = []
 
-                    # Calculate average line
-                    average_prices = [(t, (b + s) / 2) for t, b, s in zip(buy_timestamps, buy_prices, sell_prices)]
-                    average_timestamps, average_prices = zip(*average_prices)
+                    # Create a price history chart with all indicators
+                    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(20, 15), gridspec_kw={'height_ratios': [3, 1, 1]})
 
-                    # Plot the average line on the price history chart
-#                    ax1.plot(buy_timestamps, buy_prices, color='green', label='Price')
-#                    ax1.plot(average_timestamps, average_prices, linestyle='-', color='black', label='Average Price')
+
+                    # Plot the indicators on the price history chart
                     if sma is not None and len(sma) == len(sma_timestamps):
                         ax1.plot(sma_timestamps, sma, color='green', label=f'SMA ({sma_period}-period)')
                     if ema is not None and len(ema) == len(ema_timestamps):
@@ -3408,25 +3436,33 @@ class CurrencySystem(commands.Cog):
                     if upper is not None and lower is not None:
                         ax1.fill_between(bb_timestamps, upper, lower, color='brown', alpha=0.5, label='Bollinger Bands')
 
+                    # Set the title and labels for the price history chart
                     ax1.set_title(f"Stock Chart for {stock_symbol}")
                     ax1.set_ylabel("Price")
                     ax1.grid(True)
                     ax1.legend()
                     ax1.tick_params(axis='x', rotation=45)
                     ax1.yaxis.set_major_formatter(ticker.FuncFormatter(price_formatter))
+
                     # Set y-axis limits on the price history chart
-                    min_price = min(buy_prices + sell_prices)
-                    max_price = max(buy_prices + sell_prices)
+                    min_price = min(buy_prices.min(), sell_prices.min())
+                    max_price = max(buy_prices.max(), sell_prices.max())
                     price_range = max_price - min_price
                     y_axis_margin = 0.001  # Add a margin to the y-axis limits
                     ax1.set_ylim(min_price - y_axis_margin * price_range, max_price + y_axis_margin * price_range)
-                    if "h" in time_period:
-                        ax1.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-                    elif "d" in time_period:
+
+                    # Set x-axis major locator and formatter based on time period
+                    if "h" in time_period or "d" in time_period:
                         ax1.xaxis.set_major_locator(mdates.DayLocator(interval=1))
                     else:
                         ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
                     ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
+
+                    # Plot the buy and sell transactions on the same price history chart
+                    if price_debug:
+                        ax1.plot(timestamps, prices, linestyle='-', color='green', label='Price')
+                        ax1.scatter(buy_timestamps, buy_prices, marker='o', color='blue', label='Buy')
+                        ax1.scatter(sell_timestamps, sell_prices, marker='o', color='red', label='Sell')
 
                     # Plot RSI on the separate RSI chart
                     if rsi is not None and len(rsi) == len(rsi_timestamps):
@@ -3435,18 +3471,47 @@ class CurrencySystem(commands.Cog):
                         ax2.set_ylabel("RSI")
                         ax2.grid(True)
                         ax2.legend()
+
+                        # Set x-axis limits to show only the beginning date and the end date
+                        ax2.set_xlim(rsi_timestamps[0], rsi_timestamps[-1])
+
                         if "h" in time_period:
                             ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
                         elif "d" in time_period:
                             ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
                         else:
                             ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+
                         ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
                         ax2.tick_params(axis='x', rotation=45)
+
+                    # Plot MACD on the separate MACD chart
+                    if macd is not None and len(macd) == len(macd_timestamps):
+                        ax3.plot(macd_timestamps, macd, color='orange', label='MACD')
+                        ax3.plot(macd_timestamps, signal, color='purple', label='Signal Line')
+                        ax3.axhline(0, color='gray', linestyle='--', linewidth=0.8, label='Zero Line')
+                        ax3.set_title(f"MACD Chart for {stock_symbol}")
+                        ax3.set_ylabel("MACD")
+                        ax3.grid(True)
+                        ax3.legend()
+
+                        # Set x-axis limits to show only the beginning date and the end date
+                        ax3.set_xlim(macd_timestamps[0], macd_timestamps[-1])
+
+                        if "h" in time_period:
+                            ax3.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                        elif "d" in time_period:
+                            ax3.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                        else:
+                            ax3.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+
+                        ax3.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
+                        ax3.tick_params(axis='x', rotation=45)
 
                     # Set the background color of the entire chart to black
                     ax1.set_facecolor('black')
                     ax2.set_facecolor('black')
+                    ax3.set_facecolor('black')
 
                     # Set text color to white
                     for ax in [ax1, ax2]:
@@ -3494,7 +3559,6 @@ class CurrencySystem(commands.Cog):
 
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred: {str(e)}")
-
 
 
     @commands.command(name="tax_refund", help="Distribute this month's 10% of received funds to all users in the server.")
@@ -3644,8 +3708,7 @@ class CurrencySystem(commands.Cog):
 
 
 
-
-    @commands.command(name="etf_chart", help="Display a price history chart with technical indicators for an ETF.")
+    @commands.command(name="etf_chart")
     async def etf_chart(self, ctx, etf_symbol, time_period=None, rsi_period=None, sma_period=None, ema_period=None):
         try:
             locale.setlocale(locale.LC_ALL, '')
@@ -3678,17 +3741,27 @@ class CurrencySystem(commands.Cog):
                     # Separate buy and sell transactions
                     buy_prices = []
                     sell_prices = []
+                    all_prices = []
 
                     for timestamp_str, action, price_str in transactions:
                         formatted_price = str(price_str).replace(",", "")
                         price = float(formatted_price)
                         datetime_obj = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # Parse timestamp string
+                        all_prices.append((datetime_obj, price, action))
 
                         if "Buy" in action:
                             buy_prices.append((datetime_obj, price))
                         elif "Sell" in action:
                             sell_prices.append((datetime_obj, price))
 
+
+                    # Sort all prices by timestamp
+                    all_prices.sort(key=lambda x: x[0])
+
+                    # Extract datetime objects and prices for buy and sell transactions
+                    timestamps = [entry[0] for entry in all_prices]
+                    prices = [entry[1] for entry in all_prices]
+                    actions = [entry[2] for entry in all_prices]
                     # Extract datetime objects and prices for buy and sell transactions
                     buy_timestamps = [entry[0] for entry in buy_prices]
                     buy_prices = [entry[1] for entry in buy_prices]
@@ -3789,7 +3862,7 @@ class CurrencySystem(commands.Cog):
                     average_timestamps, average_prices = zip(*average_prices)
 
                     # Plot the average line on the price history chart
-                    ax1.plot(buy_timestamps, buy_prices, linestyle='--', color='lightgray', label='Price')
+#                    ax1.plot(buy_timestamps, buy_prices, linestyle='--', color='lightgray', label='Price')
                     if sma is not None and len(sma) == len(sma_timestamps):
                         ax1.plot(sma_timestamps, sma, color='green', label=f'SMA ({sma_period}-period)')
                     if ema is not None and len(ema) == len(ema_timestamps):
@@ -3816,6 +3889,11 @@ class CurrencySystem(commands.Cog):
                     else:
                         ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
                     ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
+                    # Plot the buy and sell transactions on the same price history chart
+                    ax1.plot(timestamps, prices, linestyle='-', color='green', label='Price')
+                    ax1.scatter(buy_timestamps, buy_prices, marker='o', color='blue', label='Buy')
+                    ax1.scatter(sell_timestamps, sell_prices, marker='o', color='red', label='Sell')
+
 
                     # Plot RSI on the separate RSI chart
                     if rsi is not None and len(rsi) == len(rsi_timestamps):
@@ -3883,311 +3961,182 @@ class CurrencySystem(commands.Cog):
 # Stock Market
 
 
-# Buy Stock
     @commands.command(name="buy", aliases=["buy_stock"], help="Buy stocks. Provide the stock name and amount.")
-    async def buy(self, ctx, stock_name: str, amount: int, Stable: str = "False"):
-        if Stable.lower() == "stable":
-            stableStock = "P3:Stable"
-            if stock_name == stableStock:
-                await ctx.send(f"Cannot use {stableStock} to purchase this Stock, ETF, or Token")
-                return
-            if ctx.author.id == jacob:
-                print("Testing Stable Argument")
-                buy_stock_price = await get_stock_price(self.conn, stock_name)
-                stable_stock_price = await get_stock_price(self.conn, stableStock)
-                user_owned_stable = self.get_user_stock_amount(ctx.author.id, stableStock)
-                total_buy_cost = Decimal(buy_stock_price) * amount  # Convert to Decimal
-                tax_percentage = Decimal('0.15')  # Convert tax_percentage to Decimal
-                fee = total_buy_cost * tax_percentage
-                total_cost_with_tax = total_buy_cost + fee
-                shares_to_sell = math.ceil(total_cost_with_tax / Decimal(stable_stock_price))
-                if shares_to_sell >= user_owned_stable:
-                    await ctx.send(f"Not enough {stableStock}: {user_owned_stable:,.2f}/{shares_to_sell:,.2f}")
-                    return
-                else:
-                    print(f"Shares to sell for {stableStock}: {shares_to_sell:,.2f}")
-                    await self.sell(ctx, stableStock, shares_to_sell)
+    async def buy(self, ctx, stock_name: str, amount: int, stable_option: str = "False"):
+        print(stable_option)
 
         buyer_id = ctx.author.id
         user_id = ctx.author.id
         member = ctx.guild.get_member(user_id)
         cursor = self.conn.cursor()
+
         # Call the check_impact function to handle impact calculation and confirmation
-#        result = await check_impact(cursor, ctx, stock_name, amount, is_buy=False)
-        result = "bugged"
+        result = "bugged"  # replace with the actual call to check_impact
         # Check the result and perform further actions if needed
-        if result == "canceled":
-            # Handle canceled transaction
-            pass
-        elif result == "ongoing_transaction":
-            # Handle ongoing transaction
-            pass
+        if result in {"canceled", "ongoing_transaction"}:
+            # Handle canceled or ongoing transaction
+            return
+
+        if amount <= 0:
+            await ctx.send("Amount must be a positive number.")
+            return
+
+        # Define stock limits
+        stock_limits = {
+            "p3:stable": float('inf'),
+            "roflstocks": dStockLimit * 50,
+            "contrariancraze": dStockLimit * 25
+        }
+        default_limit = dStockLimit * 1.5 if has_role(member, bronze_pass) else dStockLimit
+        stock_limit = stock_limits.get(stock_name.lower(), default_limit)
+
+        if amount == 0:
+            await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
+            return
+
+        # Retrieve stock information
+        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+        stock = cursor.fetchone()
+
+        if stock is None:
+            await ctx.send(f"{ctx.author.mention}, this stock does not exist.")
+            return
+
+        price = Decimal(stock[2])  # Assuming stock[2] is the price
+
+        # Get the total amount bought today by the user for this stock
+        cursor.execute("""
+            SELECT SUM(amount), MAX(timestamp)
+            FROM user_daily_buys
+            WHERE user_id=? AND symbol=? AND DATE(timestamp)=DATE('now')
+        """, (buyer_id, stock_name))
+
+        daily_bought_record = cursor.fetchone()
+        daily_bought = daily_bought_record[0] if daily_bought_record and daily_bought_record[0] is not None else 0
+        last_purchase_time = daily_bought_record[1] if daily_bought_record and daily_bought_record[1] is not None else None
+
+        if user_id == jacob:
+            stock_limit = float('inf')
+        if daily_bought + amount > stock_limit:
+            remaining_amount = stock_limit - daily_bought
+
+            # Calculate the time remaining until they can buy again
+            if last_purchase_time:
+                last_purchase_datetime = datetime.strptime(last_purchase_time, '%Y-%m-%d %H:%M:%S')
+                time_until_reset = (last_purchase_datetime + timedelta(days=1)) - datetime.now()
+                hours, remainder = divmod(time_until_reset.seconds, 3600)
+                minutes, _ = divmod(remainder, 60)
+                time_remaining_str = f"{hours} hours and {minutes} minutes"
+            else:
+                time_remaining_str = "24 hours"
+
+            await ctx.send(f"{ctx.author.mention}, you have reached your daily buy limit for {stock_name} stocks. "
+                           f"You can buy {remaining_amount} more after {time_remaining_str}.")
+            return
+
+        if stable_option.lower() == "--stable":
+            await self.handle_stable_purchase(ctx, stock_name, amount)
         else:
+            await self.handle_regular_purchase(ctx, stock_name, amount, price, cursor)
 
+    async def handle_stable_purchase(self, ctx, stock_name, amount):
+        stableStock = "P3:Stable"
+        if stock_name == stableStock or stock_name == "roflstocks":
+            await ctx.send(f"Cannot use {stableStock} to purchase this Stock, ETF, or Token")
+            return
 
-#        result, last_purchase_time, remaining_time = sell_check(cursor, user_id, stock_name, "30m")
-#        if result:
-#            print(f"You can not purchase {stock_name} for another {remaining_time}")
-            if amount <= 0:
-                await ctx.send("Amount must be a positive number.")
-                return
+        buy_stock_price = await get_stock_price(self.conn, stock_name)
+        stable_stock_price = await get_stock_price(self.conn, stableStock)
+        user_owned_stable = self.get_user_stock_amount(ctx.author.id, stableStock)
+        total_buy_cost = Decimal(buy_stock_price) * amount
+        tax_percentage = Decimal('0.15')
+        fee = total_buy_cost * tax_percentage
+        total_cost_with_tax = total_buy_cost + fee
+        shares_to_sell = math.ceil(total_cost_with_tax / Decimal(stable_stock_price))
 
+        if shares_to_sell >= user_owned_stable:
+            await ctx.send(f"Not enough {stableStock}: {user_owned_stable:,.2f}/{shares_to_sell:,.2f}")
+            return
 
-        # Check if the stock_name is "TitanForge" and set a different limit
-            if stock_name.lower() == "p3:stable":
-                stock_limit = float('inf')  # Infinite limit for TitanForge
-            elif stock_name.lower() == "roflstocks":
-                stock_limit = dStockLimit * 50
-            elif stock_name.lower() == "contrariancraze":
-                stock_limit = dStockLimit * 25
-            else:
-                if has_role(member, bronze_pass):
-                    stock_limit = dStockLimit * 1.5
-                else:
-                    stock_limit = dStockLimit
+        formatted_info = f"Shares to sell {stableStock}: {shares_to_sell:,.2f}"
+        formatted_info += f"\nTo purchase {stock_name}: {amount:,.2f}"
+        length_difference = len(formatted_info.splitlines()[0]) - len(formatted_info.splitlines()[1])
+        formatted_info = formatted_info.replace('\n', ' ' * length_difference + '\n')
 
-            if amount == 0:
-                await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
-                return
+        await ctx.send(f"```{formatted_info}```")
+        await self.sell(ctx, stableStock, shares_to_sell)
 
-            # Retrieve stock information
-            cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-            stock = cursor.fetchone()
+    async def handle_regular_purchase(self, ctx, stock_name, amount, price, cursor):
+        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+        stock = cursor.fetchone()
 
-            if stock is None:
-                await ctx.send(f"{ctx.author.mention}, this stock does not exist.")
-                return
+        available, price, total_supply = int(stock[4]), Decimal(stock[2]), int(stock[3])
 
-            price = Decimal(stock[2])  # Assuming stock[2] is the price
+        # Check the existing amount of this stock owned by the user
+        cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (ctx.author.id, stock_name))
+        user_stock = cursor.fetchone()
+        user_owned = int(user_stock[0]) if user_stock else 0
 
-            # Get the total amount bought today by the user for this stock
-            cursor.execute("""
-                SELECT SUM(amount), MAX(timestamp)
-                FROM user_daily_buys
-                WHERE user_id=? AND symbol=? AND DATE(timestamp)=DATE('now')
-            """, (buyer_id, stock_name))
+        if (user_owned + amount) > (total_supply * 0.51):
+            await ctx.send(f"{ctx.author.mention}, you cannot own more than 51% of the total supply of {stock_name} stocks.")
+            return
 
-            daily_bought_record = cursor.fetchone()
-            daily_bought = daily_bought_record[0] if daily_bought_record and daily_bought_record[0] is not None else 0
-            last_purchase_time = daily_bought_record[1] if daily_bought_record and daily_bought_record[1] is not None else None
+        if amount > available:
+            await ctx.send(f"{ctx.author.mention}, there are only {available} {stock_name} stocks available.")
+            return
 
-            if user_id == jacob:
-                stock_limit = float('inf')
-            if daily_bought + amount > stock_limit:
-                remaining_amount = stock_limit - daily_bought
+        cost = price * Decimal(amount)
+        tax_percentage = 0.35 if stock_name == "P3:Stable" else 0.15
+        fee = cost * Decimal(tax_percentage)
+        total_cost = cost + fee
 
-                # Calculate the time remaining until they can buy again
-                if last_purchase_time:
-                    last_purchase_datetime = datetime.strptime(last_purchase_time, '%Y-%m-%d %H:%M:%S')
-                    time_until_reset = (last_purchase_datetime + timedelta(days=1)) - datetime.now()
-                    hours, remainder = divmod(time_until_reset.seconds, 3600)
-                    minutes, _ = divmod(remainder, 60)
-                    time_remaining_str = f"{hours} hours and {minutes} minutes"
-                else:
-                    time_remaining_str = "24 hours"
+        current_balance = get_user_balance(self.conn, ctx.author.id)
 
-                await ctx.send(f"{ctx.author.mention}, you have reached your daily buy limit for {stock_name} stocks. "
-                               f"You can buy {remaining_amount} more after {time_remaining_str}.")
-                return
+        if total_cost > current_balance:
+            missing_amount = total_cost - current_balance
+            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy these stocks. "
+                           f"You need {missing_amount:,.2f} more µPPN, including tax, to complete this purchase.")
+            return
 
-        # Check if there are matching orders in the order book
-#        cursor.execute("SELECT user_id, price, quantity FROM limit_orders WHERE symbol=? ORDER BY price ASC, quantity ASC", (stock_name,))
-#        orders = cursor.fetchall()
+        new_balance = current_balance - total_cost
 
-#        total_amount_bought = 0  # Track the total amount bought to check against the requested amount
+        update_user_balance(self.conn, ctx.author.id, new_balance)
 
-#        for order in orders:
-#            seller_id, order_price, order_quantity = order
+        update_user_stocks(ctx.author.id, stock_name, amount, "buy")
 
-#            if order_price <= price:
-#                total_cost_order = order_price * order_quantity
+        await update_available_stock(ctx, stock_name, amount, "buy")
 
-#                if amount >= order_quantity:
-                    # Execute the order from the order book
+        bot_address = "P3:03da907038"
+        P3addrConn = sqlite3.connect("P3addr.db")
+        update_user_balance(self.conn, get_user_id(P3addrConn, bot_address), get_user_balance(self.conn, get_user_id(P3addrConn, bot_address)) + fee)
 
-                    # Update buyer's balance
-#                    cursor.execute("SELECT balance FROM users WHERE user_id=?", (buyer_id,))
-#                    buyer_balance = cursor.fetchone()['balance']
+        await log_transfer(ledger_conn, ctx, "P3 Bot", bot_address, get_user_id(P3addrConn, bot_address), fee)
+        await record_user_daily_buy(cursor, ctx.author.id, stock_name, amount)
 
-#                    total_cost = order_price * order_quantity  # Calculate total cost for the requested amount
+        cursor.execute("SELECT team_id FROM team_members WHERE user_id=?", (ctx.author.id,))
+        team_record = cursor.fetchone()
+        if team_record:
+            team_id = team_record[0]
+            record_team_transaction(self.conn, team_id, stock_name, amount, price, "buy")
+            calculate_team_profit_loss(self.conn, team_id)
 
-#                    if total_cost > buyer_balance:
-#                        await ctx.send(f"{ctx.author.mention}, you do not have sufficient balance to buy these stocks.")
-#                        return
+        decay_other_stocks(self.conn, stock_name)
 
-#                    cursor.execute("""
-#                        INSERT INTO user_stocks (user_id, symbol, amount)
-#                        VALUES (?, ?, ?)
-#                        ON CONFLICT(user_id, symbol) DO UPDATE SET amount = amount + ?
-#                    """, (buyer_id, stock_name, order_quantity, order_quantity))
+        if stock_name == 'P3:Stable':
+            await self.stableManager(ctx, 'BUY', amount)
+        elif stock_name == 'ROFLStocks':
+            await self.memeManager(ctx, 'BUY', amount)
+        else:
+            await self.increase_price(ctx, stock_name, amount)
 
-                    # Update seller's balance
-#                    cursor.execute("SELECT balance FROM users WHERE user_id=?", (seller_id,))
-#                    seller_balance = cursor.fetchone()['balance']
-#                    new_seller_balance = seller_balance + total_cost
-#                    update_user_balance(self.conn, seller_id, new_seller_balance)
-
-                    # Update order book
-#                    new_quantity = order_quantity - amount
-#                    if new_quantity == 0:
-#                        cursor.execute("DELETE FROM limit_orders WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
-#                                       (seller_id, stock_name, order_price, order_quantity))
-#                    else:
-#                        cursor.execute("UPDATE limit_orders SET quantity=? WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
-#                                       (new_quantity, seller_id, stock_name, order_price, order_quantity))
-
-#                    total_amount_bought += order_quantity  # Update the total amount bought
-
-#                    self.conn.commit()
-
-#                    formatted_buyer_balance = f"{buyer_balance:,.2f}"
-#                    await log_transaction(ledger_conn, ctx, "Buy Order Book", stock_name, order_quantity, total_cost, total_cost, buyer_balance, formatted_buyer_balance, order_price)
-
-                    # Notify the seller in DM
-#                    seller = self.bot.get_user(seller_id)
-#                    if seller:
-#                        try:
-#                            await seller.send(f"Your sell order for {order_quantity} stocks of '{stock_name}' at {order_price:,.2f} each has been filled. "
-#                                              f"Total: {total_cost:,.2f} µPPN. New balance: {new_seller_balance:,.2f} µPPN.")
-#                        except discord.errors.Forbidden:
-#                            print(f"Unable to send a message to the seller with ID {seller_id}. They may have blocked DMs or disabled them.")
-
-#                    await ctx.send(f"{ctx.author.mention}, you have bought {order_quantity} stocks of '{stock_name}' from the order book. Your new balance is: {formatted_buyer_balance} µPPN.")
-
-#                    amount -= order_quantity  # Subtract the bought quantity from the requested amount
-
-#                else:
-                    # Execute a partial order from the order book
-
-                    # Update buyer's balance
-#                    cursor.execute("SELECT balance FROM users WHERE user_id=?", (buyer_id,))
-#                    buyer_balance = cursor.fetchone()['balance']
-
-#                    total_cost = order_price * amount  # Calculate total cost for the requested amount
-
-#                    if total_cost > buyer_balance:
-#                        await ctx.send(f"{ctx.author.mention}, you do not have sufficient balance to buy these stocks.")
-#                        return
-#                    update_user_stocks(buyer_id, stock_name, amount, "buy")
-                    # Update seller's balance
-#                    cursor.execute("SELECT balance FROM users WHERE user_id=?", (seller_id,))
-#                    seller_balance = cursor.fetchone()['balance']
-#                    new_seller_balance = seller_balance + total_cost
-#                    update_user_balance(self.conn, seller_id, new_seller_balance)
-
-                    # Update order book
-#                    cursor.execute("DELETE FROM limit_orders WHERE user_id=? AND symbol=? AND price=? AND quantity=?",
-#                                   (seller_id, stock_name, order_price, order_quantity))
-
-#                    total_amount_bought += amount  # Update the total amount bought
-
-#                    self.conn.commit()
-
-#                    formatted_buyer_balance = f"{buyer_balance:,.2f}"
-#                    await log_transaction(ledger_conn, ctx, "Buy Order Book", stock_name, amount, total_cost, total_cost, buyer_balance, formatted_buyer_balance, order_price)
-
-                    # Notify the seller in DM
-#                    seller = self.bot.get_user(seller_id)
-#                    if seller:
-#                        try:
-#                            await seller.send(f"Your sell order for {amount:,.2f} stocks of '{stock_name}' at {order_price:,.2f} each has been partially filled. "
-#                                              f"Total: {total_cost:,.2f} µPPN. New balance: {new_seller_balance:,.2f} µPPN.")
-#                        except discord.errors.Forbidden:
-#                            print(f"Unable to send a message to the seller with ID {seller_id}. They may have blocked DMs or disabled them.")
-
-#                    await ctx.send(f"{ctx.author.mention}, you have bought {amount:,.2f} stocks of '{stock_name}' from the order book. Your new balance is: {formatted_buyer_balance} µPPN.")
-
-#                    break  # Exit the loop after processing the order
-
-            # Proceed with the market buy if there's still remaining amount to buy
-            if amount > 0:# and total_amount_bought == 0:
-                cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-                stock = cursor.fetchone()
-                if stock is None:
-                    await ctx.send(f"{ctx.author.mention}, this stock does not exist.")
-                    return
-
-            available, price, total_supply = int(stock[4]), Decimal(stock[2]), int(stock[3])  # Assuming stock[3] is total supply
-
-            # Check the existing amount of this stock owned by the user
-            cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (user_id, stock_name))
-            user_stock = cursor.fetchone()
-            user_owned = int(user_stock[0]) if user_stock else 0
-
-            if (user_owned + amount) > (total_supply * 0.51):
-                await ctx.send(f"{ctx.author.mention}, you cannot own more than 51% of the total supply of {stock_name} stocks.")
-                return
-
-            if amount > available:
-                await ctx.send(f"{ctx.author.mention}, there are only {available} {stock_name} stocks available.")
-                return
-
-            cost = price * Decimal(amount)
-            tax_percentage = 0.15
-            fee = cost * Decimal(tax_percentage)
-            total_cost = cost + fee
-
-            current_balance = get_user_balance(self.conn, user_id)
-
-            if total_cost > current_balance:
-                # Calculate the missing amount needed to complete the transaction including tax.
-                missing_amount = total_cost - current_balance
-                await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy these stocks. You need {missing_amount:,.2f} more µPPN, including tax, to complete this purchase.")
-                return
-
-            # Update the user's balance
-            new_balance = current_balance - total_cost
-
-            update_user_balance(self.conn, user_id, new_balance)
-
-            update_user_stocks(user_id, stock_name, amount, "buy")
-
-            await update_available_stock(ctx, stock_name, amount, "buy")
-            # Transfer the tax amount to the bot's address P3:03da907038
-            P3addrConn = sqlite3.connect("P3addr.db")
-            bot_address = "P3:03da907038"
-            update_user_balance(self.conn, get_user_id(P3addrConn, bot_address), get_user_balance(self.conn, get_user_id(P3addrConn, bot_address)) + fee)
-            await log_transfer(ledger_conn, ctx, "P3 Bot", bot_address, get_user_id(P3addrConn, bot_address), fee)
-
-
-            # Record this transaction in the user_daily_buys table
-            await record_user_daily_buy(cursor, user_id, stock_name, amount)
-
-            # Check if the user is part of a trading team
-            cursor.execute("SELECT team_id FROM team_members WHERE user_id=?", (user_id,))
-            team_record = cursor.fetchone()
-            if team_record:
-                team_id = team_record[0]
-                # Record the team's transaction
-                record_team_transaction(self.conn, team_id, stock_name, amount, price, "buy")
-                # Calculate and update the team's profit/loss
-                calculate_team_profit_loss(self.conn, team_id)
-
-            decay_other_stocks(self.conn, stock_name)
-            if stock_name == ('P3:Stable'):
-                await self.stableManager(ctx, 'BUY', amount)
-            elif stock_name == ('ROFLStocks'):
-                await self.memeManager(ctx, 'BUY', amount)
-            else:
-                await self.increase_price(ctx, stock_name, amount)
-
-            await self.blueChipBooster(ctx, "BUY")
-            await self.inverseStock(ctx, "buy")
-            stock_amount = amount
-            print(f"Debug: {stock_name}, Amount {stock_amount}, Price {price}, Stock Limit {stock_limit}")
-#        if (
-#            stock_name.lower() == "p3:lqdy"
-#            and price <= 1000000
-#            and stock_amount <= stock_limit
-#        ):
-#            await self.reward_share_holders(ctx, "p3:lqdy")
-            self.conn.commit()
-            if amount == 0:
-                print(f'Fix for 0 amount buy after order book')
-            else:
-                await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, price, "True")
-                await ctx.send(f"{ctx.author.mention}, you have bought {amount} {stock_name} stocks. Your new balance is: {new_balance:,.2f} µPPN.")
-
+        if amount == 0:
+            print(f'Fix for 0 amount buy after order book')
+        else:
+            await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, price, "True")
+            await ctx.send(f"{ctx.author.mention}, you have bought {amount} {stock_name} stocks. Your new balance is: {new_balance:,.2f} µPPN.")
+        self.conn.commit()
+        await self.blueChipBooster(ctx, "BUY")
+        await self.inverseStock(ctx, "buy")
 
 
 # Sell Stock
@@ -4260,6 +4209,8 @@ class CurrencySystem(commands.Cog):
             if has_role(member, bronze_pass):
                 tax_percentage -= role_discount
             fee = earnings * Decimal(tax_percentage)
+            if stock_name == "P3:Stable":
+                fee = 0
             total_earnings = earnings - fee
 
             current_balance = get_user_balance(self.conn, user_id)
@@ -4373,10 +4324,10 @@ class CurrencySystem(commands.Cog):
                     await self.decrease_price(ctx, stock_name, amount)
                 await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price, "True")
                 self.conn.commit()
+                await ctx.send(f"{ctx.author.mention}, you have sold {amount:,.2f} stocks of '{stock_name}'. Your new balance is: {new_balance:,.2f} µPPN.")
                 await self.blueChipBooster(ctx, "SELL")
                 await self.inverseStock(ctx, "sell")
                 await self.P3LQDYBooster(ctx)
-                await ctx.send(f"{ctx.author.mention}, you have sold {amount:,.2f} stocks of '{stock_name}'. Your new balance is: {new_balance:,.2f} µPPN.")
 
 
 
@@ -6122,53 +6073,12 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="increase_price")
     @is_allowed_user(930513222820331590, PBot)
     async def increase_price(self, ctx, stock_name: str, amount: float):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-        stock = cursor.fetchone()
-        if stock is None:
-            await ctx.send(f"This stock does not exist.")
-            return
-
-        price_increase = random.uniform(buyPressureMin * amount, min(buyPressureMax * amount, stockMax - float(stock[2])))
-        current_price = float(stock[2])
-        new_price = min(current_price + price_increase, stockMax)
-
-        # Update the stock price
-        cursor.execute("""
-            UPDATE stocks
-            SET price = ?
-            WHERE symbol = ?
-        """, (new_price, stock_name))
-
-        self.conn.commit()
-
-        await ctx.send(f"The price of {stock_name} has increased to {new_price:,.2f}.")
+        await update_stock_price(self, ctx, stock_name, amount)
 
     @commands.command(name="increase_price_non_verbose")
     @is_allowed_user(930513222820331590, PBot)
     async def increase_price_non_verbose(self, ctx, stock_name: str, amount: float):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-        stock = cursor.fetchone()
-        if stock is None:
-            await ctx.send(f"This stock does not exist.")
-            return
-
-        # Generate a random float between 0.000001 * amount and 0.000035 * amount for price increase
-        price_increase = random.uniform(buyPressureMin * amount, min(buyPressureMax * amount, stockMax - float(stock[2])))
-        current_price = float(stock[2])
-        new_price = min(current_price + price_increase, stockMax)  # Ensure the price doesn't go above 150,000
-
-        # Update the stock price
-        cursor.execute("""
-            UPDATE stocks
-            SET price = ?
-            WHERE symbol = ?
-        """, (new_price, stock_name))
-
-        self.conn.commit()
-
-
+        await update_stock_price(self, ctx, stock_name, amount, False)
 
     @commands.command(name="decrease_price")
     @is_allowed_user(930513222820331590, PBot)
@@ -8392,8 +8302,15 @@ class CurrencySystem(commands.Cog):
                 etf_value = etf_value_row[0] if etf_value_row else 0
                 total_etf_value += (etf_value or 0) * quantity
 
+
+
+            stableStock = "P3:Stable"
+            stable_stock_price = await get_stock_price(self.conn, stableStock)
+            user_owned_stable = self.get_user_stock_amount(ctx.author.id, stableStock)
+            user_stable_value = stable_stock_price * user_owned_stable
+
             # Calculate total value of all funds
-            total_funds_value = current_balance + total_stock_value + total_etf_value
+            total_funds_value = current_balance + total_stock_value + total_etf_value + user_stable_value
 
             # Calculate total buys, sells, and profits/losses from p3ledger
             ledger_conn = sqlite3.connect("p3ledger.db")
@@ -8437,12 +8354,14 @@ class CurrencySystem(commands.Cog):
 
             total_etf_profits_losses = total_etf_sells - total_etf_buys
 
+
             # Create the embed
             embed = Embed(title=f"{P3Addr} Financial Stats", color=Colour.green())
             embed.set_thumbnail(url="attachment://portfolio.jpeg")
             embed.add_field(name="Balance", value=f"{current_balance:,.0f} µPPN", inline=False)
             embed.add_field(name="Total Stock Value", value=f"{total_stock_value:,.0f} µPPN", inline=False)
             embed.add_field(name="Total ETF Value", value=f"{total_etf_value:,.0f} µPPN", inline=False)
+            embed.add_field(name="P3:Stable Value", value=f"{user_stable_value:,.0f} µPPN", inline=False)
             embed.add_field(name="Total Funds Value", value=f"{total_funds_value:,.0f} µPPN", inline=False)
             embed.add_field(name="Stock Profits/Losses", value=f"{total_stock_profits_losses:,.0f} µPPN", inline=False)
             embed.add_field(name="ETF Profits/Losses", value=f"{total_etf_profits_losses:,.0f} µPPN", inline=False)
