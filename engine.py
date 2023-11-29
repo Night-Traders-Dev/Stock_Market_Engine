@@ -43,6 +43,7 @@ import calendar
 
 announcement_channel_ids = [1093540470593962014, 1124784361766650026, 1124414952812326962]
 stockMin = 1000
+baseMinPrice = 1000
 stockMax = 10000000
 dStockLimit = 150000000 #2000000 standard
 dETFLimit = 500000000000
@@ -51,9 +52,9 @@ treasureMax = 50000000
 MAX_BALANCE = Decimal('2500000000000000000')
 sellPressureMin = 0.000025
 sellPressureMax = 0.000065
-buyPressureMin = 0.0000075
+buyPressureMin = 0.0000095
 buyPressureMax = 0.0000975
-stockDecayValue = 0.000255
+stockDecayValue = 0.000125
 decayMin = 0.01
 resetµPPN = 100
 dailyMin = 100000
@@ -478,21 +479,152 @@ def update_burn_history(cursor, user_id):
 
 # Economy Engine
 
+async def calculate_min_price(stock_name: str):
+    try:
+        # Create a connection to the SQLite database
+        conn = sqlite3.connect("currency_system.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+        stock = cursor.fetchone()
+        available_supply = Decimal(stock[3])
+        cursor.execute("SELECT SUM(amount) FROM user_stocks WHERE symbol = ?", (stock_name,))
+        circulating_supply = cursor.fetchone()[0] or 0
+        current_price = stock[2]
+        # You can adjust this formula based on your specific requirements
+        circulating_supply = float(circulating_supply)
+        available_supply = float(available_supply)
+        current_price = float(current_price)
+
+        # Calculate the minimum price using your formula
+        min_price = baseMinPrice + (circulating_supply / available_supply) * current_price
+
+        # Ensure that the minimum price is strictly less than or equal to the current price
+        min_price = max(min_price, 0)
+
+        return min_price
+    except sqlite3.Error as e:
+        print(f"An error occurred: {str(e)}")
+    finally:
+        # Close the database connection
+        conn.close()
+
+async def calculate_max_price(stock_symbol):
+    try:
+        # Create a connection to the SQLite database
+        conn = sqlite3.connect("currency_system.db")
+        cursor = conn.cursor()
+
+        # Get the current price of the stock
+        cursor.execute("SELECT price FROM stocks WHERE symbol=?", (stock_symbol,))
+        current_price = Decimal(cursor.fetchone()[0])  # Convert to Decimal
+        max_price_adjustment_factor = Decimal("0.1") * current_price
+        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_symbol,))
+        stock = cursor.fetchone()
+        available_supply = Decimal(stock[3])
+        cursor.execute("SELECT SUM(amount) FROM user_stocks WHERE symbol = ?", (stock_symbol,))
+        circulating_supply = Decimal(cursor.fetchone()[0] or 0)
+
+        # Calculate the daily volume for the stock
+        total_buy_volume, total_sell_volume, total_volume = await calculate_daily_volume(stock_symbol)
+
+        daily_volume = total_volume
+
+        # Calculate the dynamic adjustment based on the daily volume
+        volume_adjustment_factor = Decimal("0.001") * Decimal(daily_volume)  # Convert to Decimal
+
+        # Calculate the new maximum price
+        max_price = (current_price / circulating_supply) * max_price_adjustment_factor * volume_adjustment_factor
+
+        # Ensure that the max_price is always higher than current_price
+        max_price = max(max_price, current_price)
+
+        # Ensure that max_price is not more than 25% over current_price when they are closer
+        max_price = min(max_price, current_price * Decimal("1.25"))
+
+        # Ensure that max_price is not equal to current_price
+        if max_price == current_price:
+            max_price += Decimal("0.01")  # Add a small value to make them different
+            max_price  = max(max_price, 0)
+
+        return max_price
+
+    except sqlite3.Error as e:
+        print(f"An error occurred: {str(e)}")
+
+    finally:
+        # Close the database connection
+        conn.close()
 
 
 
+async def calculate_daily_volume(stock_symbol):
+    try:
+        # Create a connection to the SQLite database
+        conn = sqlite3.connect("p3ledger.db")
+        cursor = conn.cursor()
 
-async def update_stock_price(self, ctx, stock_name: str, amount: float, verbose: bool = True):
+        # Get the current date
+        today = datetime.now().date()
+
+        # Calculate the start and end timestamps for the current day
+        start_timestamp = today.strftime("%Y-%m-%d 00:00:00")
+        end_timestamp = today.strftime("%Y-%m-%d 23:59:59")
+
+        # Fetch total buy, total sell, and total volume for the specified stock on the current day
+        cursor.execute("""
+            SELECT
+                SUM(CASE WHEN action='Buy Stock' THEN quantity ELSE 0 END) AS total_buy_volume,
+                SUM(CASE WHEN action='Sell Stock' THEN quantity ELSE 0 END) AS total_sell_volume,
+                SUM(quantity) AS total_volume
+            FROM stock_transactions
+            WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock') AND timestamp BETWEEN ? AND ?
+        """, (stock_symbol, start_timestamp, end_timestamp))
+
+        total_buy_volume, total_sell_volume, total_volume = cursor.fetchone()
+
+        if total_volume is None:
+            total_volume = 0
+
+        return total_buy_volume, total_sell_volume, total_volume
+
+    except sqlite3.Error as e:
+        print(f"An error occurred: {str(e)}")
+
+    finally:
+        # Close the database connection
+        conn.close()
+
+async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: bool, verbose: bool = True):
     cursor = self.conn.cursor()
     cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
     stock = cursor.fetchone()
+
     if stock is None:
         await ctx.send(f"This stock does not exist.")
         return
 
-    price_increase = random.uniform(buyPressureMin * amount, min(buyPressureMax * amount, stockMax - float(stock[2])))
     current_price = float(stock[2])
-    new_price = min(current_price + price_increase, stockMax)
+    min_price = await calculate_min_price(stock_name)
+    max_price = await calculate_max_price(stock_name)
+    total_buy_volume, total_sell_volume, total_volume = await calculate_daily_volume(stock_name)
+    min_price = float(min_price)
+    max_price = float(max_price)
+    daily_volume = float(total_volume)
+
+    # Determine whether it's a buy or sell
+    is_buy = buy
+
+    if is_buy:
+        # Buy logic
+        price_change_range = random.uniform(buyPressureMin, buyPressureMax)
+        new_price = max(current_price + (price_change_range * amount), min_price)
+    else:
+        # Sell logic
+        price_change_range = random.uniform(-sellPressureMax, -sellPressureMin)
+        new_price = max(current_price + (price_change_range * amount), min_price)
+
+    # Calculate percentage change
+    percentage_change = ((new_price - current_price) / current_price) * 100
 
     cursor.execute("""
         UPDATE stocks
@@ -501,9 +633,30 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, verbose:
     """, (new_price, stock_name))
 
     self.conn.commit()
+    addrDB = sqlite3.connect("P3addr.db")
+    action = "Buy" if is_buy else "Sell"
+    print(f"""
+        CMP Debug:
+        Address: {get_p3_address(addrDB, ctx.author.id)}
+        Action: {action}
+        Stock: {stock_name}
+        Current Price: {current_price:,.2f}
+        New Price: {new_price:,.2f}
+        Change: {percentage_change:.4f}
+        Variable Minimum Price: {min_price:,.2f}
+        Variable Max Price: {max_price:,.2f}
+        Daily Volume: {daily_volume:,} Shares
+    """)
 
     if verbose:
-        await ctx.send(f"The price of {stock_name} has increased to {new_price:,.2f}.")
+        color = discord.Color.green() if is_buy else discord.Color.red()
+        embed = Embed(title=f"Stock Price {action} Update for {stock_name}", color=color)
+        embed.add_field(name="Old Price", value=f"{current_price:,.2f} µPPN", inline=False)
+        embed.add_field(name="New Price", value=f"{new_price:,.2f} µPPN", inline=False)
+        embed.add_field(name="Percentage Change", value=f"{percentage_change:.2f}%", inline=False)
+
+        await ctx.send(embed=embed)
+
 
 
 def get_global_economy_data(conn):
@@ -883,9 +1036,7 @@ async def log_transaction(ledger_conn, ctx, action, symbol, quantity, pre_tax_am
 
 
 
-
-
-async def log_transfer(ledger_conn, ctx, sender_name, receiver_name, receiver_id, amount):
+async def log_transfer(ledger_conn, ctx, sender_name, receiver_name, receiver_id, amount, is_burn=False):
     guild_id = 1161678765894664323
     guild = ctx.bot.get_guild(guild_id)
 
@@ -911,7 +1062,14 @@ async def log_transfer(ledger_conn, ctx, sender_name, receiver_name, receiver_id
                 color=discord.Color.purple()
             )
 
+            if is_burn:
+                embed.title = f"Burn of {amount:,.2f} µPPN"
+                embed.color = discord.Color.red()
+                embed.description = f"{sender_name} burned {amount:,.2f} µPPN"
+                # Add any additional fields for burn logs if needed
+
             await channel1.send(embed=embed)
+
 
 
 async def log_stock_transfer(ledger_conn, ctx, sender, receiver, symbol, amount):
@@ -1758,6 +1916,31 @@ def execute_stock_swap(user_order, matched_order):
         print(f"Unexpected error during stock swap: {e}")
 
 
+async def boost_woodvale(self, ctx, booster):
+    currency_conn = sqlite3.connect("currency_system.db")
+
+    try:
+        # Retrieve the list of underlying stocks and their quantities for Woodvale ETF
+        with currency_conn:
+            currency_cursor = currency_conn.cursor()
+            etf_id = 7
+
+            # Exclude "Om" stock from boosting
+            currency_cursor.execute("""
+                SELECT symbol, quantity
+                FROM etf_stocks
+                WHERE etf_id = ? AND symbol != "Om"
+            """, (etf_id,))
+
+            stocks = currency_cursor.fetchall()
+
+            for stock_symbol, _ in stocks:
+                await self.buy_stock_for_bot(ctx, stock_symbol, booster)
+                print(f"Boosted Stock: {stock_symbol}")
+
+    finally:
+        currency_conn.close()
+
 def is_allowed_user(*user_ids):
     async def predicate(ctx):
         if ctx.author.id not in user_ids:
@@ -1874,7 +2057,56 @@ class CurrencySystem(commands.Cog):
         self.games = {}
         self.bot_address = "P3:03da907038"
         self.P3addrConn = sqlite3.connect("P3addr.db")
+        self.reset_stock_limit_all.start()
 
+    @tasks.loop(hours=1)  # Run every hour
+    async def reset_stock_limit_all(self):
+        # Connect to the P3addr.db database
+        p3addr_conn = sqlite3.connect("P3addr.db")
+
+        # Connect to the currency_system database
+        currency_conn = sqlite3.connect("currency_system.db")
+        cursor = currency_conn.cursor()
+
+        try:
+            # Get all user IDs with daily stock buy records
+            cursor.execute("""
+                SELECT DISTINCT user_id
+                FROM user_daily_buys
+                WHERE timestamp >= date('now', '-1 day')
+            """)
+            users_with_records = cursor.fetchall()
+
+            if users_with_records:
+                for user_id, in users_with_records:
+                    # Reset daily stock buy records for each user
+                    cursor.execute("""
+                        DELETE FROM user_daily_buys
+                        WHERE user_id=?
+                    """, (user_id,))
+                    currency_conn.commit()
+
+                channel_id = 1164250215239385129  # Replace with the desired channel ID
+                channel = self.bot.get_channel(channel_id)
+                await channel.send("Successfully reset daily stock buy limits for all users.")
+            else:
+                channel_id = 1164250215239385129  # Replace with the desired channel ID
+                channel = self.bot.get_channel(channel_id)
+        except sqlite3.Error as e:
+            channel_id = 1164250215239385129 # Replace with the desired channel ID
+            channel = self.bot.get_channel(channel_id)
+            await channel.send(f"An error occurred: {str(e)} @Moderator")
+        finally:
+            # Close the database connections
+            p3addr_conn.close()
+            currency_conn.close()
+
+    @commands.command(name="manual_reset_stock_limit", help="Manually reset daily stock buy limits for all users.")
+    @is_allowed_user(930513222820331590, PBot)
+    async def manual_reset_stock_limit(self, ctx):
+        # Manually trigger the loop
+        self.reset_stock_limit_all.restart()
+        await ctx.send("Manual reset of daily stock buy limits initiated.")
 
 
 
@@ -2350,40 +2582,92 @@ class CurrencySystem(commands.Cog):
             result = await get_etf_value(self.conn, etf_id)
             if result:
                 etf_value = result
-                await ctx.send(f"Current value of ETF with ID {etf_id}: {etf_value:,.2f} µPPN")
+
+                # Get the number of holders for the ETF
+                cursor.execute("SELECT COUNT(DISTINCT user_id) FROM user_etfs WHERE etf_id = ?", (etf_id,))
+                num_holders = cursor.fetchone()[0]
+
+                # Get the top holders of the ETF
+                cursor.execute("""
+                    SELECT user_id, quantity
+                    FROM user_etfs
+                    WHERE etf_id = ?
+                    ORDER BY quantity DESC
+                    LIMIT 5
+                """, (etf_id,))
+                top_holders = cursor.fetchall()
+
+                embed = Embed(title=f"ETF Metrics for ETF ID {etf_id}", color=discord.Color.green())
+                embed.add_field(name="Current Value", value=f"{etf_value:,.2f} µPPN", inline=False)
+                embed.add_field(name="Number of Holders", value=num_holders, inline=False)
+
+                if top_holders:
+                    top_holders_str = "\n".join([f"{generate_crypto_address(user_id)} - {quantity:,.2f} shares" for user_id, quantity in top_holders])
+                    embed.add_field(name="Top Holders", value=top_holders_str, inline=False)
+                else:
+                    embed.add_field(name="Top Holders", value="No one currently holds shares in this ETF.", inline=False)
+
+                await ctx.send(embed=embed)
+
             else:
                 await ctx.send(f"ETF with ID {etf_id} does not exist.")
 
-            # Get the top holders of the ETF
-            cursor.execute("""
-                SELECT user_id, quantity
-                FROM user_etfs
-                WHERE etf_id = ?
-                ORDER BY quantity DESC
-                LIMIT 5
-            """, (etf_id,))
-            top_holders = cursor.fetchall()
-
-            if top_holders:
-                top_holders_str = "\n".join([f"{generate_crypto_address(user_id)} - {quantity:,.2f} shares" for user_id, quantity in top_holders])
-                await ctx.send(f"Top holders of ETF with ID {etf_id}:\n{top_holders_str}")
-            else:
-                await ctx.send(f"No one currently holds shares in ETF with ID {etf_id}.")
-
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred while fetching ETF information: {e}")
-
-
 # Currency Tools
+
+    @commands.command(name="report", help="Report bugs or issues with the bot.")
+    async def report(self, ctx, *, issue=None):
+        if issue is None:
+            await ctx.send("Please provide an issue in quotations. Example: `!report \"There is an issue with...\"`")
+            return
+
+        # Get timestamp in EST
+        timestamp_est = ctx.message.created_at.astimezone(timezone(timedelta(hours=-5)))
+
+        # Create a link to the message
+        message_link = f"https://discord.com/channels/{ctx.guild.id}/{ctx.channel.id}/{ctx.message.id}"
+
+        # Notify user in an embed
+        embed = discord.Embed(
+            title="Report Submitted",
+            description=f"Thank you for reporting the issue! An admin will check it at the earliest convenience.",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="Issue", value=issue, inline=False)
+        embed.add_field(name="Timestamp (EST)", value=timestamp_est.strftime("%Y-%m-%d %H:%M:%S"), inline=False)
+        embed.add_field(name="Report Link", value=message_link, inline=False)
+
+        # Send the embed to the channel
+        await ctx.send(embed=embed)
+
+        # Send report to admin
+        admin_user_id = 930513222820331590  # Replace with your admin user ID
+        admin = await self.bot.fetch_user(admin_user_id)
+        admin_message = f"New report from {ctx.author.name} ({ctx.author.id}):\n\n**Issue:** {issue}\n**Timestamp (EST):** {timestamp_est.strftime('%Y-%m-%d %H:%M:%S')}\n**Report Link:** {message_link}"
+        await admin.send(admin_message)
+        await admin.send(embed=embed)
+
+        await ctx.send("Your report has been submitted. Thank you!")
+
 
 
     @commands.command(name="give", help="Give a specified amount of µPPN to another user.")
     async def give_addr(self, ctx, target, amount: int):
         sender_id = ctx.author.id
 
+        # Check if the target address is the burn address
+        if target.lower() == "p3:0x0000burn":
+            # Deduct the tokens from the sender's balance (burn)
+            update_user_balance(self.conn, sender_id, get_user_balance(self.conn, sender_id) - amount)
+            await log_transfer(ledger_conn, ctx, ctx.author.name, target, get_user_id(self.P3addrConn, self.bot_address), amount, is_burn=True)
+            await ctx.send(f"{amount:,.2f} µPPN has been burned.")
+            return
+
         if target.startswith("P3:"):
             p3_address = target
             user_id = get_user_id(self.P3addrConn, p3_address)
+
             if not user_id:
                 await ctx.send("Invalid or unknown P3 address.")
                 return
@@ -2427,7 +2711,6 @@ class CurrencySystem(commands.Cog):
             # Log the transfer without tax
             await log_transfer(ledger_conn, ctx, ctx.author.name, target, user_id, amount)
             await ctx.send(f"{ctx.author.mention}, you have successfully given {amount:,.2f} µPPN to {target}.")
-
 
 
 
@@ -2764,7 +3047,6 @@ class CurrencySystem(commands.Cog):
 
 
 
-
     @commands.command(name="stock_stats", help="Get total buys, total sells, average price, current price, and circulating supply of a stock.")
     async def stock_stats(self, ctx, symbol: str):
         # Retrieve relevant transactions for the specified stock symbol from the ledger database
@@ -2848,6 +3130,18 @@ class CurrencySystem(commands.Cog):
         # Format totals with commas
         formatted_total_buys = '{:,}'.format(int(total_buys))
         formatted_total_sells = '{:,}'.format(int(total_sells))
+        total_buy_volume, total_sell_volume, total_volume = await calculate_daily_volume(symbol)
+        daily_volume = total_volume
+        daily_volume_value = daily_volume * current_price
+        daily_buy_volume = total_buy_volume
+        daily_buy_volume_value = daily_buy_volume * current_price
+        daily_sell_volume = total_sell_volume
+        daily_sell_volume_value = daily_sell_volume * current_price
+        min_price = await calculate_min_price(symbol)
+        max_price = await calculate_max_price(symbol)
+        min_price = float(min_price)
+        max_price = float(max_price)
+
 
         # Create an embed to display the statistics
         embed = discord.Embed(
@@ -2860,8 +3154,16 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Total Sells💵", value=f"{formatted_total_sells} µPPN ({total_quantity_sells:,} sells📉)", inline=False)
         embed.add_field(name="Average Price", value=f"{average_price:,.11f} µPPN🔁", inline=False)
         embed.add_field(name="Current Price", value=f"{formatted_current_price} µPPN", inline=False)
+        embed.add_field(name="Dynamic Minimum Price", value=f"{min_price:,.2f} µPPN", inline=False)
+        embed.add_field(name="Dynamic Max Price", value=f"{max_price:,.2f} µPPN", inline=False)
         embed.add_field(name="Circulating Supply", value=f"{circulating_supply:,} shares🔄", inline=False)
         embed.add_field(name="Circulating Value", value=f"{formatet_circulating_value} µPPN")
+        embed.add_field(name="Daily Volume:", value=f"{daily_volume:,} shares", inline=False)
+        embed.add_field(name="Daily Volume Value:", value=f"{daily_volume_value:,.2f} µPPN", inline=False)
+        embed.add_field(name="Daily Buy Volume:", value=f"{daily_buy_volume:,} shares 📈", inline=False)
+        embed.add_field(name="Daily Buy Volume Value:", value=f"{daily_buy_volume_value:,.2f} µPPN 📈", inline=False)
+        embed.add_field(name="Daily Sell Volume:", value=f"{daily_sell_volume:,} shares 📉", inline=False)
+        embed.add_field(name="Daily Sell Volume Value:", value=f"{daily_sell_volume_value:,.2f} µPPN 📉", inline=False)
         embed.add_field(name="Valuation", value=valuation_label, inline=False)
         if etfs_containing_stock:
             embed.add_field(name="ETFs Containing Stock", value=", ".join(map(str, etfs_containing_stock)), inline=False)
@@ -3212,17 +3514,15 @@ class CurrencySystem(commands.Cog):
                 stock_symbol, current_price = stock
 
                 # Connect to the ledger database
-                ledger_conn = sqlite3.connect("p3ledger.db")
-                ledger_cursor = ledger_conn.cursor()
-
-                # Retrieve buy/sell transactions for the stock from the ledger
-                ledger_cursor.execute("""
-                    SELECT timestamp, action, price
-                    FROM stock_transactions
-                    WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock')
-                    ORDER BY timestamp
-                """, (stock_symbol,))
-                transactions = ledger_cursor.fetchall()
+                with sqlite3.connect("p3ledger.db") as ledger_conn:
+                    ledger_cursor = ledger_conn.cursor()
+                    # Retrieve buy/sell transactions for the stock from the ledger
+                    transactions = ledger_cursor.execute("""
+                        SELECT timestamp, action, price
+                        FROM stock_transactions
+                        WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock')
+                        ORDER BY timestamp
+                    """, (stock_symbol,))
 
                 if transactions:
                     # Separate buy and sell transactions
@@ -3491,8 +3791,9 @@ class CurrencySystem(commands.Cog):
 
                     # Close the ledger database connection
                     ledger_conn.close()
-                    # Close the figure
-                    plt.close(fig)
+
+                    plt.close('all')
+                    fig.clf()
 
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred: {str(e)}")
@@ -6013,68 +6314,24 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="increase_price")
     @is_allowed_user(930513222820331590, PBot)
     async def increase_price(self, ctx, stock_name: str, amount: float):
-        await update_stock_price(self, ctx, stock_name, amount)
+        await update_stock_price(self, ctx, stock_name, amount, True)
 
     @commands.command(name="increase_price_non_verbose")
     @is_allowed_user(930513222820331590, PBot)
     async def increase_price_non_verbose(self, ctx, stock_name: str, amount: float):
-        await update_stock_price(self, ctx, stock_name, amount, False)
+        await update_stock_price(self, ctx, stock_name, amount, True, False)
 
     @commands.command(name="decrease_price")
     @is_allowed_user(930513222820331590, PBot)
     async def decrease_price(self, ctx, stock_name: str, amount: float):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-        stock = cursor.fetchone()
-        if stock is None:
-            await ctx.send(f"This stock does not exist.")
-            return
-        # Set stockMin based on whether the stock is in inverseStocks
-        stockMin = 10000 if stock_name in inverseStocks else 1000
-        # Generate a random float between 0.000011 * amount and 0.00005 * amount for price decrease
-        price_decrease = random.uniform(sellPressureMin * amount, min(sellPressureMax * amount, float(stock[2])))
-        current_price = float(stock[2])
-        new_price = max(current_price - price_decrease, stockMin)  # Ensure the price doesn't go below 0.00001
-
-        # Update the stock price
-        cursor.execute("""
-            UPDATE stocks
-            SET price = ?
-            WHERE symbol = ?
-        """, (float(new_price), stock_name))
-
-        self.conn.commit()
-
-        await ctx.send(f"The price of {stock_name} has decreased to {new_price:,.2f}.")
+        await update_stock_price(self, ctx, stock_name, amount, False)
 
 
 
     @commands.command(name="decrease_price_non_verbose")
     @is_allowed_user(930513222820331590, PBot)
     async def decrease_price_non_verbose(self, ctx, stock_name: str, amount: float):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-        stock = cursor.fetchone()
-        if stock is None:
-            await ctx.send(f"This stock does not exist.")
-            return
-        # Set stockMin based on whether the stock is in inverseStocks
-        stockMin = 10000 if stock_name in inverseStocks else 1000
-        # Generate a random float between 0.000011 * amount and 0.00005 * amount for price decrease
-        price_decrease = random.uniform(sellPressureMin * amount, min(sellPressureMax * amount, float(stock[2])))
-        current_price = float(stock[2])
-        new_price = max(current_price - price_decrease, stockMin)  # Ensure the price doesn't go below 0.00001
-
-        # Update the stock price
-        cursor.execute("""
-            UPDATE stocks
-            SET price = ?
-            WHERE symbol = ?
-        """, (float(new_price), stock_name))
-
-        self.conn.commit()
-
-        print(f"The price of {stock_name} has decreased to {new_price:,.2f}.")
+        await update_stock_price(self, ctx, stock_name, amount, False, False)
 
 
 #ETF Tools and Engine
@@ -6712,43 +6969,7 @@ class CurrencySystem(commands.Cog):
             p3addr_conn.close()
             currency_conn.close()
 
-    @commands.command(name="reset_stock_limit_all", help="Reset daily stock buy limits for all users.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def reset_stock_limit_all(self, ctx):
-        # Connect to the P3addr.db database
-        p3addr_conn = sqlite3.connect("P3addr.db")
 
-        # Connect to the currency_system database
-        currency_conn = sqlite3.connect("currency_system.db")
-        cursor = currency_conn.cursor()
-
-        try:
-            # Get all user IDs with daily stock buy records
-            cursor.execute("""
-                SELECT DISTINCT user_id
-                FROM user_daily_buys
-                WHERE timestamp >= date('now', '-1 day')
-            """)
-            users_with_records = cursor.fetchall()
-
-            if users_with_records:
-                for user_id, in users_with_records:
-                    # Reset daily stock buy records for each user
-                    cursor.execute("""
-                        DELETE FROM user_daily_buys
-                        WHERE user_id=?
-                    """, (user_id,))
-                    currency_conn.commit()
-
-                await ctx.send("Successfully reset daily stock buy limits for all users.")
-            else:
-                await ctx.send("No users reached the daily stock buy limit for any stocks yet.")
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred: {str(e)}")
-        finally:
-            # Close the database connections
-            p3addr_conn.close()
-            currency_conn.close()
 
 #    @commands.command(name="automated_market")
 #    async def automated_market(self):
@@ -8316,27 +8537,7 @@ class CurrencySystem(commands.Cog):
         await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, cost, 0, 0, price_before_burn, "True")
         # Handle additional case for boosting Woodvale
         if stock_name.lower() == "woodvale":
-            currency_conn = sqlite3.connect("currency_system.db")
-            currency_cursor = currency_conn.cursor()
-            etf_id = 7
-            booster = 75000000
-
-            # Retrieve the list of underlying stocks and their quantities
-            currency_cursor.execute("""
-                SELECT symbol, quantity
-                FROM etf_stocks
-                WHERE etf_id = ?
-            """, (etf_id,))
-
-            stocks = currency_cursor.fetchall()
-            for stock in stocks:
-                if stock[0] == "Om":
-                    continue
-                else:
-                    await self.buy_stock_for_bot(ctx, stock[0], booster)
-                    print(f"Boosted Stock: {stock[0]}")
-
-            currency_conn.close()
+            await boost_woodvale(self, ctx, 75000000)
 
         self.conn.commit()
 
