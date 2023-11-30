@@ -525,7 +525,7 @@ async def calculate_max_price(stock_symbol):
         circulating_supply = Decimal(cursor.fetchone()[0] or 0)
 
         # Calculate the daily volume for the stock
-        total_buy_volume, total_sell_volume, total_volume = await calculate_daily_volume(stock_symbol)
+        total_buy_volume, total_sell_volume, total_volume = await calculate_volume(stock_symbol, interval='daily')
 
         daily_volume = total_volume
 
@@ -571,8 +571,7 @@ async def calculate_max_price(stock_symbol):
         conn.close()
 
 
-
-async def calculate_daily_volume(stock_symbol):
+async def get_stock_price_interval(stock_symbol, interval='daily'):
     try:
         # Create a connection to the SQLite database
         conn = sqlite3.connect("p3ledger.db")
@@ -581,11 +580,85 @@ async def calculate_daily_volume(stock_symbol):
         # Get the current date
         today = datetime.now().date()
 
-        # Calculate the start and end timestamps for the current day
-        start_timestamp = today.strftime("%Y-%m-%d 00:00:00")
-        end_timestamp = today.strftime("%Y-%m-%d 23:59:59")
+        # Calculate the start and end timestamps based on the specified interval
+        if interval == 'daily':
+            start_timestamp = today.strftime("%Y-%m-%d 00:00:00")
+            end_timestamp = today.strftime("%Y-%m-%d 23:59:59")
+        elif interval == 'weekly':
+            # Calculate the start of the week (Monday)
+            start_of_week = today - timedelta(days=today.weekday())
+            start_timestamp = start_of_week.strftime("%Y-%m-%d 00:00:00")
+            end_timestamp = today.strftime("%Y-%m-%d 23:59:59")
+        elif interval == 'monthly':
+            # Calculate the start of the month
+            start_of_month = today.replace(day=1)
+            start_timestamp = start_of_month.strftime("%Y-%m-%d 00:00:00")
+            end_timestamp = today.strftime("%Y-%m-%d 23:59:59")
+        else:
+            raise ValueError("Invalid interval. Supported intervals: 'daily', 'weekly', 'monthly'")
 
-        # Fetch total buy, total sell, and total volume for the specified stock on the current day
+        # Fetch the opening price and the current price for the specified stock within the specified interval
+        cursor.execute("""
+            SELECT
+                (SELECT price FROM stock_transactions WHERE symbol=? AND timestamp <= ? AND action='Buy Stock' ORDER BY timestamp DESC LIMIT 1),
+                (SELECT price FROM stock_transactions WHERE symbol=? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1)
+        """, (stock_symbol, start_timestamp, stock_symbol, end_timestamp))
+
+        opening_price, current_price = cursor.fetchone()
+
+        if opening_price is None:
+            opening_price = 0.0
+        else:
+            opening_price = float(opening_price.replace(',', ''))
+
+        if current_price is None:
+            current_price = 0.0
+        else:
+            current_price = float(current_price.replace(',', ''))
+
+        price_change = current_price - opening_price
+
+        return opening_price, current_price, price_change
+
+    except sqlite3.Error as e:
+        print(f"An error occurred: {str(e)}")
+
+    finally:
+        # Close the database connection
+        conn.close()
+
+
+
+
+
+
+async def calculate_volume(stock_symbol, interval='daily'):
+    try:
+        # Create a connection to the SQLite database
+        conn = sqlite3.connect("p3ledger.db")
+        cursor = conn.cursor()
+
+        # Get the current date
+        today = datetime.now().date()
+
+        # Calculate the start and end timestamps based on the specified interval
+        if interval == 'daily':
+            start_timestamp = today.strftime("%Y-%m-%d 00:00:00")
+            end_timestamp = today.strftime("%Y-%m-%d 23:59:59")
+        elif interval == 'weekly':
+            # Calculate the start of the week (Monday)
+            start_of_week = today - timedelta(days=today.weekday())
+            start_timestamp = start_of_week.strftime("%Y-%m-%d 00:00:00")
+            end_timestamp = today.strftime("%Y-%m-%d 23:59:59")
+        elif interval == 'monthly':
+            # Calculate the start of the month
+            start_of_month = today.replace(day=1)
+            start_timestamp = start_of_month.strftime("%Y-%m-%d 00:00:00")
+            end_timestamp = today.strftime("%Y-%m-%d 23:59:59")
+        else:
+            raise ValueError("Invalid interval. Supported intervals: 'daily', 'weekly', 'monthly'")
+
+        # Fetch total buy, total sell, and total volume for the specified stock within the specified interval
         cursor.execute("""
             SELECT
                 SUM(CASE WHEN action='Buy Stock' THEN quantity ELSE 0 END) AS total_buy_volume,
@@ -609,6 +682,7 @@ async def calculate_daily_volume(stock_symbol):
         # Close the database connection
         conn.close()
 
+
 async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: bool, verbose: bool = True):
     cursor = self.conn.cursor()
     cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
@@ -621,10 +695,12 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
     current_price = float(stock[2])
     min_price = await calculate_min_price(stock_name)
     max_price = await calculate_max_price(stock_name)
-    total_buy_volume, total_sell_volume, total_volume = await calculate_daily_volume(stock_name)
+    total_buy_volume, total_sell_volume, total_volume = await calculate_volume(stock_name, interval='daily')
+    total_buy_volume_m, total_sell_volume_m, total_volume_m = await calculate_volume(stock_name, interval='monthly')
     min_price = float(min_price)
     max_price = float(max_price)
     daily_volume = float(total_volume)
+    monthly_volume = float(total_volume_m)
 
     # Determine whether it's a buy or sell
     is_buy = buy
@@ -648,23 +724,37 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
         WHERE symbol = ?
     """, (new_price, stock_name))
 
+
+    opening_price, closest_price, interval_change = await get_stock_price_interval(stock_name, interval='daily')
+    opening_change = (interval_change / opening_price) * 100
     self.conn.commit()
     addrDB = sqlite3.connect("P3addr.db")
     action = "Buy" if is_buy else "Sell"
-    if verbose == False:
+    print(f"""
+        **Dynamic Price Debug**
+        Address: {get_p3_address(addrDB, ctx.author.id)}
+        Action: {action}
+        Stock: {stock_name}
+        ------------------------------------
+        Opening: {opening_price:,.2f}
+        Closest: {closest_price:,.2f}
+        Open-Close: {opening_change:.4f}
+        ------------------------------------
+        Current Price: {current_price:,.2f}
+        New Price: {new_price:,.2f}
+        Change: {percentage_change:.4f}
+        Variable Minimum Price: {min_price:,.2f}
+        Variable Max Price: {max_price:,.2f}
+        -------------------------------------
+        Daily Volume: {daily_volume:,} Shares
+        Daily Buys: {total_buy_volume:,} Shares
+        Daily Sells: {total_sell_volume:,} Shares
+        -------------------------------------
+        Monthly Volume: {total_volume_m:,} Shares
+        Montly Buys: {total_buy_volume_m:,} Shares
+        Monthly Sells: {total_sell_volume_m:,} Shares
 
-        print(f"""
-            CMP Debug:
-            Address: {get_p3_address(addrDB, ctx.author.id)}
-            Action: {action}
-            Stock: {stock_name}
-            Current Price: {current_price:,.2f}
-            New Price: {new_price:,.2f}
-            Change: {percentage_change:.4f}
-            Variable Minimum Price: {min_price:,.2f}
-            Variable Max Price: {max_price:,.2f}
-            Daily Volume: {daily_volume:,} Shares
-            """)
+        """)
 
     if verbose:
         color = discord.Color.green() if is_buy else discord.Color.red()
@@ -925,7 +1015,10 @@ async def get_etf_value(conn, etf_id):
 
     return etf_value
 
-
+async def get_etf_stocks(conn, etf_id):
+    cursor = conn.cursor()
+    cursor.execute("SELECT symbol, quantity FROM etf_stocks WHERE etf_id=?", (etf_id,))
+    return cursor.fetchall()
 
 def get_top_ten_users(conn):
     cursor = conn.cursor()
@@ -3148,7 +3241,7 @@ class CurrencySystem(commands.Cog):
         # Format totals with commas
         formatted_total_buys = '{:,}'.format(int(total_buys))
         formatted_total_sells = '{:,}'.format(int(total_sells))
-        total_buy_volume, total_sell_volume, total_volume = await calculate_daily_volume(symbol)
+        total_buy_volume, total_sell_volume, total_volume = await calculate_volume(symbol, interval='daily')
         daily_volume = total_volume
         daily_volume_value = daily_volume * current_price
         daily_buy_volume = total_buy_volume
@@ -3159,7 +3252,8 @@ class CurrencySystem(commands.Cog):
         max_price = await calculate_max_price(symbol)
         min_price = float(min_price)
         max_price = float(max_price)
-
+        opening_price, closest_price, interval_change = await get_stock_price_interval(symbol, interval='daily')
+        opening_change = (interval_change / opening_price) * 100
 
         # Create an embed to display the statistics
         embed = discord.Embed(
@@ -3168,10 +3262,10 @@ class CurrencySystem(commands.Cog):
         )
         circulatingValue = circulating_supply * current_price
         formatet_circulating_value = '{:,}'.format(int(circulatingValue))
-        embed.add_field(name="Total Buys💵", value=f"{formatted_total_buys} µPPN ({total_quantity_buys:,} buys📈)", inline=False)
-        embed.add_field(name="Total Sells💵", value=f"{formatted_total_sells} µPPN ({total_quantity_sells:,} sells📉)", inline=False)
-        embed.add_field(name="Average Price", value=f"{average_price:,.11f} µPPN🔁", inline=False)
+        embed.add_field(name="Opening Price", value=f"{opening_price:,.2f} µPPN", inline=False)
         embed.add_field(name="Current Price", value=f"{formatted_current_price} µPPN", inline=False)
+        embed.add_field(name="Change from Open", value=f"{opening_change:.4f}%", inline=False)
+        embed.add_field(name="Average Price", value=f"{average_price:,.11f} µPPN🔁", inline=False)
         embed.add_field(name="Dynamic Minimum Price", value=f"{min_price:,.2f} µPPN", inline=False)
         embed.add_field(name="Dynamic Max Price", value=f"{max_price:,.2f} µPPN", inline=False)
         embed.add_field(name="Circulating Supply", value=f"{circulating_supply:,} shares🔄", inline=False)
@@ -3182,6 +3276,8 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Daily Buy Volume Value:", value=f"{daily_buy_volume_value:,.2f} µPPN 📈", inline=False)
         embed.add_field(name="Daily Sell Volume:", value=f"{daily_sell_volume:,} shares 📉", inline=False)
         embed.add_field(name="Daily Sell Volume Value:", value=f"{daily_sell_volume_value:,.2f} µPPN 📉", inline=False)
+        embed.add_field(name="Total Buys💵", value=f"{formatted_total_buys} µPPN ({total_quantity_buys:,} buys📈)", inline=False)
+        embed.add_field(name="Total Sells💵", value=f"{formatted_total_sells} µPPN ({total_quantity_sells:,} sells📉)", inline=False)
         embed.add_field(name="Valuation", value=valuation_label, inline=False)
         if etfs_containing_stock:
             embed.add_field(name="ETFs Containing Stock", value=", ".join(map(str, etfs_containing_stock)), inline=False)
@@ -6101,10 +6197,10 @@ class CurrencySystem(commands.Cog):
     async def inverseStock(self, ctx, type: str):
         for symbol in inverseStocks:
             if type.lower() == "buy":
-                boosterAmount = 75000000
+                boosterAmount = 75000000 * 2
                 await self.sell_stock_for_bot(ctx, symbol, boosterAmount)
             elif type.lower() == "sell":
-                boosterAmount = 150000000 * 2
+                boosterAmount = 150000000 * 4
                 await self.buy_stock_for_bot(ctx, symbol, boosterAmount)
             else:
                 return
@@ -7534,15 +7630,29 @@ class CurrencySystem(commands.Cog):
         await self.inverseStock(ctx, "buy")
         self.conn.commit()
 
-        await ctx.send(f"{ctx.author.mention}, you have successfully bought {quantity} {item_name}. Your new balance is: {new_balance:,.2f} µPPN.")
-        if item_name == "Gold":
-            await self.metalReserveBooster(ctx, "P3:Gold-Reserve" ,quantity / 2)
-        elif item_name == "Copper":
-            await self.metalReserveBooster(ctx, "P3:Copper-Reserve" ,quantity / 2)
-        elif item_name == "Silver":
-            await self.metalReserveBooster(ctx, "P3:Silver-Reserve" ,quantity / 2)
-        elif item_name == "Platinum":
-            await self.metalReserveBooster(ctx, "P3:Platinum-Reserve" ,quantity / 2)
+        await ctx.send(f"{ctx.author.mention}, you have successfully bought {quantity:,} {item_name}. Your new balance is: {new_balance:,.2f} µPPN.")
+
+        # Calculate the amount to buy of the metal stock
+        amount_to_buy = total_cost  # Adjust this if needed based on your specific requirements
+
+        if item_name in ["Gold", "Copper", "Silver", "Platinum"]:
+            stock_symbol = f"P3:{item_name}-Reserve"
+            stock_price = Decimal(await get_stock_price(self.conn, stock_symbol))  # Explicitly convert to Decimal
+            shares_to_buy = int(amount_to_buy / stock_price)
+            await self.metalReserveBooster(ctx, stock_symbol, shares_to_buy)
+            new_price = Decimal(await get_stock_price(self.conn, stock_symbol))
+
+            print(f"""
+            **Metal Reserve Debug**
+            Metal: {item_name}
+            Price: {item_price:,.2f}
+            Quantity: {quantity:,}
+            Reserve: {stock_symbol}
+            Shares to buy: {shares_to_buy:,}
+            Current Price: {stock_price:,.2f}
+            New Price: {new_price:,.2f}
+
+            """)
 
     @commands.command(name="sell_item", help="Sell an item from your inventory.")
     async def sell_item(self, ctx, item_name: str, quantity: int):
@@ -8575,8 +8685,10 @@ class CurrencySystem(commands.Cog):
         await ctx.send(f"Burned {amount} {stock_name} stocks, reducing the total supply.")
         await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, cost, 0, 0, price_before_burn, "True")
         # Handle additional case for boosting Woodvale
-        if stock_name.lower() == "woodvale":
-            await boost_woodvale(self, ctx, 75000000)
+        etf_seven_stock = ["chi", "nonsense", "savage"]
+        for i in etf_seven_stock:
+            if stock_name.lower() == i:
+                await boost_woodvale(self, ctx, 75000000)
 
         self.conn.commit()
 
