@@ -530,7 +530,7 @@ async def calculate_max_price(stock_symbol):
         daily_volume = total_volume
 
         # Calculate the dynamic adjustment based on the daily volume
-        volume_adjustment_factor = Decimal("0.001") * Decimal(daily_volume)  # Convert to Decimal
+        volume_adjustment_factor = Decimal("0.0001") * Decimal(daily_volume)  # Convert to Decimal
 
         # Calculate the new maximum price
         max_price = (current_price / circulating_supply) * max_price_adjustment_factor * volume_adjustment_factor
@@ -543,8 +543,23 @@ async def calculate_max_price(stock_symbol):
 
         # Ensure that max_price is not equal to current_price
         if max_price == current_price:
-            max_price += Decimal("0.01")  # Add a small value to make them different
-            max_price  = max(max_price, 0)
+            price_difference = Decimal(current_price) * Decimal("0.1")  # Minimum of 10%
+
+            # Introduce a random factor with a range of 0% to 15%
+            random_factor = Decimal(str(random.uniform(0, 0.15)))
+
+            # Adjust the maximum change based on the current price
+            max_change_percentage = min(Decimal("0.25"), current_price / Decimal("100"))
+
+            # Calculate the maximum change within the allowed percentage
+            max_change = Decimal(random.uniform(0, float(max_change_percentage)))
+
+            # Use the higher of the two random factors
+            max_price_change = max(random_factor, max_change)
+
+            max_price += max(price_difference, Decimal(current_price) * max_price_change)
+            max_price = min(max_price, Decimal(20000000))  # Ensure it doesn't exceed 20,000,000
+
 
         return max_price
 
@@ -617,7 +632,8 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
     if is_buy:
         # Buy logic
         price_change_range = random.uniform(buyPressureMin, buyPressureMax)
-        new_price = max(current_price + (price_change_range * amount), min_price)
+        potential_new_price = current_price + (price_change_range * amount)
+        new_price = min(potential_new_price, max_price, 20000000)
     else:
         # Sell logic
         price_change_range = random.uniform(-sellPressureMax, -sellPressureMin)
@@ -635,18 +651,20 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
     self.conn.commit()
     addrDB = sqlite3.connect("P3addr.db")
     action = "Buy" if is_buy else "Sell"
-    print(f"""
-        CMP Debug:
-        Address: {get_p3_address(addrDB, ctx.author.id)}
-        Action: {action}
-        Stock: {stock_name}
-        Current Price: {current_price:,.2f}
-        New Price: {new_price:,.2f}
-        Change: {percentage_change:.4f}
-        Variable Minimum Price: {min_price:,.2f}
-        Variable Max Price: {max_price:,.2f}
-        Daily Volume: {daily_volume:,} Shares
-    """)
+    if verbose == False:
+
+        print(f"""
+            CMP Debug:
+            Address: {get_p3_address(addrDB, ctx.author.id)}
+            Action: {action}
+            Stock: {stock_name}
+            Current Price: {current_price:,.2f}
+            New Price: {new_price:,.2f}
+            Change: {percentage_change:.4f}
+            Variable Minimum Price: {min_price:,.2f}
+            Variable Max Price: {max_price:,.2f}
+            Daily Volume: {daily_volume:,} Shares
+            """)
 
     if verbose:
         color = discord.Color.green() if is_buy else discord.Color.red()
@@ -5966,45 +5984,67 @@ class CurrencySystem(commands.Cog):
         stableStock = "P3:Stable"
 
         shareLimit = 1000000000
-
         if amount >= shareLimit:
             shares_amount = shareLimit
         else:
             shares_amount = amount
 
         if type.lower() == "buy":
-            for stock_name in reserveStocks:
-                await self.sell_stock_for_bot(ctx, stock_name, shares_amount)
+            # Step 1: Get the current prices of each reserve stock
+            reserve_stock_prices = [await get_stock_price(self.conn, stock_name) for stock_name in reserveStocks]
 
-            # Randomly fluctuate the price of P3:Stable within the specified range
-            new_price = random.uniform(850, 3500)
+            # Step 2: Calculate the total value of the reserve stocks being sold
+            total_reserve_value = sum(price * shares_amount for price in reserve_stock_prices)
+
+            # Step 3: Determine the price per share of P3:Stable
+            price_per_share = total_reserve_value / shares_amount
+
+            # Step 4: Buy the reserve stocks based on their individual prices and the calculated number of shares
+            for stock_name, stock_price in zip(reserveStocks, reserve_stock_prices):
+                shares_to_buy = int(total_reserve_value / stock_price)
+                await self.buy_stock_for_bot(ctx, stock_name, shares_to_buy)
+
+            # Adjust the price of P3:Stable after the buy operation
+            current_stable_price = await get_stock_price(self.conn, stableStock)
+            new_price = min(Decimal(current_stable_price) * Decimal("1.05"), Decimal(3500))  # Increase by 5%, capped at 3500
             cursor.execute("""
                 UPDATE stocks
                 SET price = ?
-                WHERE symbol = "P3:Stable"
-            """, (new_price,))
+                WHERE symbol = ?
+            """, (new_price, stableStock))
             self.conn.commit()
 
-            await ctx.send(f"P3:Stable has been bought, and its price has fluctuated to {new_price:,.2f}.")
+            await ctx.send(f"P3:Stable has been bought, and its price has increased to {new_price:,.2f}.")
 
         elif type.lower() == "sell":
-            for stock_name in reserveStocks:
-                await self.buy_stock_for_bot(ctx, stock_name, shares_amount * 2)
+            # Step 1: Get the current prices of each reserve stock
+            reserve_stock_prices = [await get_stock_price(self.conn, stock_name) for stock_name in reserveStocks]
 
-            # Randomly fluctuate the price of P3:Stable within the specified range
-            new_price = random.uniform(850, 3500)
+            # Step 2: Calculate the total value of the reserve stocks being bought
+            total_reserve_value = sum(price * shares_amount * 2 for price in reserve_stock_prices)
+
+            # Step 3: Determine the price per share of P3:Stable
+            price_per_share = total_reserve_value / (shares_amount * 2)
+
+            # Step 4: Sell the reserve stocks based on their individual prices and the calculated number of shares
+            for stock_name, stock_price in zip(reserveStocks, reserve_stock_prices):
+                shares_to_sell = int(total_reserve_value / (stock_price * 2))
+                await self.sell_stock_for_bot(ctx, stock_name, shares_to_sell)
+
+            # Adjust the price of P3:Stable after the sell operation
+            current_stable_price = await get_stock_price(self.conn, stableStock)
+            new_price = max(Decimal(current_stable_price) * Decimal("0.95"), Decimal(850))  # Decrease by 5%, capped at 850
             cursor.execute("""
                 UPDATE stocks
                 SET price = ?
-                WHERE symbol = "P3:Stable"
-            """, (new_price,))
+                WHERE symbol = ?
+            """, (new_price, stableStock))
             self.conn.commit()
 
-            await ctx.send(f"{stableStock} has been sold, and its price has fluctuated to {new_price:,.2f}.")
+            await ctx.send(f"{stableStock} has been sold, and its price has decreased to {new_price:,.2f}.")
 
         else:
             await ctx.send("Invalid operation. Use 'buy' or 'sell'.")
-
 
 
 
@@ -6047,7 +6087,6 @@ class CurrencySystem(commands.Cog):
 
         for metal in metal_names:
             metal_reserve_price = await get_stock_price(self.conn, f"P3:{metal}-Reserve")
-            print(f"P3:{metal}-Reserve at {metal_reserve_price:,.2f}")
             if metal_reserve_price >= 5000000:
                 await self.sell_stock_for_bot(ctx, f"P3:{metal}-Reserve", metalLimSmall)
             elif metal_reserve_price >= 7500000:
@@ -7497,13 +7536,13 @@ class CurrencySystem(commands.Cog):
 
         await ctx.send(f"{ctx.author.mention}, you have successfully bought {quantity} {item_name}. Your new balance is: {new_balance:,.2f} µPPN.")
         if item_name == "Gold":
-            await self.metalReserveBooster(ctx, "P3:Gold-Reserve" ,quantity)
+            await self.metalReserveBooster(ctx, "P3:Gold-Reserve" ,quantity / 2)
         elif item_name == "Copper":
-            await self.metalReserveBooster(ctx, "P3:Copper-Reserve" ,quantity)
+            await self.metalReserveBooster(ctx, "P3:Copper-Reserve" ,quantity / 2)
         elif item_name == "Silver":
-            await self.metalReserveBooster(ctx, "P3:Silver-Reserve" ,quantity)
+            await self.metalReserveBooster(ctx, "P3:Silver-Reserve" ,quantity / 2)
         elif item_name == "Platinum":
-            await self.metalReserveBooster(ctx, "P3:Platinum-Reserve" ,quantity)
+            await self.metalReserveBooster(ctx, "P3:Platinum-Reserve" ,quantity / 2)
 
     @commands.command(name="sell_item", help="Sell an item from your inventory.")
     async def sell_item(self, ctx, item_name: str, quantity: int):
