@@ -569,8 +569,6 @@ async def calculate_max_price(stock_symbol):
     finally:
         # Close the database connection
         conn.close()
-
-
 async def get_stock_price_interval(stock_symbol, interval='daily'):
     try:
         # Create a connection to the SQLite database
@@ -606,15 +604,9 @@ async def get_stock_price_interval(stock_symbol, interval='daily'):
 
         opening_price, current_price = cursor.fetchone()
 
-        if opening_price is None:
-            opening_price = 0.0
-        else:
-            opening_price = float(opening_price.replace(',', ''))
-
-        if current_price is None:
-            current_price = 0.0
-        else:
-            current_price = float(current_price.replace(',', ''))
+        # Convert to float only if the values are not None and are strings
+        opening_price = float(opening_price.replace(',', '')) if opening_price is not None and isinstance(opening_price, str) else 0.0
+        current_price = float(current_price.replace(',', '')) if current_price is not None and isinstance(current_price, str) else 0.0
 
         price_change = current_price - opening_price
 
@@ -628,7 +620,100 @@ async def get_stock_price_interval(stock_symbol, interval='daily'):
         conn.close()
 
 
+async def count_all_transactions(interval='daily'):
+    try:
+        # Create a connection to the SQLite database
+        conn = sqlite3.connect("p3ledger.db")
+        cursor = conn.cursor()
 
+        # Get the current date
+        today = datetime.now().date()
+
+        # Calculate the start and end timestamps based on the specified interval
+        if interval == 'daily':
+            start_timestamp = today.strftime("%Y-%m-%d 00:00:00")
+        elif interval == 'weekly':
+            # Calculate the start of the week (Monday)
+            start_of_week = today - timedelta(days=today.weekday())
+            start_timestamp = start_of_week.strftime("%Y-%m-%d 00:00:00")
+        elif interval == 'monthly':
+            # Calculate the start of the month
+            start_of_month = today.replace(day=1)
+            start_timestamp = start_of_month.strftime("%Y-%m-%d 00:00:00")
+        else:
+            raise ValueError("Invalid interval. Supported intervals: 'daily', 'weekly', 'monthly'")
+
+        # Count the number of buy and sell transactions for all stocks within the specified interval
+        cursor.execute("""
+            SELECT
+                COUNT(CASE WHEN action = 'Buy Stock' THEN 1 END) AS buy_count,
+                COUNT(CASE WHEN action = 'Sell Stock' THEN 1 END) AS sell_count
+            FROM stock_transactions
+            WHERE timestamp >= ?
+        """, (start_timestamp,))
+
+        buy_count, sell_count = cursor.fetchone()
+
+        return buy_count, sell_count
+
+    except sqlite3.Error as e:
+        print(f"An error occurred: {str(e)}")
+
+    finally:
+        # Close the database connection
+        conn.close()
+
+
+async def count_transactions(stock_name, interval='daily'):
+    try:
+        # Create a connection to the SQLite database
+        conn = sqlite3.connect("p3ledger.db")
+        cursor = conn.cursor()
+
+        # Get the current date
+        today = datetime.now().date()
+
+        # Calculate the start and end timestamps based on the specified interval
+        if interval == 'daily':
+            start_timestamp = today.strftime("%Y-%m-%d 00:00:00")
+            end_timestamp = today.strftime("%Y-%m-%d 23:59:59")
+        elif interval == 'weekly':
+            # Calculate the start of the week (Monday)
+            start_of_week = today - timedelta(days=today.weekday())
+            start_timestamp = start_of_week.strftime("%Y-%m-%d 00:00:00")
+            end_timestamp = today.strftime("%Y-%m-%d 23:59:59")
+        elif interval == 'monthly':
+            # Calculate the start of the month
+            start_of_month = today.replace(day=1)
+            start_timestamp = start_of_month.strftime("%Y-%m-%d 00:00:00")
+            end_timestamp = today.strftime("%Y-%m-%d 23:59:59")
+        else:
+            raise ValueError("Invalid interval. Supported intervals: 'daily', 'weekly', 'monthly'")
+
+        # Count buy transactions
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM stock_transactions
+            WHERE symbol=? AND timestamp BETWEEN ? AND ? AND action='Buy Stock'
+        """, (stock_name, start_timestamp, end_timestamp))
+        buy_count = cursor.fetchone()[0]
+
+        # Count sell transactions
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM stock_transactions
+            WHERE symbol=? AND timestamp BETWEEN ? AND ? AND action='Sell Stock'
+        """, (stock_name, start_timestamp, end_timestamp))
+        sell_count = cursor.fetchone()[0]
+
+        return buy_count, sell_count
+
+    except sqlite3.Error as e:
+        print(f"An error occurred: {str(e)}")
+
+    finally:
+        # Close the database connection
+        conn.close()
 
 
 
@@ -671,7 +756,7 @@ async def calculate_volume(stock_symbol, interval='daily'):
         total_buy_volume, total_sell_volume, total_volume = cursor.fetchone()
 
         if total_volume is None:
-            total_volume = 0
+            total_volume = 1
 
         return total_buy_volume, total_sell_volume, total_volume
 
@@ -681,6 +766,8 @@ async def calculate_volume(stock_symbol, interval='daily'):
     finally:
         # Close the database connection
         conn.close()
+
+
 
 
 async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: bool, verbose: bool = True):
@@ -726,7 +813,14 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
 
 
     opening_price, closest_price, interval_change = await get_stock_price_interval(stock_name, interval='daily')
-    opening_change = (interval_change / opening_price) * 100
+    print(f"Debugging: {opening_price=}, {closest_price=}, {interval_change=}")
+    # Check if interval_change is not zero before performing the division
+    if interval_change != 0:
+        opening_change = (interval_change / opening_price) * 100
+    else:
+        opening_price = 10  # Set a default opening_price value
+        opening_change = 10  # Set a default opening_change value
+
     self.conn.commit()
     addrDB = sqlite3.connect("P3addr.db")
     action = "Buy" if is_buy else "Sell"
@@ -751,10 +845,9 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
         Daily Sells: {total_sell_volume:,} Shares
         -------------------------------------
         Monthly Volume: {total_volume_m:,} Shares
-        Montly Buys: {total_buy_volume_m:,} Shares
         Monthly Sells: {total_sell_volume_m:,} Shares
-
         """)
+
 
     if verbose:
         color = discord.Color.green() if is_buy else discord.Color.red()
@@ -3253,7 +3346,10 @@ class CurrencySystem(commands.Cog):
         min_price = float(min_price)
         max_price = float(max_price)
         opening_price, closest_price, interval_change = await get_stock_price_interval(symbol, interval='daily')
-        opening_change = (interval_change / opening_price) * 100
+        if opening_price != 0:
+            opening_change = (interval_change / opening_price) * 100
+        else:
+            opening_change = 10
 
         # Create an embed to display the statistics
         embed = discord.Embed(
@@ -3911,6 +4007,60 @@ class CurrencySystem(commands.Cog):
 
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred: {str(e)}")
+
+
+    @commands.command(name="transaction_counts", help="Shows the count of buy and sell transactions for a stock.")
+    async def transaction_counts(self, ctx, stock_name: str):
+        # Get transaction counts
+        daily_buy_count, daily_sell_count = await count_transactions(stock_name, interval='daily')
+        weekly_buy_count, weekly_sell_count = await count_transactions(stock_name, interval='weekly')
+        monthly_buy_count, monthly_sell_count = await count_transactions(stock_name, interval='monthly')
+
+        # Calculate total counts
+        total_daily_transactions = daily_buy_count + daily_sell_count
+        total_weekly_transactions = weekly_buy_count + weekly_sell_count
+        total_monthly_transactions = monthly_buy_count + monthly_sell_count
+
+        # Create an embed to display the counts
+        embed = discord.Embed(
+            title=f"Transaction Counts - {stock_name}",
+            description=f"Transaction counts for {stock_name}",
+            color=discord.Color.blue()
+        )
+
+        embed.add_field(name="Daily Transactions", value=f"Buys: {daily_buy_count}, Sells: {daily_sell_count}, Total: {total_daily_transactions}", inline=False)
+        embed.add_field(name="Weekly Transactions", value=f"Buys: {weekly_buy_count}, Sells: {weekly_sell_count}, Total: {total_weekly_transactions}", inline=False)
+        embed.add_field(name="Monthly Transactions", value=f"Buys: {monthly_buy_count}, Sells: {monthly_sell_count}, Total: {total_monthly_transactions}", inline=False)
+
+        # Send the embed
+        await ctx.send(embed=embed)
+
+
+    @commands.command(name="cumulative_transaction_counts", help="Shows the cumulative count of buy and sell transactions for all stocks.")
+    async def cumulative_transaction_counts(self, ctx):
+        # Get cumulative transaction counts
+        daily_buy_count, daily_sell_count = await count_all_transactions(interval='daily')
+        weekly_buy_count, weekly_sell_count = await count_all_transactions(interval='weekly')
+        monthly_buy_count, monthly_sell_count = await count_all_transactions(interval='monthly')
+
+        # Calculate total counts
+        total_daily_transactions = daily_buy_count + daily_sell_count
+        total_weekly_transactions = weekly_buy_count + weekly_sell_count
+        total_monthly_transactions = monthly_buy_count + monthly_sell_count
+
+        # Create an embed to display the counts
+        embed = discord.Embed(
+            title="Cumulative Transaction Counts",
+            description="Cumulative transaction counts for all stocks",
+            color=discord.Color.blue()
+        )
+
+        embed.add_field(name="Daily Transactions", value=f"Buys: {daily_buy_count}, Sells: {daily_sell_count}, Total: {total_daily_transactions}", inline=False)
+        embed.add_field(name="Weekly Transactions", value=f"Buys: {weekly_buy_count}, Sells: {weekly_sell_count}, Total: {total_weekly_transactions}", inline=False)
+        embed.add_field(name="Monthly Transactions", value=f"Buys: {monthly_buy_count}, Sells: {monthly_sell_count}, Total: {total_monthly_transactions}", inline=False)
+
+        # Send the embed
+        await ctx.send(embed=embed)
 
 
     @commands.command(name="tax_refund", help="Distribute this month's 10% of received funds to all users in the server.")
@@ -5101,15 +5251,41 @@ class CurrencySystem(commands.Cog):
                            f"Only {total_amount_bought} stocks of '{symbol}' could be bought.")
 
 
-
-# Stock User Tools
     @commands.command(name="my_stocks", help="Shows the user's stocks.")
-    async def my_stocks(self, ctx):
+    async def my_stocks(self, ctx, stock_name: str = None):
         user_id = ctx.author.id
         P3Addr = generate_crypto_address(ctx.author.id)
         await ctx.message.delete()
 
         cursor = self.conn.cursor()
+
+        if stock_name:
+            # Display daily, weekly, and monthly average buy and sell prices for a specific stock
+            opening_price, current_price, interval_change = await get_stock_price_interval(stock_name, interval='daily')
+            weekly_opening_price, weekly_current_price, weekly_interval_change = await get_stock_price_interval(stock_name, interval='weekly')
+            monthly_opening_price, monthly_current_price, monthly_interval_change = await get_stock_price_interval(stock_name, interval='monthly')
+
+            # Convert prices to strings and remove commas
+            opening_price_str = f"${opening_price:,.2f}" if opening_price is not None else "$0.00"
+            weekly_opening_price_str = f"${weekly_opening_price:,.2f}" if weekly_opening_price is not None else "$0.00"
+            monthly_opening_price_str = f"${monthly_opening_price:,.2f}" if monthly_opening_price is not None else "$0.00"
+
+            embed = discord.Embed(
+                title=f"Stock Performance - {stock_name}",
+                description=f"Performance summary for {P3Addr}",
+                color=discord.Color.green()
+            )
+
+            embed.add_field(name="Daily Average Buy Price", value=opening_price_str, inline=False)
+            embed.add_field(name="Daily Average Sell Price", value=f"${current_price:,.2f}", inline=False)
+            embed.add_field(name="Weekly Average Buy Price", value=weekly_opening_price_str, inline=False)
+            embed.add_field(name="Weekly Average Sell Price", value=f"${weekly_current_price:,.2f}", inline=False)
+            embed.add_field(name="Monthly Average Buy Price", value=monthly_opening_price_str, inline=False)
+            embed.add_field(name="Monthly Average Sell Price", value=f"${monthly_current_price:,.2f}", inline=False)
+
+            await ctx.send(embed=embed)
+            return
+
         cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=? AND amount > 0", (user_id,))
         user_stocks = cursor.fetchall()
 
@@ -5133,9 +5309,22 @@ class CurrencySystem(commands.Cog):
             start_idx = page * page_size
             end_idx = (page + 1) * page_size
 
+
             # Add stocks to the embed for this page
             for stock in user_stocks[start_idx:end_idx]:
-                embed.add_field(name=stock['symbol'], value=f"Amount: {stock['amount']:,}", inline=True)
+                stock_symbol = stock['symbol']
+                amount_owned = stock['amount']
+                opening_price, current_price, interval_change = await get_stock_price_interval(stock_symbol, interval='daily')
+                latest_price = await get_stock_price(self.conn, stock_symbol)
+
+                # Convert opening_price to a string and remove commas
+                opening_price_str = f"${opening_price:,.2f}" if opening_price is not None else "$0.00"
+
+                embed.add_field(
+                    name=f"{stock_symbol} (Amount: {amount_owned:,})",
+                    value=f"Current Price: {latest_price:,.2f}\nDaily Average Buy Price: {opening_price_str}\nDaily Average Sell Price: ${current_price:,.2f}",
+                    inline=True
+                )
 
             embeds.append(embed)
 
@@ -5166,6 +5355,7 @@ class CurrencySystem(commands.Cog):
 
         # Remove reactions after pagination or if there's only one page
         await message.clear_reactions()
+
 
     @commands.command(name='list_stocks', aliases=["stocks"])
     async def list_stocks(self, ctx):
@@ -5924,6 +6114,71 @@ class CurrencySystem(commands.Cog):
 
         # Commit the transaction
         self.conn.commit()
+
+    @commands.command(name="buy_stock_for_bot_all")
+    @is_allowed_user(930513222820331590, PBot)
+    async def buy_stock_for_bot_all(self, ctx, amount):
+        cursor = self.conn.cursor()
+        total_spent = Decimal(0)
+
+        try:
+            # Fetch all available stocks
+            cursor.execute("SELECT * FROM stocks")
+            stocks = cursor.fetchall()
+
+            for stock_info in stocks:
+                stock_name = stock_info[0]
+                if stock_name.lower() == "roflstocks":
+                    continue
+                if stock_name.lower() == "p3:stable":
+                    continue
+                price = Decimal(stock_info[2])
+                total_cost = price * Decimal(amount)
+
+                # Check if there's enough available stock
+                available_stock = Decimal(stock_info[3])
+                if Decimal(amount) > available_stock:
+                    await ctx.send(f"Insufficient available stock for {stock_name}.")
+                    continue
+
+                # Update bot's stock balance
+                cursor.execute("""
+                    INSERT INTO user_stocks (user_id, symbol, amount)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(user_id, symbol) DO UPDATE SET amount = amount + ?
+                """, (PBot, stock_name, amount, amount))
+
+                # Update available stock
+                cursor.execute("""
+                    UPDATE stocks
+                    SET available = available - ?
+                    WHERE symbol = ?
+                """, (amount, stock_name))
+
+                # Update bot's balance
+                current_balance = get_user_balance(self.conn, PBot)
+                new_balance = current_balance - total_cost
+                update_user_balance(self.conn, PBot, new_balance)
+
+                decay_other_stocks(self.conn, stock_name)
+                await self.increase_price_non_verbose(ctx, stock_name, float(amount))
+                await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, total_cost, total_cost, 0, 0, price, "Fail")
+
+                total_spent += total_cost
+
+            # Commit the transaction
+            self.conn.commit()
+
+            # Create and send an embed with total amount spent
+            color = discord.Color.green()
+            embed = Embed(title="Total Amount Spent", color=color)
+            embed.add_field(name="Amount", value=f"{amount} Shares", inline=False)
+            embed.add_field(name="Total Spent", value=f"{total_spent:,.2f} µPPN", inline=False)
+            await ctx.send(embed=embed)
+
+        finally:
+            # Close the cursor
+            cursor.close()
 
     @commands.command(name="sell_stock_for_bot")
     @is_allowed_user(930513222820331590, PBot)
@@ -8688,7 +8943,7 @@ class CurrencySystem(commands.Cog):
         etf_seven_stock = ["chi", "nonsense", "savage"]
         for i in etf_seven_stock:
             if stock_name.lower() == i:
-                await boost_woodvale(self, ctx, 75000000)
+                await boost_woodvale(self, ctx, 150000000)
 
         self.conn.commit()
 
