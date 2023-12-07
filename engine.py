@@ -178,6 +178,11 @@ def price_formatter(x, pos):
     else:
         return locale.currency(x, grouping=True)
 
+def has_consecutive_symbols(line):
+    for i in range(len(line) - 2):
+        if line[i] == line[i + 1] == line[i + 2]:
+            return True
+    return False
 
 def parse_time_shorthand(shorthand):
     if shorthand.endswith("m"):
@@ -901,6 +906,7 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
                 Daily Sells: {total_sell_volume:,} Shares
                 -------------------------------------
                 Monthly Volume: {total_volume_m:,} Shares
+                Monthly Buys: {total_buy_volume_m:,} Shares
                 Monthly Sells: {total_sell_volume_m:,} Shares
                 -------------------------------------
                 Timestamp: {current_timestamp}
@@ -2416,6 +2422,12 @@ class CurrencySystem(commands.Cog):
         self.last_buyers = []
         self.last_sellers = []
         self.last_gamble = []
+        self.buy_timer_start = 0
+        self.sell_timer_start = 0
+        self.buy_time_avg_stock = []
+        self.sell_time_avg_stock = []
+        self.buy_time_avg_etf = []
+        self.sell_time_avg_etf = []
 
     @tasks.loop(hours=1)  # Run every hour
     async def reset_stock_limit_all(self):
@@ -3916,7 +3928,7 @@ class CurrencySystem(commands.Cog):
                 SELECT symbol, SUM(quantity) AS total_quantity
                 FROM stock_transactions
                 WHERE action LIKE 'Buy%'
-                GROUP BY symbol
+                GROUP BY symbol != 5
                 ORDER BY total_quantity DESC
                 LIMIT 1
             """)
@@ -3926,7 +3938,7 @@ class CurrencySystem(commands.Cog):
                 SELECT symbol, SUM(quantity) AS total_quantity
                 FROM stock_transactions
                 WHERE action LIKE 'Buy%'
-                GROUP BY symbol
+                GROUP BY symbol != 5
                 ORDER BY total_quantity ASC
                 LIMIT 1
             """)
@@ -3940,7 +3952,7 @@ class CurrencySystem(commands.Cog):
                 SELECT symbol, SUM(quantity) AS total_quantity
                 FROM stock_transactions
                 WHERE action LIKE 'Buy ETF%'
-                GROUP BY symbol
+                GROUP BY symbol != 5
                 ORDER BY total_quantity DESC
                 LIMIT 1
             """)
@@ -3950,7 +3962,7 @@ class CurrencySystem(commands.Cog):
                 SELECT symbol, SUM(quantity) AS total_quantity
                 FROM stock_transactions
                 WHERE action LIKE 'Buy ETF%'
-                GROUP BY symbol
+                GROUP BY symbol != 5
                 ORDER BY total_quantity ASC
                 LIMIT 1
             """)
@@ -4798,7 +4810,7 @@ class CurrencySystem(commands.Cog):
 
     @commands.command(name="buy", aliases=["buy_stock"], help="Buy stocks. Provide the stock name and amount.")
     async def buy(self, ctx, stock_name: str, amount: int, stable_option: str = "False"):
-        start_time = timeit.default_timer()
+        self.buy_timer_start = timeit.default_timer()
         current_timestamp = datetime.utcnow()
         self.last_buyers = [entry for entry in self.last_buyers if (current_timestamp - entry[1]).total_seconds() <= 5]
         user_id = ctx.author.id
@@ -5017,6 +5029,8 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} µPPN", inline=False)
         tax_rate = tax_percentage * 100
         embed.add_field(name="Gas Rate:", value=f"{tax_rate:.2f}%", inline=False)
+        elapsed_time = timeit.default_timer() - self.buy_timer_start
+        embed.add_field(name="Transaction Time:", value=f"{elapsed_time:.2f} seconds", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
         await ctx.send(embed=embed)
@@ -5024,14 +5038,20 @@ class CurrencySystem(commands.Cog):
         await self.blueChipBooster(ctx, "BUY")
         await self.inverseStock(ctx, "buy")
         try:
-            elapsed_time = timeit.default_timer() - start_time
-            print(f"Elapsed Time: {elapsed_time}")
+
+            self.buy_time_avg_stock.append(elapsed_time)
+            avg_time = sum(self.buy_time_avg_stock) / len(self.buy_time_avg_stock)
+            print(f"""
+                -------------------------------------
+                Transaction Time: {elapsed_time:.2f}
+                Average Transaction Time: {avg_time:.2f}
+            """)
         except Exception as e:
             print(f"Timer error: {e}")
 # Sell Stock
     @commands.command(name="sell", aliases=["sell_stock"], help="Sell stocks. Provide the stock name and amount.")
     async def sell(self, ctx, stock_name: str, amount: int):
-#        start_time = timeit.default_timer()
+        self.sell_timer_start = timeit.default_timer()
         current_timestamp = datetime.utcnow()
         self.last_sellers = [entry for entry in self.last_sellers if (current_timestamp - entry[1]).total_seconds() <= 5]
         user_id = ctx.author.id
@@ -5046,6 +5066,11 @@ class CurrencySystem(commands.Cog):
 
 
         await ctx.send(embed=embed)
+
+        qraft_price = await get_stock_price(self.conn, stock_name)
+        if stock_name.lower() == "qraft" and qraft_price < 1000:
+            await ctx.send(f"Cannot sell {stock_name} until price is over 1,000")
+            return
 
         member = ctx.guild.get_member(user_id)
         # Check if the user is already in a transaction
@@ -5246,14 +5271,21 @@ class CurrencySystem(commands.Cog):
                 embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} µPPN", inline=False)
                 tax_rate = tax_percentage * 100
                 embed.add_field(name="Gas Rate:", value=f"{tax_rate:.2f}%", inline=False)
+                elapsed_time = timeit.default_timer() - self.sell_timer_start
+                embed.add_field(name="Transaction Time:", value=f"{elapsed_time:.2f} seconds", inline=False)
                 embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
                 await ctx.send(embed=embed)
                 await self.blueChipBooster(ctx, "SELL")
                 await self.inverseStock(ctx, "sell")
                 await self.P3LQDYBooster(ctx)
-#                elapsed_time = timeit.default_timer() - start_time
-#                print(f"Elapsed Time: {elapsed_time}")
+                self.sell_time_avg_stock.append(elapsed_time)
+                avg_time = sum(self.sell_time_avg_stock) / len(self.sell_time_avg_stock)
+                print(f"""
+                -------------------------------------
+                Transaction Time: {elapsed_time:.2f}
+                Average Transaction Time: {avg_time:.2f}
+                """)
 
 
 
@@ -5268,11 +5300,15 @@ class CurrencySystem(commands.Cog):
         # Get the user ID from the P3 address
         user_id = get_user_id(conn, str(user_p3_address))
 
+        print(f"User ID: {user_id}")
+
         if user_id is not None:
             # Create a new context with the target user as the author
             new_message = ctx.message
             new_message.author = ctx.guild.get_member(user_id)
             new_ctx = await self.bot.get_context(new_message)
+
+            print(f"New context created with author: {new_ctx.author}")
 
             # Use shlex to properly parse the command and its arguments
             command_args = shlex.split(command)
@@ -5284,22 +5320,41 @@ class CurrencySystem(commands.Cog):
                 await ctx.send("Command not found.")
                 return
 
+            print(f"Command to invoke: {new_ctx.command}")
+
             # Update the content to include the prefix
             new_ctx.message.content = ctx.prefix + command
 
             # Set the new arguments in the context
             new_ctx.args = []
 
-            # Loop through parameters and arguments
-            for param_name, param in new_ctx.command.clean_params.items():
-                if not command_args:
-                    break
+            # Check if 'command' parameter is present in clean_params
+            if 'command' not in new_ctx.command.clean_params:
+                new_ctx.command.clean_params['command'] = commands.Parameter('command', commands.TextChannel().convert)
+                new_ctx.args.append(command_args[0])
+                command_args.pop(0)
 
-                arg = command_args.pop(0)
+            # Loop through parameters and arguments
+            while command_args:
+                param_name = command_args.pop(0)  # Update to capture the parameter name
+
+                print(f"Processing argument for parameter: {param_name}")
+
+                # Special handling for 'buy' command to capture the stock name properly
+                if param_name.lower() in {'buy', 'sell'}:
+                    # Check if there are more arguments and they are not 'buy' or 'sell'
+                    if command_args and command_args[0].lower() not in {'buy', 'sell'}:
+                        arg = command_args.pop(0)  # Assuming the stock name follows the 'buy' or 'sell' keyword
+                    else:
+                        continue  # Skip updating 'arg' if it's 'buy' or 'sell'
+
+                # Convert 'amount' parameter to an integer
+                if param_name == 'amount':
+                    arg = int(arg)
 
                 # Try to convert argument to the parameter type
                 try:
-                    converted_arg = param.annotation(arg)
+                    converted_arg = new_ctx.command.clean_params[param_name].annotation(arg)
                     new_ctx.args.append(converted_arg)
                 except (ValueError, TypeError):
                     await ctx.send(f"Failed to convert argument '{arg}' to the expected type for parameter '{param_name}'.")
@@ -5308,13 +5363,12 @@ class CurrencySystem(commands.Cog):
             # Execute the specified command
             try:
                 await self.bot.invoke(new_ctx)
-                print(f"New context created with author: {new_ctx.author}")
-                print(f"Command to invoke: {new_ctx.command}")
-
             except Exception as e:
                 await ctx.send(f"An error occurred while running the command: {str(e)}")
         else:
             await ctx.send("User not found.")
+
+
 
 # Limit Order
 
@@ -7489,6 +7543,8 @@ class CurrencySystem(commands.Cog):
         if etf_id == 3:
             await self.sludgeBoost(ctx, quantity)
         elapsed_time = timeit.default_timer() - start_time
+        self.buy_time_avg_etf.append(elapsed_time)
+        avg_time = sum(self.buy_time_avg_etf) / len(self.buy_time_avg_etf)
         user_id = ctx.author.id
         P3addrConn = sqlite3.connect("P3addr.db")
         P3addr = get_p3_address(P3addrConn, user_id)
@@ -7503,21 +7559,23 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} µPPN", inline=False)
         tax_rate = tax_percentage * 100
         embed.add_field(name="Gas Rate:", value=f"{tax_rate:.2f}%", inline=False)
+        embed.add_field(name="Transaction Time:", value=f"{elapsed_time:.2f} seconds", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
         await ctx.send(embed=embed)
         print(f"""
                 **ETF_DEBUG**
-            --------------------
-            ETF: {etf_id}
-            Action: Buy
-            User: {generate_crypto_address(user_id)}
-            Amount: {quantity:,}
-            Price: {etf_value:,.2f} µPPN
-            Gas Paid: {fee:,.2f} µPPN
-            Transaction Time: {elapsed_time}
-            Timestamp: {current_timestamp}
-            --------------------
+                -------------------------------------
+                ETF: {etf_id}
+                Action: Buy
+                User: {generate_crypto_address(user_id)}
+                Amount: {quantity:,}
+                Price: {etf_value:,.2f} µPPN
+                Gas Paid: {fee:,.2f} µPPN
+                Transaction Time: {elapsed_time:.2f}
+                Average Transaction Time: {avg_time:.2f}
+                Timestamp: {current_timestamp}
+                -------------------------------------
             """)
 
 
@@ -7606,6 +7664,8 @@ class CurrencySystem(commands.Cog):
         if etf_id == 10:
             await self.whaleBooster(ctx)
         elapsed_time = timeit.default_timer() - start_time
+        self.sell_time_avg_etf.append(elapsed_time)
+        avg_time = sum(self.sell_time_avg_etf) / len(self.sell_time_avg_etf)
         user_id = ctx.author.id
         P3addrConn = sqlite3.connect("P3addr.db")
         P3addr = get_p3_address(P3addrConn, user_id)
@@ -7620,22 +7680,24 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} µPPN", inline=False)
         tax_rate = tax_percentage * 100
         embed.add_field(name="Gas Rate:", value=f"{tax_rate:.2f}%", inline=False)
+        embed.add_field(name="Transaction Time:", value=f"{elapsed_time:.2f} seconds", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
 
         await ctx.send(embed=embed)
         print(f"""
-                **ETF_DEBUG**
-            --------------------
-            ETF: {etf_id}
-            Action: Sell
-            User: {generate_crypto_address(user_id)}
-            Amount: {quantity:,}
-            Price: {etf_value:,.2f} µPPN
-            Gas Paid: {fee:,.2f} µPPN
-            Transaction Time: {elapsed_time}
-            Timestamp: {current_timestamp}
-            --------------------
+                    **ETF_DEBUG**
+                --------------------
+                ETF: {etf_id}
+                Action: Sell
+                User: {generate_crypto_address(user_id)}
+                Amount: {quantity:,}
+                Price: {etf_value:,.2f} µPPN
+                Gas Paid: {fee:,.2f} µPPN
+                Transaction Time: {elapsed_time:.2f}
+                Average Transaction Time: {avg_time:.2f}
+                Timestamp: {current_timestamp}
+                --------------------
             """)
 
 
@@ -9009,6 +9071,102 @@ class CurrencySystem(commands.Cog):
 
 
 
+    @commands.command(name='slotmachine2', aliases=['slots2'], help='Play the slot machine. Bet an amount up to 500,000 µPPN.')
+    async def slotmachine2(self, ctx, bet: int):
+        user_id = ctx.author.id
+        current_balance = get_user_balance(self.conn, user_id)
+        current_timestamp = datetime.utcnow()
+        self.last_gamble = [entry for entry in self.last_gamble if (current_timestamp - entry[1]).total_seconds() <= 5]
+
+        if self.check_last_action(self.last_gamble, user_id, current_timestamp):
+            await ctx.send("You can't make another play within 5 seconds of your last action.")
+            return
+
+        # Add the current action to the list
+        self.last_gamble.append((user_id, current_timestamp))
+
+        # Check if bet amount is positive and within the limit
+        if bet <= 0:
+            await ctx.send(f"{ctx.author.mention}, bet amount must be a positive number.")
+            return
+
+        if bet < minBet:
+            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} µPPN.")
+            return
+
+        if bet > maxBet:
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} µPPN.")
+            return
+
+        # Define slot machine symbols and their values with adjusted probabilities
+        symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "7️⃣"]
+        symbol_probabilities = [0.2, 0.15, 0.15, 0.1, 0.1, 0.075, 0.05]
+        payouts = {"🍒": 5, "🍋": 10, "🍊": 15, "🍇": 20, "🔔": 25, "💎": 50, "7️⃣": 100}
+
+        # Shuffle the symbols with adjusted probabilities
+        shuffled_symbols = random.choices(symbols, weights=symbol_probabilities, k=9)
+        rows = [shuffled_symbols[i:i+3] for i in range(0, len(shuffled_symbols), 3)]
+
+        # Check for three consecutive matching symbols in the same row
+        three_consecutive_in_row = any(has_consecutive_symbols(row) for row in rows)
+
+
+
+        # Calculate the payouts for each row, column, and diagonal
+        row_payouts = [sum(payouts[icon] for icon in row) for row in rows]
+        column_payouts = [sum(payouts[rows[i][j]] for i in range(3)) for j in range(3)]
+        diagonal_payouts = [sum(payouts[rows[i][i]] for i in range(3)),
+                            sum(payouts[rows[i][2 - i]] for i in range(3))]
+
+        # Calculate the total payout
+        total_payout = sum(row_payouts) + sum(column_payouts) + sum(diagonal_payouts)
+
+        # Adjust the total payout if three consecutive matching symbols in the same row
+        if three_consecutive_in_row:
+            total_payout += 2  # Adjust the payout for three consecutive matching symbols in the same row
+
+        win_amount = bet * total_payout
+
+        # Calculate tax based on the bet amount
+        tax_percentage = get_tax_percentage(bet, current_balance)
+        tax = (bet * Decimal(tax_percentage)) * Decimal(0.25)
+
+        # Calculate total cost including tax
+        total_cost = bet + tax
+
+        # Check for negative balance after tax
+        if current_balance - total_cost < 0:
+            await ctx.send(f"{ctx.author.mention}, you don't have enough µPPN to cover the bet and Gas.")
+            return
+
+        # Deduct the bet and tax from the user's current balance
+        new_balance = current_balance - total_cost
+        update_user_balance(self.conn, user_id, new_balance)
+
+        # Create and send the embed with the slot machine result
+        embed = discord.Embed(title="Slot Machine", color=discord.Color.gold())
+        for i in range(3):
+            embed.add_field(name=f"Row {i + 1}", value=" ".join(rows[i]), inline=False)
+
+        if win_amount > 0:
+            new_balance += Decimal(win_amount)
+            update_user_balance(self.conn, user_id, new_balance)
+            embed.add_field(name="Congratulations!", value=f"You won {win_amount:,} µPPN!", inline=False)
+            await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"{win_amount}", new_balance)
+            await self.casinoTool(ctx, True)
+        else:
+            embed.add_field(name="Better luck next time!", value=f"You lost {total_cost:,} µPPN including Gas. Your new balance is {new_balance:,.2f} µPPN.", inline=False)
+            await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"{total_cost}", new_balance)
+            await self.casinoTool(ctx, False)
+
+        embed.set_footer(text=f"Your new balance: {new_balance:,.2f} µPPN")
+        await ctx.send(embed=embed)
+        # Transfer the tax amount to the bot's address P3:03da907038
+        update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax)
+        await log_transfer(ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), tax)
+
+
+
     @commands.command(name='stats', aliases=['portfolio'], help='Displays the user\'s financial stats.')
     async def stats(self, ctx):
         user_id = ctx.author.id
@@ -9036,8 +9194,6 @@ class CurrencySystem(commands.Cog):
                                           FROM etf_stocks JOIN stocks ON etf_stocks.symbol = stocks.symbol
                                           WHERE etf_stocks.etf_id=? GROUP BY etf_stocks.etf_id""", (etf_id,)).fetchone())
 
-
-
                 # Calculate total buys, sells, and profits/losses from p3ledger for stocks within the current month
                 current_month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
                 stock_transactions_data = ledger_cursor.execute("""
@@ -9047,9 +9203,11 @@ class CurrencySystem(commands.Cog):
                     GROUP BY action
                 """, (user_id, current_month_start)).fetchall()
 
+                print("Stock Transactions Data:", stock_transactions_data)
 
-                total_stock_buys = sum(total_price for action, quantity, total_price in stock_transactions_data if "Buy" in action)
-                total_stock_sells = sum(total_price for action, quantity, total_price in stock_transactions_data if "Sell" in action)
+                # Adding default values for cases where data is not available
+                total_stock_buys = sum(total_price for action, quantity, total_price in stock_transactions_data if "Buy" in action) or 0
+                total_stock_sells = sum(total_price for action, quantity, total_price in stock_transactions_data if "Sell" in action) or 0
                 total_stock_profits_losses = total_stock_sells - total_stock_buys
 
                 # Calculate total buys, sells, and profits/losses from p3ledger for ETFs within the current month
@@ -9060,11 +9218,12 @@ class CurrencySystem(commands.Cog):
                     GROUP BY action
                 """, (user_id, current_month_start)).fetchall()
 
+                print("Stock Transactions Data:", etf_transactions_data)
 
-                total_etf_buys = sum(total_price for action, quantity, total_price in etf_transactions_data if "Buy" in action)
-                total_etf_sells = sum(total_price for action, quantity, total_price in etf_transactions_data if "Sell" in action)
+                # Adding default values for cases where data is not available
+                total_etf_buys = sum(total_price for action, quantity, total_price in etf_transactions_data if "Buy" in action) or 0
+                total_etf_sells = sum(total_price for action, quantity, total_price in etf_transactions_data if "Sell" in action) or 0
                 total_etf_profits_losses = total_etf_sells - total_etf_buys
-
 
                 # Calculate the total value of metals in the user's inventory
                 metal_values = cursor.execute("""
@@ -9074,7 +9233,8 @@ class CurrencySystem(commands.Cog):
                     WHERE user_id=? AND items.item_name IN ('Copper', 'Platinum', 'Gold', 'Silver', 'Lithium')
                 """, (user_id,)).fetchall()
 
-                total_metal_value = sum(metal_value[0] for metal_value in metal_values)
+                # Adding default value for cases where data is not available
+                total_metal_value = sum(metal_value[0] for metal_value in metal_values) or 0
 
                 # Calculate total value of all funds
                 total_funds_value = current_balance + total_stock_value + total_etf_value + total_metal_value
@@ -9107,7 +9267,6 @@ class CurrencySystem(commands.Cog):
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
             await ctx.send("An unexpected error occurred. Please try again later.")
-
 
     @commands.command(name='leaderboard', aliases=['top10'], help='Displays the top 10 P/L for Stocks and ETFs.')
     async def leaderboard(self, ctx):
