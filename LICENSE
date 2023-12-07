@@ -1,21 +1,43 @@
-MIT License
+**Open Source & Proprietary Mixed Software License Agreement**
 
-Copyright (c) 2023 ōFuel Rocket Lounge 
+This Agreement ("Agreement") is entered into by and between the Quantum Stock Exchange (QSE) and the end user ("Licensee"). By using, downloading, or installing any software provided by QSE, the Licensee agrees to be bound by the terms and conditions of this Agreement.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+**1. License Grant:**
+   a. **Open Source Component:** Certain components of the software are open source and subject to the terms of their respective open-source licenses.
+   b. **Proprietary Component:** QSE grants the Licensee a non-exclusive, non-transferable, limited license to use the proprietary components of the software.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+**2. Restrictions:**
+   a. Licensee shall not reverse engineer, decompile, disassemble, or attempt to derive the source code of the software.
+   b. Licensee shall not sublicense, sell, lease, or distribute the software or any portion of it.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+**3. Intellectual Property:**
+   a. Open source components retain their original licensing terms and copyrights.
+   b. Proprietary components are the exclusive property of QSE and protected by intellectual property laws.
+
+**4. Updates and Support:**
+   a. QSE may provide updates, improvements, or support for the software at its discretion.
+   b. No obligation for updates or support unless explicitly stated in a separate agreement.
+
+**5. Warranty and Disclaimer:**
+   a. Open source components are provided "as is" with no warranties, expressed or implied.
+   b. QSE provides no warranty for the proprietary components.
+
+**6. Termination:**
+   a. QSE may terminate this Agreement if Licensee breaches any terms.
+   b. Upon termination, Licensee must cease using the software.
+
+**7. Governing Law:**
+   This Agreement is governed by and construed in accordance with the laws of the jurisdiction in which QSE operates.
+
+**8. Compliance with Laws:**
+   Licensee agrees to comply with all applicable laws and regulations regarding the use of the software.
+
+**9. Entire Agreement:**
+   This Agreement constitutes the entire understanding between QSE and Licensee concerning the subject matter and supersedes all prior agreements.
+
+By using the software, Licensee acknowledges that they have read, understood, and agreed to the terms of this Agreement.
+
+*Date: 12/06/23*
+
+
+**Quantum Stock Exchange (QSE)**
