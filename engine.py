@@ -595,7 +595,7 @@ async def calculate_max_price(stock_symbol):
             max_price_change = max(random_factor, max_change)
 
             max_price += max(price_difference, Decimal(current_price) * max_price_change)
-            max_price = min(max_price, Decimal(20000000))  # Ensure it doesn't exceed 20,000,000
+            max_price = min(max_price, Decimal(50000000))  # Ensure it doesn't exceed 20,000,000
 
 
         return max_price
@@ -846,7 +846,7 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
         modified_price_range = price_change_range * daily_volume_factor
         final_price_range = random.uniform(price_change_range, modified_price_range)
         potential_new_price = current_price + (final_price_range * amount)
-        new_price = min(potential_new_price, max_price, 20000000)
+        new_price = min(potential_new_price, max_price, 50000000)
     else:
         # Sell logic
         daily_volume_factor = (daily_volume / monthly_volume)
@@ -869,11 +869,15 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
 
     opening_price, closest_price, interval_change = await get_stock_price_interval(stock_name, interval='daily')
     # Check if interval_change is not zero before performing the division
-    if interval_change != 0:
+    if interval_change != 0 and opening_price != 0:
         opening_change = (interval_change / opening_price) * 100
     else:
         opening_price = 10  # Set a default opening_price value
-        opening_change = 10  # Set a default opening_change value
+        if opening_price != 0:
+            opening_change = 10  # Set a default opening_change value
+        else:
+            opening_change = 0  # Handle the case where opening_price is also 0 to avoid division by zero
+
 
     self.conn.commit()
     try:
@@ -1597,8 +1601,10 @@ def get_user_id_by_vanity(conn, vanity_address):
 
 def setup_ledger():
     try:
-        # Create a connection to the SQLite database
-        conn = sqlite3.connect("p3ledger.db")
+        # Create a connection to the SQLite database with caching and paging
+        conn = sqlite3.connect("p3ledger.db", check_same_thread=False, isolation_level=None)
+        conn.execute("PRAGMA cache_size = 10000")  # Set cache size (adjust as needed)
+        conn.execute("PRAGMA page_size = 4096")   # Set page size (adjust as needed)
         cursor = conn.cursor()
 
         # Create a table for stock transactions
@@ -1616,6 +1622,12 @@ def setup_ledger():
                 price NUMERIC(20, 10) NOT NULL,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+        """)
+
+        # Add an index on user_id and symbol for faster retrieval
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_stock_user_symbol
+            ON stock_transactions (user_id, symbol)
         """)
 
         # Create a table for transfer transactions
@@ -1654,8 +1666,9 @@ def setup_ledger():
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
         # Create a table for stock transfers
-        conn.execute("""
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS stock_transfer_transactions (
                 id INTEGER PRIMARY KEY,
                 sender_id INTEGER NOT NULL,
@@ -1779,7 +1792,7 @@ def create_p3addr_table():
 
 def setup_database():
     conn = sqlite3.connect("currency_system.db")
-    conn.execute("PRAGMA cache_size = -1000;")
+    conn.execute("PRAGMA cache_size = -2000;")
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -2424,10 +2437,44 @@ class CurrencySystem(commands.Cog):
         self.last_gamble = []
         self.buy_timer_start = 0
         self.sell_timer_start = 0
-        self.buy_time_avg_stock = []
-        self.sell_time_avg_stock = []
-        self.buy_time_avg_etf = []
-        self.sell_time_avg_etf = []
+        self.buy_time_avg_stock = [1]
+        self.sell_time_avg_stock = [1]
+        self.buy_time_avg_etf = [1]
+        self.sell_time_avg_etf = [1]
+
+
+    def update_average_time(self, transaction_type: str, new_time: float):
+        # Add the new time to the corresponding list
+        if transaction_type == "buy_stock":
+            self.buy_time_avg_stock.append(new_time)
+        elif transaction_type == "sell_stock":
+            self.sell_time_avg_stock.append(new_time)
+        elif transaction_type == "buy_etf":
+            self.buy_time_avg_etf.append(new_time)
+        elif transaction_type == "sell_etf":
+            self.sell_time_avg_etf.append(new_time)
+
+    def calculate_average_time(self, transaction_type: str) -> float:
+        # Combine all lists into one
+        all_times = (
+            self.buy_time_avg_stock +
+            self.sell_time_avg_stock +
+            self.buy_time_avg_etf +
+            self.sell_time_avg_etf
+            )
+
+        # Calculate and return the average time
+        return sum(all_times) / len(all_times) if all_times else 0.0
+
+
+    def calculate_tax_percentage(self, transaction_type: str) -> float:
+        tax_rate = self.calculate_average_time(transaction_type)
+        if tax_rate == 0.0:
+            tax_rate = (1.75 / 100)
+        else:
+            tax_rate = (tax_rate / 10) / 2
+        return tax_rate
+
 
     @tasks.loop(hours=1)  # Run every hour
     async def reset_stock_limit_all(self):
@@ -3928,7 +3975,7 @@ class CurrencySystem(commands.Cog):
                 SELECT symbol, SUM(quantity) AS total_quantity
                 FROM stock_transactions
                 WHERE action LIKE 'Buy%'
-                GROUP BY symbol != 5
+                GROUP BY symbol
                 ORDER BY total_quantity DESC
                 LIMIT 1
             """)
@@ -3938,7 +3985,7 @@ class CurrencySystem(commands.Cog):
                 SELECT symbol, SUM(quantity) AS total_quantity
                 FROM stock_transactions
                 WHERE action LIKE 'Buy%'
-                GROUP BY symbol != 5
+                GROUP BY symbol
                 ORDER BY total_quantity ASC
                 LIMIT 1
             """)
@@ -3952,7 +3999,7 @@ class CurrencySystem(commands.Cog):
                 SELECT symbol, SUM(quantity) AS total_quantity
                 FROM stock_transactions
                 WHERE action LIKE 'Buy ETF%'
-                GROUP BY symbol != 5
+                GROUP BY symbol
                 ORDER BY total_quantity DESC
                 LIMIT 1
             """)
@@ -3962,7 +4009,7 @@ class CurrencySystem(commands.Cog):
                 SELECT symbol, SUM(quantity) AS total_quantity
                 FROM stock_transactions
                 WHERE action LIKE 'Buy ETF%'
-                GROUP BY symbol != 5
+                GROUP BY symbol
                 ORDER BY total_quantity ASC
                 LIMIT 1
             """)
@@ -4005,6 +4052,7 @@ class CurrencySystem(commands.Cog):
             formatted_least_bought_stock = least_bought_stock
             formatted_most_bought_etf = most_bought_etf
             formatted_least_bought_etf = least_bought_etf
+            gas_fee = (self.calculate_tax_percentage("buy_stock") * 100)
 
             # Create an embed to display the market statistics
             embed = discord.Embed(
@@ -4024,6 +4072,7 @@ class CurrencySystem(commands.Cog):
             embed.add_field(name="Least Bought Stock", value=f"{formatted_least_bought_stock}", inline=False)
             embed.add_field(name="Most Bought ETF", value=f"{formatted_most_bought_etf}", inline=False)
             embed.add_field(name="Least Bought ETF", value=f"{formatted_least_bought_etf}", inline=False)
+            embed.add_field(name="Gas Fee", value=f"{gas_fee:,.2f}%", inline=False)
 #            embed.add_field(name="Total User-held Metals Value", value='\n'.join([f"{metal}: {'{:,.2f}'.format(value)} µPPN" for metal, value in total_metals_values.items()]), inline=False)
 
             # Send the embed as a message
@@ -4933,7 +4982,7 @@ class CurrencySystem(commands.Cog):
         stable_stock_price = await get_stock_price(self.conn, stableStock)
         user_owned_stable = self.get_user_stock_amount(ctx.author.id, stableStock)
         total_buy_cost = Decimal(buy_stock_price) * amount
-        tax_percentage = Decimal('0.15')
+        tax_percentage = self.calculate_tax_percentage("buy_stock")
         fee = total_buy_cost * tax_percentage
         total_cost_with_tax = total_buy_cost + fee
         shares_to_sell = math.ceil(total_cost_with_tax / Decimal(stable_stock_price))
@@ -4970,7 +5019,7 @@ class CurrencySystem(commands.Cog):
             return
 
         cost = price * Decimal(amount)
-        tax_percentage = 0.35 if stock_name == "P3:Stable" else 0.15
+        tax_percentage = self.calculate_tax_percentage("buy_stock")
         fee = cost * Decimal(tax_percentage)
         total_cost = cost + fee
 
@@ -5140,12 +5189,10 @@ class CurrencySystem(commands.Cog):
 
             price = Decimal(stock[2])
             earnings = price * Decimal(amount)
-            tax_percentage = get_tax_percentage(amount, earnings)  # Custom function to determine the tax percentage based on quantity and earnings
-            if has_role(member, bronze_pass):
-                tax_percentage -= role_discount
+            tax_percentage = self.calculate_tax_percentage("sell_stock")  # Custom function to determine the tax percentage based on quantity and earnings
             fee = earnings * Decimal(tax_percentage)
             if stock_name == "P3:Stable":
-                fee = 0
+                fee = fee * 2
             total_earnings = earnings - fee
 
             current_balance = get_user_balance(self.conn, user_id)
@@ -6534,6 +6581,7 @@ class CurrencySystem(commands.Cog):
 
 
 
+
     @commands.command(name="sell_stock_for_bot")
     @is_allowed_user(930513222820331590, PBot)
     async def sell_stock_for_bot(self, ctx, stock_name, amount):
@@ -7372,11 +7420,27 @@ class CurrencySystem(commands.Cog):
             # Find the voice channel by its ID
             voice_channel_id = 1161706930981589094  # Replace with the actual ID
             voice_channel = ctx.guild.get_channel(voice_channel_id)
+            gas_channel_id = 1182436005530320917
+            gas_channel = ctx.guild.get_channel(gas_channel_id)
+
+            if gas_channel:
+                gas_fee = self.calculate_tax_percentage("sell_etf")
+                gas_fee = gas_fee * 100
+                if gas_fee >= 20:
+                    new_name = f"Gas: {gas_fee:,.2f}% 🔴"
+                elif gas_fee >= 10:
+                    new_name = f"Gas: {gas_fee:,.2f}% 🟡"
+                elif gas_fee < 10:
+                    new_name = f"Gas: {gas_fee:,.2f}% 🟢"
+                else:
+                    new_name = f"Gas: {gas_fee:,.2f}%"
+                await gas_channel.edit(name=new_name)
+
 
             if voice_channel:
                 # Get the old price from the channel name using regular expressions
                 old_name = voice_channel.name
-                old_price_match = re.search(r"Market ([\d,]+\.\d+)", old_name)
+                old_price_match = re.search(r"Market: ([\d,]+\.\d+)", old_name)
 
                 if old_price_match:
                     old_price_str = old_price_match.group(1).replace(",", "")
@@ -7413,7 +7477,7 @@ class CurrencySystem(commands.Cog):
                     )
 
                     # Update the name of the voice channel with the calculated ETF 6 value
-                    new_name = f"Market {etf_6_value_formatted}"
+                    new_name = f"Market: {etf_6_value_formatted}"
                     await voice_channel.edit(name=new_name)
 
                     # Send the embed message
@@ -7499,7 +7563,7 @@ class CurrencySystem(commands.Cog):
 
 
         # Calculate the tax amount based on dynamic factors
-        tax_percentage = get_tax_percentage(quantity, total_cost)  # Custom function to determine the tax percentage based on quantity and total_cost
+        tax_percentage = self.calculate_tax_percentage("buy_etf")
         fee = total_cost * Decimal(tax_percentage)
         total_cost_with_tax = total_cost + fee
 
@@ -7628,7 +7692,7 @@ class CurrencySystem(commands.Cog):
         total_sale_amount = Decimal(etf_value) * Decimal(quantity)
 
         # Calculate the tax amount based on dynamic factors
-        tax_percentage = get_tax_percentage(quantity, total_sale_amount)  # Custom function to determine the tax percentage based on quantity and total_sale_amount
+        tax_percentage = self.calculate_tax_percentage("sell_etf")  # Custom function to determine the tax percentage based on quantity and total_sale_amount
 
         fee = total_sale_amount * Decimal(tax_percentage)
         total_sale_amount_with_tax = total_sale_amount - fee
@@ -7886,58 +7950,6 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @commands.command(name="admin_close_etf", help="Admin command to close all user positions for a specified ETF.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def admin_close_etf(self, ctx, etf_id: int):
-        cursor = self.conn.cursor()
-
-        # Fetch all user IDs and quantities holding the specified ETF
-        cursor.execute("SELECT user_id, quantity FROM user_etfs WHERE etf_id=?", (etf_id,))
-        user_positions = cursor.fetchall()
-
-        if not user_positions:
-            await ctx.send("No user positions found for the specified ETF.")
-            return
-
-        # Iterate through user positions and close them
-        for user_id, quantity in user_positions:
-            # Fetch the ETF's value and calculate the total sale amount for each user
-            cursor.execute("SELECT SUM(stocks.price * etf_stocks.quantity) FROM etf_stocks JOIN stocks ON etf_stocks.symbol = stocks.symbol WHERE etf_stocks.etf_id=?", (etf_id,))
-            etf_value = cursor.fetchone()[0]
-
-            if etf_value is None:
-                await ctx.send(f"Invalid ETF ID for user {user_id}. Skipping.")
-                continue
-
-            total_sale_amount = Decimal(etf_value) * Decimal(quantity)
-
-            # Calculate the tax amount based on dynamic factors
-            tax_percentage = get_tax_percentage(quantity, total_sale_amount)  # Custom function to determine the tax percentage based on quantity and total_sale_amount
-            fee = total_sale_amount * Decimal(tax_percentage)
-            total_sale_amount_with_tax = total_sale_amount - fee
-
-            # Update user's balance
-            current_balance = get_user_balance(self.conn, user_id)
-            new_balance = current_balance + total_sale_amount_with_tax
-
-            try:
-                update_user_balance(self.conn, user_id, new_balance)
-            except ValueError as e:
-                await ctx.send(f"An error occurred while updating the user balance for user {user_id}. Error: {str(e)}")
-                continue
-
-        # Remove all user positions for the specified ETF
-        try:
-            cursor.execute("DELETE FROM user_etfs WHERE etf_id=?", (etf_id,))
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred while removing user ETF positions. Error: {str(e)}")
-            return
-
-        decay_other_stocks(self.conn, "P3:BANK")
-        self.conn.commit()
-
-        await ctx.send(f"All user positions for ETF {etf_id} have been successfully closed.")
-
 
 # Economy Tools
 
@@ -7958,7 +7970,7 @@ class CurrencySystem(commands.Cog):
             return
 
         # Calculate the tax amount based on dynamic factors
-        tax_percentage = get_tax_percentage(quantity, cost)  # Custom function to determine the tax percentage based on quantity and cost
+        tax_percentage = self.calculate_tax_percentage("buy_etf") # Custom function to determine the tax percentage based on quantity and cost
         fee = cost * Decimal(tax_percentage)
         total_cost = cost + fee
 
@@ -8269,7 +8281,7 @@ class CurrencySystem(commands.Cog):
         total_cost = Decimal(item_price) * Decimal(quantity)
 
         # Calculate the tax amount based on dynamic factors
-        tax_percentage = get_tax_percentage(quantity, total_cost)  # Custom function to determine the tax percentage based on quantity and cost
+        tax_percentage = self.calculate_tax_percentage("buy_etf")  # Custom function to determine the tax percentage based on quantity and cost
         tax_amount = Decimal(total_cost) * Decimal(tax_percentage)
 
         # Check if the user has enough balance to buy the items
@@ -8412,7 +8424,7 @@ class CurrencySystem(commands.Cog):
         # Calculate the total sale amount
         total_sale_amount = Decimal(item_price) * Decimal(quantity)
         # Calculate the tax amount based on dynamic factors
-        tax_percentage = get_tax_percentage(quantity, total_sale_amount)  # Custom function to determine the tax percentage based on quantity and cost
+        tax_percentage = self.calculate_tax_percentage("sell_etf")  # Custom function to determine the tax percentage based on quantity and cost
         fee = total_sale_amount * Decimal(tax_percentage)
         total_sale_amount = total_sale_amount - fee
         total_cost = total_sale_amount
@@ -8872,8 +8884,8 @@ class CurrencySystem(commands.Cog):
         # Spin the wheel
         spin_result, spin_color = random.choice(wheel)
 
-        tax_percentage = get_tax_percentage(bet, current_balance)
-        tax = (bet * Decimal(tax_percentage)) * Decimal(0.25)
+        tax_percentage = self.calculate_tax_percentage("sell_etf")
+        tax = (bet * Decimal(tax_percentage))
         total_cost = bet + tax
 
         # Check for negative balance after tax
@@ -8947,8 +8959,8 @@ class CurrencySystem(commands.Cog):
         # Flip the coin
         coin_result = random.choice(['heads', 'tails'])
 
-        tax_percentage = get_tax_percentage(bet, current_balance)
-        tax = (bet * Decimal(tax_percentage)) * Decimal(0.25)
+        tax_percentage = self.calculate_tax_percentage("sell_etf")
+        tax = (bet * Decimal(tax_percentage))
         total_cost = bet + tax
 
         # Check for negative balance after tax
@@ -9031,8 +9043,8 @@ class CurrencySystem(commands.Cog):
         win_amount = bet * payout_multiplier
 
         # Calculate tax based on the bet amount
-        tax_percentage = get_tax_percentage(bet, current_balance)
-        tax = (bet * Decimal(tax_percentage)) * Decimal(0.25)
+        tax_percentage = self.calculate_tax_percentage("sell_etf")
+        tax = (bet * Decimal(tax_percentage))
 
         # Calculate total cost including tax
         total_cost = bet + tax
@@ -9128,8 +9140,8 @@ class CurrencySystem(commands.Cog):
         win_amount = bet * total_payout
 
         # Calculate tax based on the bet amount
-        tax_percentage = get_tax_percentage(bet, current_balance)
-        tax = (bet * Decimal(tax_percentage)) * Decimal(0.25)
+        tax_percentage = self.calculate_tax_percentage("sell_etf")
+        tax = (bet * Decimal(tax_percentage))
 
         # Calculate total cost including tax
         total_cost = bet + tax
@@ -9178,85 +9190,107 @@ class CurrencySystem(commands.Cog):
                 cursor = conn.cursor()
                 ledger_cursor = ledger_conn.cursor()
 
-                # Get user balance
-                current_balance = cursor.execute("SELECT COALESCE(balance, 0) FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
+                try:
+                    # Get user balance
+                    current_balance = cursor.execute("SELECT COALESCE(balance, 0) FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
+                except Exception as e:
+                    current_balance = 0
 
-                # Calculate total stock value
-                user_stocks = cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=?", (user_id,)).fetchall()
-                total_stock_value = sum(price * amount for symbol, amount in user_stocks
-                                    for price in cursor.execute("SELECT COALESCE(price, 0) FROM stocks WHERE symbol=?", (symbol,)).fetchone())
+                try:
+                    # Calculate total stock value
+                    user_stocks = cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=?", (user_id,)).fetchall()
+                    total_stock_value = sum(price * amount for symbol, amount in user_stocks
+                                for price in cursor.execute("SELECT COALESCE(price, 0) FROM stocks WHERE symbol=?", (symbol,)).fetchone())
+                except Exception as e:
+                    total_stock_value = 0
 
-                # Calculate total ETF value
-                user_etfs = cursor.execute("SELECT etf_id, quantity FROM user_etfs WHERE user_id=?", (user_id,)).fetchall()
-                total_etf_value = sum(etf_value * quantity for etf_id, quantity in user_etfs
-                                      for etf_value in cursor.execute("""
-                                          SELECT COALESCE(SUM(stocks.price * etf_stocks.quantity), 0)
-                                          FROM etf_stocks JOIN stocks ON etf_stocks.symbol = stocks.symbol
-                                          WHERE etf_stocks.etf_id=? GROUP BY etf_stocks.etf_id""", (etf_id,)).fetchone())
+                try:
+                    # Calculate total ETF value
+                    user_etfs = cursor.execute("SELECT etf_id, quantity FROM user_etfs WHERE user_id=?", (user_id,)).fetchall()
+                    total_etf_value = sum(etf_value * quantity for etf_id, quantity in user_etfs
+                            for etf_value in cursor.execute("""
+                                SELECT COALESCE(SUM(stocks.price * etf_stocks.quantity), 0)
+                                FROM etf_stocks JOIN stocks ON etf_stocks.symbol = stocks.symbol
+                                WHERE etf_stocks.etf_id=? GROUP BY etf_stocks.etf_id""", (etf_id,)).fetchone())
+                except Exception as e:
+                    total_etf_value = 0
 
-                # Calculate total buys, sells, and profits/losses from p3ledger for stocks within the current month
-                current_month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                stock_transactions_data = ledger_cursor.execute("""
-                    SELECT action, SUM(quantity), SUM(price)
-                    FROM stock_transactions
-                    WHERE user_id=? AND (action='Buy Stock' OR action='Sell Stock') AND timestamp >= ?
-                    GROUP BY action
-                """, (user_id, current_month_start)).fetchall()
+                try:
+                    # Calculate total buys, sells, and profits/losses from p3ledger for stocks within the current month
+                    current_month_start = datetime.datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                    stock_transactions_data = ledger_cursor.execute("""
+                        SELECT action, SUM(quantity), SUM(price)
+                        FROM stock_transactions
+                        WHERE user_id=? AND (action='Buy Stock' OR action='Sell Stock') AND timestamp >= ?
+                        GROUP BY action
+                    """, (user_id, current_month_start)).fetchall()
 
-                print("Stock Transactions Data:", stock_transactions_data)
+                    print("Stock Transactions Data:", stock_transactions_data)
 
-                # Adding default values for cases where data is not available
-                total_stock_buys = sum(total_price for action, quantity, total_price in stock_transactions_data if "Buy" in action) or 0
-                total_stock_sells = sum(total_price for action, quantity, total_price in stock_transactions_data if "Sell" in action) or 0
-                total_stock_profits_losses = total_stock_sells - total_stock_buys
+                    # Adding default values for cases where data is not available
+                    total_stock_buys = sum(total_price for action, quantity, total_price in stock_transactions_data if "Buy" in action) or 0
+                    total_stock_sells = sum(total_price for action, quantity, total_price in stock_transactions_data if "Sell" in action) or 0
+                    total_stock_profits_losses = total_stock_sells - total_stock_buys
+                except Exception as e:
+                    total_stock_buys = total_stock_sells = total_stock_profits_losses = 0
 
-                # Calculate total buys, sells, and profits/losses from p3ledger for ETFs within the current month
-                etf_transactions_data = ledger_cursor.execute("""
-                    SELECT action, SUM(quantity), SUM(price)
-                    FROM stock_transactions
-                    WHERE user_id=? AND (action='Buy ETF' OR action='Sell ETF' OR action='Buy ALL ETF' OR action='Sell ALL ETF') AND timestamp >= ?
-                    GROUP BY action
-                """, (user_id, current_month_start)).fetchall()
+                try:
+                    # Calculate total buys, sells, and profits/losses from p3ledger for ETFs within the current month
+                    etf_transactions_data = ledger_cursor.execute("""
+                        SELECT action, SUM(quantity), SUM(price)
+                        FROM stock_transactions
+                        WHERE user_id=? AND (action='Buy ETF' OR action='Sell ETF') AND timestamp >= ?
+                        GROUP BY action
+                    """, (user_id, current_month_start)).fetchall()
 
-                print("Stock Transactions Data:", etf_transactions_data)
+                    print("Stock Transactions Data:", etf_transactions_data)
 
-                # Adding default values for cases where data is not available
-                total_etf_buys = sum(total_price for action, quantity, total_price in etf_transactions_data if "Buy" in action) or 0
-                total_etf_sells = sum(total_price for action, quantity, total_price in etf_transactions_data if "Sell" in action) or 0
-                total_etf_profits_losses = total_etf_sells - total_etf_buys
+                    # Adding default values for cases where data is not available
+                    total_etf_buys = sum(total_price for action, quantity, total_price in etf_transactions_data if "Buy" in action) or 0
+                    total_etf_sells = sum(total_price for action, quantity, total_price in etf_transactions_data if "Sell" in action) or 0
+                    total_etf_profits_losses = total_etf_sells - total_etf_buys
+                except Exception as e:
+                    total_etf_buys = total_etf_sells = total_etf_profits_losses = 0
 
-                # Calculate the total value of metals in the user's inventory
-                metal_values = cursor.execute("""
-                    SELECT items.price * inventory.quantity
-                    FROM inventory
-                    JOIN items ON inventory.item_id = items.item_id
-                    WHERE user_id=? AND items.item_name IN ('Copper', 'Platinum', 'Gold', 'Silver', 'Lithium')
-                """, (user_id,)).fetchall()
+                try:
+                    # Calculate the total value of metals in the user's inventory
+                    metal_values = cursor.execute("""
+                        SELECT items.price * inventory.quantity
+                        FROM inventory
+                        JOIN items ON inventory.item_id = items.item_id
+                        WHERE user_id=? AND items.item_name IN ('Copper', 'Platinum', 'Gold', 'Silver', 'Lithium')
+                    """, (user_id,)).fetchall()
 
-                # Adding default value for cases where data is not available
-                total_metal_value = sum(metal_value[0] for metal_value in metal_values) or 0
+                    # Adding default value for cases where data is not available
+                    total_metal_value = sum(metal_value[0] for metal_value in metal_values) or 0
+                except Exception as e:
+                    total_metal_value = 0
+
+
+                # Get P3:Stable value
+                stable_stock = "P3:Stable"
+                stable_stock_price = await get_stock_price(self.conn, stable_stock) or 0
+                user_owned_stable = self.get_user_stock_amount(user_id, stable_stock) or 0
+                user_stable_value = stable_stock_price * user_owned_stable
 
                 # Calculate total value of all funds
                 total_funds_value = current_balance + total_stock_value + total_etf_value + total_metal_value
 
-                # Get P3:Stable value
-                stable_stock = "P3:Stable"
-                stable_stock_price = await get_stock_price(self.conn, stable_stock)
-                user_owned_stable = self.get_user_stock_amount(user_id, stable_stock)
-                user_stable_value = stable_stock_price * user_owned_stable
+
                 current_month_name = calendar.month_name[datetime.now().month]
 
                 # Create the embed
                 embed = Embed(title=f"{P3Addr} Financial Stats", color=Colour.green())
                 embed.set_thumbnail(url="attachment://portfolio.jpeg")
-                embed.add_field(name="Balance", value=f"{current_balance:,.0f} µPPN", inline=False)
-                embed.add_field(name="Total Stock Value", value=f"{total_stock_value:,.0f} µPPN", inline=False)
-                embed.add_field(name="Total ETF Value", value=f"{total_etf_value:,.0f} µPPN", inline=False)
-                embed.add_field(name="P3:Stable Value", value=f"{user_stable_value:,.0f} µPPN", inline=False)
-                embed.add_field(name="Total Metal Value", value=f"{total_metal_value:,.2f} µPPN", inline=False)
-                embed.add_field(name="Total Funds Value", value=f"{total_funds_value:,.0f} µPPN", inline=False)
-                embed.add_field(name=f"Stock Profits/Losses ({current_month_name})", value=f"{total_stock_profits_losses:,.0f} µPPN", inline=False)
-                embed.add_field(name=f"ETF Profits/Losses ({current_month_name})", value=f"{total_etf_profits_losses:,.0f} µPPN", inline=False)
+                embed.add_field(name="Balance", value=f"{current_balance:,.0f} µPPN" if current_balance != 0 else "Data Missing", inline=False)
+                embed.add_field(name="Total Stock Value", value=f"{total_stock_value:,.0f} µPPN" if total_stock_value != 0 else "Data Missing", inline=False)
+                embed.add_field(name="Total ETF Value", value=f"{total_etf_value:,.0f} µPPN" if total_etf_value != 0 else "Data Missing", inline=False)
+                embed.add_field(name="P3:Stable Value", value=f"{user_stable_value:,.0f} µPPN" if user_stable_value != 0 else "Data Missing", inline=False)
+                embed.add_field(name="Total Metal Value", value=f"{total_metal_value:,.2f} µPPN" if total_metal_value != 0 else "Data Missing", inline=False)
+                embed.add_field(name="Total Funds Value", value=f"{total_funds_value:,.0f} µPPN" if total_funds_value != 0 else "Data Missing", inline=False)
+                embed.add_field(name=f"Stock Profits/Losses ({current_month_name})", value=f"{total_stock_profits_losses:,.0f} µPPN" if total_stock_profits_losses != 0 else "Data Missing", inline=False)
+                embed.add_field(name=f"ETF Profits/Losses ({current_month_name})", value=f"{total_etf_profits_losses:,.0f} µPPN" if total_etf_profits_losses != 0 else "Data Missing", inline=False)
+
 
                 await ctx.send(embed=embed, file=File("./stock_images/portfolio.jpeg"))
 
