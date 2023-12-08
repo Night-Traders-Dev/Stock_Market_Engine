@@ -2437,10 +2437,13 @@ class CurrencySystem(commands.Cog):
         self.last_gamble = []
         self.buy_timer_start = 0
         self.sell_timer_start = 0
+        self.casino_timer_start = 0
         self.buy_time_avg_stock = [1]
         self.sell_time_avg_stock = [1]
         self.buy_time_avg_etf = [1]
         self.sell_time_avg_etf = [1]
+        self.casino_time_avg = [1]
+        self.run_counter = 0
 
 
     def update_average_time(self, transaction_type: str, new_time: float):
@@ -2453,6 +2456,8 @@ class CurrencySystem(commands.Cog):
             self.buy_time_avg_etf.append(new_time)
         elif transaction_type == "sell_etf":
             self.sell_time_avg_etf.append(new_time)
+        elif transaction_type == "casino":
+            self.casino_time_avg.append(new_time)
 
     def calculate_average_time(self, transaction_type: str) -> float:
         # Combine all lists into one
@@ -2460,7 +2465,8 @@ class CurrencySystem(commands.Cog):
             self.buy_time_avg_stock +
             self.sell_time_avg_stock +
             self.buy_time_avg_etf +
-            self.sell_time_avg_etf
+            self.sell_time_avg_etf +
+            self.casino_time_avg
             )
 
         # Calculate and return the average time
@@ -5087,7 +5093,7 @@ class CurrencySystem(commands.Cog):
         await self.blueChipBooster(ctx, "BUY")
         await self.inverseStock(ctx, "buy")
         try:
-
+            elapsed_time = timeit.default_timer() - self.buy_timer_start
             self.buy_time_avg_stock.append(elapsed_time)
             avg_time = sum(self.buy_time_avg_stock) / len(self.buy_time_avg_stock)
             print(f"""
@@ -5191,8 +5197,6 @@ class CurrencySystem(commands.Cog):
             earnings = price * Decimal(amount)
             tax_percentage = self.calculate_tax_percentage("sell_stock")  # Custom function to determine the tax percentage based on quantity and earnings
             fee = earnings * Decimal(tax_percentage)
-            if stock_name == "P3:Stable":
-                fee = fee * 2
             total_earnings = earnings - fee
 
             current_balance = get_user_balance(self.conn, user_id)
@@ -6761,7 +6765,7 @@ class CurrencySystem(commands.Cog):
 
         print(f"{total_buy_volume:,.2f}")
 
-        maxPrice = 3500
+        maxPrice = 875
         for volume_limit, price_limit in MAX_PRICE_RULES:
             if total_buy_volume <= volume_limit:
                 maxPrice = price_limit
@@ -7392,10 +7396,20 @@ class CurrencySystem(commands.Cog):
         # Send the embed message to the channel
         await ctx.send(embed=embed)
 
+
+
     @commands.command(name="market_polling_6", help="Update the name of the ETF 6 voice channel with its value.")
     async def update_etf_value(self, ctx):
-        # Explicitly set the locale to use commas as the thousands separator
         locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+        self.run_counter += 1
+
+        if self.run_counter == 6:
+            self.buy_time_avg_stock = [1]
+            self.sell_time_avg_stock = [1]
+            self.buy_time_avg_etf = [1]
+            self.sell_time_avg_etf = [1]
+            self.casino_time_avg = [1]
+            self.run_counter = 0
 
         while True:
             cursor = self.conn.cursor()
@@ -7411,34 +7425,45 @@ class CurrencySystem(commands.Cog):
                 await ctx.send("No stocks found for ETF 6.")
                 return
 
-            # Calculate the total value of ETF 6 by summing up the stock prices
             etf_6_value = sum(price for price, in stock_prices)
-
-            # Format the ETF value with commas
             etf_6_value_formatted = locale.format_string("%0.2f", etf_6_value, grouping=True)
 
-            # Find the voice channel by its ID
             voice_channel_id = 1161706930981589094  # Replace with the actual ID
             voice_channel = ctx.guild.get_channel(voice_channel_id)
             gas_channel_id = 1182436005530320917
             gas_channel = ctx.guild.get_channel(gas_channel_id)
 
             if gas_channel:
-                gas_fee = self.calculate_tax_percentage("sell_etf")
-                gas_fee = gas_fee * 100
-                if gas_fee >= 20:
-                    new_name = f"Gas: {gas_fee:,.2f}% 🔴"
-                elif gas_fee >= 10:
-                    new_name = f"Gas: {gas_fee:,.2f}% 🟡"
-                elif gas_fee < 10:
-                    new_name = f"Gas: {gas_fee:,.2f}% 🟢"
+                current_name = gas_channel.name
+                old_gas_fee_match = re.search(r"Gas: ([0-9,.]+)%", current_name)
+
+                if old_gas_fee_match:
+                    old_gas_fee = float(old_gas_fee_match.group(1))
                 else:
-                    new_name = f"Gas: {gas_fee:,.2f}%"
+                    old_gas_fee = 0.0
+
+                new_gas_fee = self.calculate_tax_percentage("sell_etf") * 100
+                percentage_change = new_gas_fee - old_gas_fee
+
+                if new_gas_fee > old_gas_fee:
+                    direction_arrow = "↗"
+                elif new_gas_fee < old_gas_fee:
+                    direction_arrow = "↘"
+                else:
+                    direction_arrow = "→"
+
+                if new_gas_fee >= 25:
+                    color = f"🔴 {direction_arrow}"
+                elif new_gas_fee >= 15:
+                    color = f"🟡 {direction_arrow}"
+                else:
+                    color = f"🟢 {direction_arrow}"
+
+                new_name = f"Gas: {new_gas_fee:,.2f}% {color} ({percentage_change:+,}%)"
                 await gas_channel.edit(name=new_name)
 
 
             if voice_channel:
-                # Get the old price from the channel name using regular expressions
                 old_name = voice_channel.name
                 old_price_match = re.search(r"Market: ([\d,]+\.\d+)", old_name)
 
@@ -7452,10 +7477,7 @@ class CurrencySystem(commands.Cog):
                     old_price = None
 
                 if old_price is not None:
-                    # Calculate the percentage change
                     percentage_change = ((etf_6_value - old_price) / old_price) * 100
-
-                    # Create an embed for the message
                     embed = discord.Embed(
                         title="Market Value Update",
                         color=discord.Color.green()
@@ -7476,18 +7498,14 @@ class CurrencySystem(commands.Cog):
                         inline=False
                     )
 
-                    # Update the name of the voice channel with the calculated ETF 6 value
-                    new_name = f"Market: {etf_6_value_formatted}"
+                    new_name = f"Market: {etf_6_value_formatted} {'🟢 ↗' if percentage_change >= 0 else '🔴 ↘'}"
                     await voice_channel.edit(name=new_name)
-
-                    # Send the embed message
                     await ctx.send(embed=embed)
                 else:
                     await ctx.send("Failed to retrieve the old price from the channel name.")
             else:
                 await ctx.send(f"Voice channel with ID '{voice_channel_id}' not found.")
 
-            # Store the current ETF value in the dictionary
             StockBot.etf_values["5 minutes"] = StockBot.etf_values["15 minutes"]
             StockBot.etf_values["15 minutes"] = StockBot.etf_values["30 minutes"]
             StockBot.etf_values["30 minutes"] = StockBot.etf_values["1 hour"]
@@ -7497,7 +7515,6 @@ class CurrencySystem(commands.Cog):
             StockBot.etf_values["12 hours"] = StockBot.etf_values["24 hours"]
             StockBot.etf_values["24 hours"] = etf_6_value
 
-            # Calculate and print percentage changes for different time intervals
             current_time_minutes = time.time() / 60
             for interval, old_value in StockBot.etf_values.items():
                 if old_value is not None:
@@ -7506,11 +7523,7 @@ class CurrencySystem(commands.Cog):
                         percentage_change = ((etf_6_value - old_value) / old_value) * 100
                         await self.send_percentage_change_embed(ctx, interval, percentage_change)
 
-
-
-            # Wait for 120 seconds before checking again
             await asyncio.sleep(300)
-
 
 
 # Buy/Sell ETFs
@@ -8847,6 +8860,7 @@ class CurrencySystem(commands.Cog):
 
     @commands.command(name='roulette', help='Play roulette. Choose a color (red/black/green) or a number (0-36) or "even"/"odd" and your bet amount.')
     async def roulette(self, ctx, choice: str, bet: int):
+        self.casino_timer_start = timeit.default_timer()
         user_id = ctx.author.id
         current_balance = get_user_balance(self.conn, user_id)
         current_timestamp = datetime.utcnow()
@@ -8921,10 +8935,12 @@ class CurrencySystem(commands.Cog):
         # Transfer the tax amount to the bot's address P3:03da907038
         update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax)
         await log_transfer(ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), tax)
-
+        elapsed_time = timeit.default_timer() - self.casino_timer_start
+        self.casino_time_avg.append(elapsed_time)
 
     @commands.command(name='coinflip', help='Flip a coin and bet on heads or tails.')
     async def coinflip(self, ctx, choice: str, bet: int):
+        self.casino_timer_start = timeit.default_timer()
         user_id = ctx.author.id
         current_balance = get_user_balance(self.conn, user_id)
         current_timestamp = datetime.utcnow()
@@ -8996,10 +9012,12 @@ class CurrencySystem(commands.Cog):
         # Transfer the tax amount to the bot's address P3:03da907038
         update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax)
         await log_transfer(ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), tax)
-
+        elapsed_time = timeit.default_timer() - self.casino_timer_start
+        self.casino_time_avg.append(elapsed_time)
 
     @commands.command(name='slotmachine', aliases=['slots'], help='Play the slot machine. Bet an amount up to 500,000 µPPN.')
     async def slotmachine(self, ctx, bet: int):
+        self.casino_timer_start = timeit.default_timer()
         user_id = ctx.author.id
         current_balance = get_user_balance(self.conn, user_id)
         current_timestamp = datetime.utcnow()
@@ -9078,7 +9096,8 @@ class CurrencySystem(commands.Cog):
         # Transfer the tax amount to the bot's address P3:03da907038
         update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax)
         await log_transfer(ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), tax)
-
+        elapsed_time = timeit.default_timer() - self.casino_timer_start
+        self.casino_time_avg.append(elapsed_time)
 
 
 
