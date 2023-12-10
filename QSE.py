@@ -913,6 +913,7 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
                 Monthly Buys: {total_buy_volume_m:,} Shares
                 Monthly Sells: {total_sell_volume_m:,} Shares
                 -------------------------------------
+                Gas Fee: {(self.calculate_tax_percentage("buy_stock") * 100):.2f}%
                 Timestamp: {current_timestamp}
                 """)
 
@@ -2446,6 +2447,20 @@ class CurrencySystem(commands.Cog):
         self.run_counter = 0
 
 
+    def is_staking_qse_genesis(self, user_id):
+        try:
+            cursor = self.conn.cursor()
+
+            # Check if the user is staking a QSE Genesis NFT
+            cursor.execute("SELECT COUNT(*) FROM user_stakes WHERE user_id=? AND nft='qse-genesis'", (user_id,))
+            count = cursor.fetchone()[0]
+
+            return count > 0
+
+        except sqlite3.Error as e:
+            print(f"An error occurred: {e}")
+            return False
+
     def update_average_time(self, transaction_type: str, new_time: float):
         # Add the new time to the corresponding list
         if transaction_type == "buy_stock":
@@ -2875,7 +2890,7 @@ class CurrencySystem(commands.Cog):
             conn = sqlite3.connect("currency_system.db")
             cursor = conn.cursor()
 
-            accepted_nft_names = ["penthouse-og", "penthouse-legendary", "stake-booster"]
+            accepted_nft_names = ["penthouse-og", "penthouse-legendary", "stake-booster", "poly-the-parrot", "qse-genesis"]
 
             if nft.lower() not in accepted_nft_names:
                 await ctx.send(f"We currently only accept {', '.join(accepted_nft_names[:-1])}, and {accepted_nft_names[-1]} Penthouse Staking during the test phase.\nType: !stake {'/'.join(accepted_nft_names)} <tokenid>\n\nTo find your tokenid, check your NFT on OpenSea.")
@@ -2955,6 +2970,9 @@ class CurrencySystem(commands.Cog):
             conn.close()
 
 
+
+
+
     @commands.command(name="stake_rewards")
     async def stake_rewards(self, ctx):
         try:
@@ -2974,9 +2992,11 @@ class CurrencySystem(commands.Cog):
 
             # Calculate rewards based on staked items
             base_rewards = {
-                "penthouse-legendary": 100_000_000_000,  # 100 billion uPPN per week
-                "penthouse-og": 30_000_000_000,  # 30 billion uPPN per week
-                "stake-booster": 0.10  # 10% bonus to overall staking rewards
+                "penthouse-legendary": 750_000_000_000,  # 100 billion uPPN per week
+                "penthouse-og": 50_000_000_000,
+                "poly-the-parrot": 25_000_000_000,   # 30 billion uPPN per week
+                "stake-booster": 0.10,  # 10% bonus to overall staking rewards
+                "qse-genesis": 0.75
             }
 
             total_rewards = 0
@@ -2995,6 +3015,11 @@ class CurrencySystem(commands.Cog):
             bonus_rewards = total_rewards * bonus_multiplier * stake_booster_count
             total_rewards += bonus_rewards
 
+            # Check for QSE Genesis and apply the 75% boost
+            qse_genesis_count = next((count for nft, count in stake_counts if nft == "qse-genesis"), 0)
+            qse_genesis_boost = base_rewards.get("qse-genesis", 0.0)
+            total_rewards += total_rewards * qse_genesis_boost * qse_genesis_count
+
             result_str += f"\nStake Booster Bonus: {bonus_rewards:,.2f} uPPN\n"
             result_str += f"Total Weekly Rewards: {total_rewards:,.2f} uPPN"
 
@@ -3009,6 +3034,95 @@ class CurrencySystem(commands.Cog):
         finally:
             # Close the connection
             conn.close()
+
+
+    @commands.command(name="distribute_stake_rewards")
+    @is_allowed_user(930513222820331590, PBot)
+    async def distribute_stake_rewards(self, ctx):
+        try:
+            user_id = PBot
+
+            # Assuming you have a connection to the database
+            conn = sqlite3.connect("currency_system.db")
+            cursor = conn.cursor()
+
+            # Calculate total rewards
+            base_rewards = {
+                "penthouse-legendary": 750_000_000_000,
+                "penthouse-og": 50_000_000_000,
+                "poly-the-parrot": 25_000_000_000,
+                "stake-booster": 0.10,
+                "qse-genesis": 0.75
+            }
+
+            cursor.execute("SELECT nft, COUNT(*) FROM user_stakes GROUP BY nft")
+            total_stake_counts = cursor.fetchall()
+
+            total_rewards = sum(base_rewards[nft] * count for nft, count in total_stake_counts if nft in base_rewards and nft != "stake-booster")
+
+            weekly_rewards = total_rewards * 7
+
+            # Fetch all users who have staked
+            cursor.execute("SELECT DISTINCT user_id FROM user_stakes")
+            stakers = cursor.fetchall()
+
+            # Distribute rewards to each staker
+            for staker_id in stakers:
+                staker_id = staker_id[0]  # Extract user_id from the tuple
+
+                # Calculate staker's rewards based on their stakes
+                cursor.execute("SELECT nft, COUNT(*) FROM user_stakes WHERE user_id=? GROUP BY nft", (staker_id,))
+                staker_stake_counts = cursor.fetchall()
+                staker_rewards = 0
+
+                for nft, count in staker_stake_counts:
+                    if nft in base_rewards and nft != "stake-booster":
+                        base_reward = base_rewards[nft] * count
+                        staker_rewards += base_reward
+
+                # Check for stake-boosters and apply the bonus
+                stake_booster_count = next((count for nft, count in staker_stake_counts if nft == "stake-booster"), 0)
+                bonus_multiplier = base_rewards.get("stake-booster", 1.0)
+                bonus_rewards = staker_rewards * bonus_multiplier * stake_booster_count
+                staker_rewards += bonus_rewards
+
+                # Check for QSE Genesis and apply the 75% boost
+                qse_genesis_count = next((count for nft, count in staker_stake_counts if nft == "qse-genesis"), 0)
+                qse_genesis_boost = base_rewards.get("qse-genesis", 0.0)
+                staker_rewards += staker_rewards * qse_genesis_boost * qse_genesis_count
+
+                # Send rewards to the staker using the modified send_rewards function
+                await self.send_rewards(ctx, staker_id, staker_rewards)
+
+            await ctx.send(f"Weekly rewards distributed: {weekly_rewards:,.2f} uPPN to all stakers.")
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {e}")
+
+        finally:
+            # Close the connection
+            conn.close()
+
+    async def send_rewards(self, ctx, staker_id, staker_rewards):
+        bot_user_id = 1092870544988319905  # Replace with your bot's user ID
+        bot_p3_address = "P3:03da907038"  # Replace with your bot's P3 address
+
+        # Check if the bot has enough funds
+        bot_balance = get_user_balance(self.conn, bot_user_id)
+        if bot_balance < staker_rewards:
+            await ctx.send(f"Error: Bot doesn't have enough funds to send rewards to user {staker_id}.")
+            return
+
+        # Deduct rewards from the bot's balance
+        update_user_balance(self.conn, bot_user_id, float(bot_balance) - float(staker_rewards))
+
+        # Add rewards to the staker's balance
+        update_user_balance(self.conn, staker_id, float(get_user_balance(self.conn, staker_id)) + float(staker_rewards))
+
+        # Log the transfer
+        await log_transfer(ledger_conn, ctx, bot_p3_address, get_user_id(self.P3addrConn, bot_p3_address), staker_id, staker_rewards)
+
+        await ctx.send(f"Successfully sent {staker_rewards:,.2f} µPPN rewards to user {get_p3_address(self.P3addrConn, staker_id)}.")
 
 
 
@@ -4883,6 +4997,9 @@ class CurrencySystem(commands.Cog):
         if stock_name.lower() == "pokerchip":
             await ctx.send("Utility Stock cannot be purchased")
             return
+        if stock_name.lower() == "p3:stable":
+            await ctx.send("Stock Down for Upgrades")
+            return
         buyer_id = ctx.author.id
 
         member = ctx.guild.get_member(user_id)
@@ -4920,6 +5037,11 @@ class CurrencySystem(commands.Cog):
 
         stock_limit = adjusted_stock_limits.get(stock_name.lower(), default_limit * 1.5)
 
+
+        is_staking_qse_genesis = self.is_staking_qse_genesis(user_id)
+
+        if is_staking_qse_genesis:
+            stock_limit = float('inf')
 
         if amount == 0:
             await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
@@ -5121,6 +5243,10 @@ class CurrencySystem(commands.Cog):
 
 
         await ctx.send(embed=embed)
+
+        if stock_name.lower() == "p3:stable":
+            await ctx.send("Stock Down for Upgrades")
+            return
 
         qraft_price = await get_stock_price(self.conn, stock_name)
         if stock_name.lower() == "qraft" and qraft_price < 1000:
@@ -7401,15 +7527,6 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="market_polling_6", help="Update the name of the ETF 6 voice channel with its value.")
     async def update_etf_value(self, ctx):
         locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
-        self.run_counter += 1
-
-        if self.run_counter == 6:
-            self.buy_time_avg_stock = [1]
-            self.sell_time_avg_stock = [1]
-            self.buy_time_avg_etf = [1]
-            self.sell_time_avg_etf = [1]
-            self.casino_time_avg = [1]
-            self.run_counter = 0
 
         while True:
             cursor = self.conn.cursor()
@@ -7459,13 +7576,13 @@ class CurrencySystem(commands.Cog):
                 else:
                     color = f"🟢 {direction_arrow}"
 
-                new_name = f"Gas: {new_gas_fee:,.2f}% {color} ({percentage_change:+,}%)"
+                new_name = f"Gas: {new_gas_fee:,.2f}% {color} ({percentage_change:+,.0f}%)"
                 await gas_channel.edit(name=new_name)
 
 
             if voice_channel:
                 old_name = voice_channel.name
-                old_price_match = re.search(r"Market: ([\d,]+\.\d+)", old_name)
+                old_price_match = re.search(r"MV: ([\d,]+\.\d+)", old_name)
 
                 if old_price_match:
                     old_price_str = old_price_match.group(1).replace(",", "")
@@ -7498,7 +7615,7 @@ class CurrencySystem(commands.Cog):
                         inline=False
                     )
 
-                    new_name = f"Market: {etf_6_value_formatted} {'🟢 ↗' if percentage_change >= 0 else '🔴 ↘'}"
+                    new_name = f"MV: {etf_6_value_formatted} {'🟢 ↗' if percentage_change >= 0 else '🔴 ↘'}"
                     await voice_channel.edit(name=new_name)
                     await ctx.send(embed=embed)
                 else:
@@ -7523,6 +7640,18 @@ class CurrencySystem(commands.Cog):
                         percentage_change = ((etf_6_value - old_value) / old_value) * 100
                         await self.send_percentage_change_embed(ctx, interval, percentage_change)
 
+
+            self.run_counter += 1
+            gas = self.calculate_tax_percentage("sell_etf") * 100
+            print(f"Gas Debug: {gas}% - Counter: {self.run_counter}")
+
+            if self.run_counter == 34:
+                self.buy_time_avg_stock = [1]
+                self.sell_time_avg_stock = [1]
+                self.buy_time_avg_etf = [1]
+                self.sell_time_avg_etf = [1]
+                self.casino_time_avg = [1]
+                self.run_counter = 0
             await asyncio.sleep(300)
 
 
@@ -7651,6 +7780,7 @@ class CurrencySystem(commands.Cog):
                 Gas Paid: {fee:,.2f} µPPN
                 Transaction Time: {elapsed_time:.2f}
                 Average Transaction Time: {avg_time:.2f}
+                Gas Fee: {(self.calculate_tax_percentage("buy_etf") * 100):.2f}%
                 Timestamp: {current_timestamp}
                 -------------------------------------
             """)
@@ -7773,6 +7903,7 @@ class CurrencySystem(commands.Cog):
                 Gas Paid: {fee:,.2f} µPPN
                 Transaction Time: {elapsed_time:.2f}
                 Average Transaction Time: {avg_time:.2f}
+                Gas Fee: {(self.calculate_tax_percentage("sell_etf") * 100):.2f}%
                 Timestamp: {current_timestamp}
                 --------------------
             """)
