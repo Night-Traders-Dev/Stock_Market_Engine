@@ -41,6 +41,7 @@ import calendar
 import matplotlib
 import timeit
 import statistics
+import aiosqlite
 
 matplotlib.use('agg')
 
@@ -497,116 +498,128 @@ def update_burn_history(cursor, user_id):
 
 async def calculate_min_price(stock_name: str):
     try:
-        # Create a connection to the SQLite database
-        conn = sqlite3.connect("currency_system.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-        stock = cursor.fetchone()
-        available_supply = Decimal(stock[3])
-        cursor.execute("SELECT SUM(amount) FROM user_stocks WHERE symbol = ?", (stock_name,))
-        circulating_supply = cursor.fetchone()[0] or 0
-        current_price = stock[2]
-        # You can adjust this formula based on your specific requirements
-        circulating_supply = float(circulating_supply)
-        available_supply = float(available_supply)
-        current_price = float(current_price)
+        async with aiosqlite.connect("currency_system.db") as conn:
+            cursor = await conn.cursor()
 
-        # Calculate the minimum price using your formula
-        min_price = baseMinPrice + (circulating_supply / available_supply) * current_price
+            # Fetch stock information
+            await cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+            stock = await cursor.fetchone()
 
-        # Ensure that the minimum price is strictly less than or equal to the current price
-        min_price = max(min_price, 0)
+            if stock is None:
+                return 0  # or handle the case where the stock doesn't exist
 
-        return min_price
-    except sqlite3.Error as e:
+            available_supply = Decimal(stock[3])
+
+            # Fetch circulating supply
+            await cursor.execute("SELECT SUM(amount) FROM user_stocks WHERE symbol = ?", (stock_name,))
+            circulating_supply = await cursor.fetchone()
+            circulating_supply = Decimal(circulating_supply[0]) if circulating_supply else 0
+
+            current_price = stock[2]
+
+            # You can adjust this formula based on your specific requirements
+            circulating_supply = float(circulating_supply)
+            available_supply = float(available_supply)
+            current_price = float(current_price)
+
+            # Calculate the minimum price using your formula
+            min_price = baseMinPrice + (circulating_supply / available_supply) * current_price
+
+            # Ensure that the minimum price is strictly less than or equal to the current price
+            min_price = max(min_price, 0)
+
+            return min_price
+
+    except aiosqlite.Error as e:
         print(f"An error occurred: {str(e)}")
-    finally:
-        # Close the database connection
-        conn.close()
 
 async def calculate_max_price(stock_symbol):
     try:
-        # Create a connection to the SQLite database
-        conn = sqlite3.connect("currency_system.db")
-        cursor = conn.cursor()
+        async with aiosqlite.connect("currency_system.db") as conn:
+            cursor = await conn.cursor()
 
-        # Get the current price of the stock
-        cursor.execute("SELECT price FROM stocks WHERE symbol=?", (stock_symbol,))
-        current_price = Decimal(cursor.fetchone()[0])  # Convert to Decimal
-        max_price_adjustment_factor = Decimal("0.1") * current_price
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_symbol,))
-        stock = cursor.fetchone()
-        available_supply = Decimal(stock[3])
-        cursor.execute("SELECT SUM(amount) FROM user_stocks WHERE symbol = ?", (stock_symbol,))
-        circulating_supply = Decimal(cursor.fetchone()[0] or 0)
-        # Calculate the daily volume for the stock
-        total_buy_volume, total_sell_volume, total_volume = await calculate_volume(stock_symbol, interval='daily')
+            # Get the current price of the stock
+            await cursor.execute("SELECT price FROM stocks WHERE symbol=?", (stock_symbol,))
+            current_price = Decimal((await cursor.fetchone())[0])  # Convert to Decimal
 
-        if total_sell_volume == None:
-            total_sell_volume = 1e-10
-        if total_buy_volume == None:
-            total_buy_volume = 1e-10
-        # Calculate the ratio of total sell volume to total buy volume
-        sell_buy_ratio = total_sell_volume / (total_buy_volume or 1e-10)  # Adding a small value to avoid division by zero
+            max_price_adjustment_factor = Decimal("0.1") * current_price
 
-        # Define the scaling factor function
-        def calculate_scaling_factor(ratio):
-            # You can customize this function based on how much you want total_sell_volume to affect the dynamic cap
-            return 1 + (ratio * 0.5)
+            # Fetch stock information
+            await cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_symbol,))
+            stock = await cursor.fetchone()
 
-        # Calculate the scaling factor based on the sell-buy ratio
-        scaling_factor = calculate_scaling_factor(sell_buy_ratio)
+            if stock is None:
+                return current_price  # or handle the case where the stock doesn't exist
 
-        min_cap = Decimal("0.0755")
-        max_cap = 2.0
+            available_supply = Decimal(stock[3])
 
+            # Fetch circulating supply
+            await cursor.execute("SELECT SUM(amount) FROM user_stocks WHERE symbol = ?", (stock_symbol,))
+            circulating_supply = await cursor.fetchone()
+            circulating_supply = Decimal(circulating_supply[0]) if circulating_supply else 0
 
+            # Calculate the daily volume for the stock
+            total_buy_volume, total_sell_volume, total_volume = await calculate_volume(stock_symbol, interval='daily')
 
-        daily_volume = total_volume
+            if total_sell_volume is None:
+                total_sell_volume = 1e-10
+            if total_buy_volume is None:
+                total_buy_volume = 1e-10
 
-        # Calculate the dynamic adjustment based on the daily volume
-        volume_adjustment_factor = Decimal("0.0001") * Decimal(daily_volume)  # Convert to Decimal
+            # Calculate the ratio of total sell volume to total buy volume
+            sell_buy_ratio = total_sell_volume / max(total_buy_volume, 1e-10)  # Adding a small value to avoid division by zero
 
-        # Adjust the max_percentage_cap based on total_sell_volume
-        dynamic_cap = min(max_cap, max(min_cap, max_cap - scaling_factor))
+            # Define the scaling factor function
+            def calculate_scaling_factor(ratio):
+                # You can customize this function based on how much you want total_sell_volume to affect the dynamic cap
+                return 1 + (ratio * 0.5)
 
-        # Calculate the new maximum price
-        max_price = (current_price / circulating_supply) * max_price_adjustment_factor * volume_adjustment_factor
+            # Calculate the scaling factor based on the sell-buy ratio
+            scaling_factor = calculate_scaling_factor(sell_buy_ratio)
 
-        # Ensure that the max_price is always higher than current_price
-        max_price = max(max_price, current_price)
+            min_cap = Decimal("0.0755")
+            max_cap = 2.0
 
-        # Ensure that max_price is not more than 25% over current_price when they are closer
-        max_price = min(max_price, current_price * Decimal("1.357"))
+            daily_volume = total_volume
 
-        # Ensure that max_price is not equal to current_price
-        if max_price == current_price:
-            price_difference = Decimal(current_price) * Decimal("0.07523")  # Minimum of 10%
+            # Calculate the dynamic adjustment based on the daily volume
+            volume_adjustment_factor = Decimal("0.0001") * Decimal(daily_volume)
 
-            # Introduce a random factor with a range of 0% to 15%
-            random_factor = Decimal(str(random.uniform(0, 0.25532)))
+            # Adjust the max_percentage_cap based on total_sell_volume
+            dynamic_cap = min(max_cap, max(min_cap, max_cap - scaling_factor))
 
-            # Adjust the maximum change based on the current price
-            max_change_percentage = min(Decimal(dynamic_cap), current_price / Decimal("100"))
+            # Calculate the new maximum price
+            max_price = (current_price / circulating_supply) * max_price_adjustment_factor * volume_adjustment_factor
 
-            # Calculate the maximum change within the allowed percentage
-            max_change = Decimal(random.uniform(0, float(max_change_percentage)))
+            # Ensure that the max_price is always higher than current_price
+            max_price = max(max_price, current_price)
 
-            # Use the higher of the two random factors
-            max_price_change = max(random_factor, max_change)
+            # Ensure that max_price is not more than 25% over current_price when they are closer
+            max_price = min(max_price, current_price * Decimal("1.357"))
 
-            max_price += max(price_difference, Decimal(current_price) * max_price_change)
-            max_price = min(max_price, Decimal(50000000))  # Ensure it doesn't exceed 20,000,000
+            # Ensure that max_price is not equal to current_price
+            if max_price == current_price:
+                price_difference = Decimal(current_price) * Decimal("0.07523")  # Minimum of 10%
 
+                # Introduce a random factor with a range of 0% to 15%
+                random_factor = Decimal(str(random.uniform(0, 0.25532)))
 
-        return max_price
+                # Adjust the maximum change based on the current price
+                max_change_percentage = min(Decimal(dynamic_cap), current_price / Decimal("100"))
 
-    except sqlite3.Error as e:
+                # Calculate the maximum change within the allowed percentage
+                max_change = Decimal(random.uniform(0, float(max_change_percentage)))
+
+                # Use the higher of the two random factors
+                max_price_change = max(random_factor, max_change)
+
+                max_price += max(price_difference, Decimal(current_price) * max_price_change)
+                max_price = min(max_price, Decimal(50000000))  # Ensure it doesn't exceed 20,000,000
+
+            return max_price
+
+    except aiosqlite.Error as e:
         print(f"An error occurred: {str(e)}")
-
-    finally:
-        # Close the database connection
-        conn.close()
 
 
 
@@ -749,31 +762,26 @@ async def count_transactions(stock_name, interval='daily'):
     finally:
         # Close the database connection
         conn.close()
-
 async def calculate_volume(stock_symbol, interval='daily'):
     try:
-        # Create a connection to the SQLite database using a context manager
-        with sqlite3.connect("p3ledger.db") as conn:
-            cursor = conn.cursor()
+        async with aiosqlite.connect("p3ledger.db") as conn:
+            cursor = await conn.cursor()
 
             # Get the current date and time
             now = datetime.now()
 
             # Calculate the start timestamp based on the specified interval
             if interval == 'daily':
-                # Subtract 24 hours to get the start of the day
-                start_timestamp = now - timedelta(hours=24)
+                start_timestamp = now - timedelta(days=1)
             elif interval == 'weekly':
-                # Calculate the start of the week (Monday)
                 start_timestamp = now - timedelta(days=now.weekday(), hours=now.hour, minutes=now.minute, seconds=now.second)
             elif interval == 'monthly':
-                # Calculate the start of the month
                 start_timestamp = datetime(now.year, now.month, 1)
             else:
                 raise ValueError("Invalid interval. Supported intervals: 'daily', 'weekly', 'monthly'")
 
             # Fetch total buy, total sell, and total volume for the specified stock within the specified interval
-            cursor.execute("""
+            await cursor.execute("""
                 SELECT
                     COALESCE(SUM(CASE WHEN action='Buy Stock' THEN quantity ELSE 0 END), 0.00000000000001) AS total_buy_volume,
                     COALESCE(SUM(CASE WHEN action='Sell Stock' THEN quantity ELSE 0 END), 0.00000000000001) AS total_sell_volume,
@@ -782,12 +790,13 @@ async def calculate_volume(stock_symbol, interval='daily'):
                 WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock') AND timestamp BETWEEN ? AND ?
             """, (stock_symbol, start_timestamp, now))
 
-            total_buy_volume, total_sell_volume, total_volume = cursor.fetchone()
+            total_buy_volume, total_sell_volume, total_volume = await cursor.fetchone()
 
             return total_buy_volume, total_sell_volume, total_volume
 
-    except sqlite3.Error as e:
+    except aiosqlite.Error as e:
         print(f"An error occurred: {str(e)}")
+
 
 
 
@@ -2580,6 +2589,8 @@ class CurrencySystem(commands.Cog):
         embed = Embed(title="Transaction Metrics", color=discord.Color.blue())
 
         total_transactions = 0
+        total_average_time = 0.0
+
         for transaction_type in sorted(transaction_types, key=lambda x: self.calculate_average_time(x), reverse=True):
             avg_time = self.calculate_average_time_type(transaction_type)
             transaction_count = len(getattr(self, f"{transaction_type}_avg", []))
@@ -2587,19 +2598,28 @@ class CurrencySystem(commands.Cog):
             if transaction_count == 0:
                 avg_time = 0.0
 
-
-            percentage = 0
-
-            embed.add_field(
-                name=transaction_type.capitalize(),
-                value=f"Average Time: {avg_time:.5f}s\nTransaction Count: {transaction_count}",
-                inline=False
-            )
             total_transactions += transaction_count
+            total_average_time += avg_time * transaction_count
 
+            if transaction_count != 0:
+
+                embed.add_field(
+                    name=transaction_type.capitalize(),
+                    value=f"Average Time: {avg_time:.5f}s\nTransaction Count: {transaction_count}",
+                    inline=False
+                )
+
+        combined_average = total_average_time / total_transactions if total_transactions > 0 else 0.0
+
+        embed.add_field(name="Combined Average Time:", value=f"{combined_average:.5f}s", inline=False)
         embed.add_field(name="Total Transactions:", value=f"{total_transactions}", inline=False)
         embed.add_field(name="Gas Fee:", value=f"{gas:,.2f}%")
+        embed.set_footer(text="Combined average time is calculated across all transaction types.")
+
         await ctx.send(embed=embed)
+
+
+
 
     @tasks.loop(hours=1)  # Run every hour
     async def reset_stock_limit_all(self):
@@ -7352,44 +7372,12 @@ class CurrencySystem(commands.Cog):
             etf_value = await get_etf_value(self.conn, etf_id)
 
             total_value += (etf_value or 0) * quantity
-
-            embed.add_field(name=f"ETF ID: {etf_id}", value=f"Name: {etf_name}\nQuantity: {quantity:,}\nCurrent ETF value: {etf_value:,.2f}\nValue: {(etf_value or 0) * quantity:,.2f} µPPN", inline=False)
+            if quantity != 0.0:
+                embed.add_field(name=f"ETF ID: {etf_id}", value=f"Name: {etf_name}\nQuantity: {quantity:,}\nCurrent ETF value: {etf_value:,.2f}\nValue: {(etf_value or 0) * quantity:,.2f} µPPN", inline=False)
 
         embed.set_footer(text=f"Total Value: {total_value:,.2f} µPPN")
         await ctx.send(embed=embed)
 
-    @commands.command(name="remove_etf", help="Remove an ETF by its ID.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def remove_etf(self, ctx, etf_id: int):
-        cursor = self.conn.cursor()
-
-        try:
-            # Get the ETF's symbol
-            cursor.execute("SELECT symbol FROM etf_stocks WHERE etf_id=?", (etf_id,))
-            etf_symbol_row = cursor.fetchone()
-
-            if etf_symbol_row:
-                etf_symbol = etf_symbol_row[0]
-
-                try:
-                    # Remove the ETF from user's holdings
-                    cursor.execute("DELETE FROM user_etfs WHERE user_id=? AND etf_id=?", (ctx.author.id, etf_id))
-
-                    try:
-                        # Remove ETF from ETF stocks
-                        cursor.execute("DELETE FROM etf_stocks WHERE etf_id=?", (etf_id,))
-
-                        self.conn.commit()
-                        await ctx.send(f"ETF with ID {etf_id} has been removed from your holdings.")
-                    except sqlite3.Error as e:
-                        await ctx.send(f"An error occurred while removing the ETF from ETF stocks: {str(e)}")
-                except sqlite3.Error as e:
-                    await ctx.send(f"An error occurred while removing the ETF from user's holdings: {str(e)}")
-            else:
-                await ctx.send("No ETF found with the provided ID.")
-
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred while retrieving ETF information: {str(e)}")
 
 
     @commands.command(name="remove_etf_from_user", help="Remove an ETF from a specified user's holdings.")
@@ -7602,9 +7590,9 @@ class CurrencySystem(commands.Cog):
                     if abs(new_gas_fee - old_gas_fee) < 0.01:
                         direction_arrow = "→"
 
-                if new_gas_fee >= 25:
+                if new_gas_fee >= 20:
                     color = f"🔴 {direction_arrow}"
-                elif new_gas_fee >= 15:
+                elif new_gas_fee >= 12:
                     color = f"🟡 {direction_arrow}"
                 else:
                     color = f"🟢 {direction_arrow}"
@@ -9724,7 +9712,7 @@ class CurrencySystem(commands.Cog):
         cursor.execute("UPDATE stocks SET total_supply=? WHERE symbol=?", (new_total_supply, stock_name))
 
         # Increase Price by amount burned
-        await self.increase_price(ctx, stock_name, (amount * 2))
+        await self.increase_price(ctx, stock_name, (amount * 10))
 
         # Get the updated stock data after the price increase
         cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
