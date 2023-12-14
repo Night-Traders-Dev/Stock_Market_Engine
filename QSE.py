@@ -40,6 +40,7 @@ import shlex
 import calendar
 import matplotlib
 import timeit
+import statistics
 
 matplotlib.use('agg')
 
@@ -749,25 +750,25 @@ async def count_transactions(stock_name, interval='daily'):
         # Close the database connection
         conn.close()
 
-
 async def calculate_volume(stock_symbol, interval='daily'):
     try:
         # Create a connection to the SQLite database using a context manager
         with sqlite3.connect("p3ledger.db") as conn:
             cursor = conn.cursor()
 
-            # Get the current date
-            today = datetime.now().date()
+            # Get the current date and time
+            now = datetime.now()
 
-            # Calculate the start and end timestamps based on the specified interval
+            # Calculate the start timestamp based on the specified interval
             if interval == 'daily':
-                start_timestamp = today
+                # Subtract 24 hours to get the start of the day
+                start_timestamp = now - timedelta(hours=24)
             elif interval == 'weekly':
                 # Calculate the start of the week (Monday)
-                start_timestamp = today - timedelta(days=today.weekday())
+                start_timestamp = now - timedelta(days=now.weekday(), hours=now.hour, minutes=now.minute, seconds=now.second)
             elif interval == 'monthly':
                 # Calculate the start of the month
-                start_timestamp = today.replace(day=1)
+                start_timestamp = datetime(now.year, now.month, 1)
             else:
                 raise ValueError("Invalid interval. Supported intervals: 'daily', 'weekly', 'monthly'")
 
@@ -779,7 +780,7 @@ async def calculate_volume(stock_symbol, interval='daily'):
                     COALESCE(SUM(quantity), 0.00000000000001) AS total_volume
                 FROM stock_transactions
                 WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock') AND timestamp BETWEEN ? AND ?
-            """, (stock_symbol, start_timestamp, today))
+            """, (stock_symbol, start_timestamp, now))
 
             total_buy_volume, total_sell_volume, total_volume = cursor.fetchone()
 
@@ -894,7 +895,7 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
                 Monthly Buys: {total_buy_volume_m:,} Shares
                 Monthly Sells: {total_sell_volume_m:,} Shares
                 -------------------------------------
-                Gas Fee: {(self.calculate_tax_percentage("buy_stock") * 100):.2f}%
+                Gas Fee: {(self.calculate_tax_percentage(ctx, "buy_stock") * 100):.2f}%
                 Timestamp: {current_timestamp}
                 """)
 
@@ -2543,12 +2544,21 @@ class CurrencySystem(commands.Cog):
         # Calculate and return the average time for the specific transaction type
         return sum(specific_times) / len(specific_times) if specific_times else 0.0
 
-    def calculate_tax_percentage(self, transaction_type: str) -> float:
+    def calculate_tax_percentage(self, ctx, transaction_type: str) -> float:
+        is_staking_qse_genesis = self.is_staking_qse_genesis(ctx.author.id)
         tax_rate = self.calculate_average_time(transaction_type)
+
+        # Check if the user is staking_qse_genesis and apply a 10% discount
+        if is_staking_qse_genesis:
+            discount_percentage = 10
+            tax_rate -= (tax_rate * discount_percentage / 100)
+
+        # If tax_rate is still 0.0, set it to the default rate
         if tax_rate == 0.0:
             tax_rate = (1.75 / 100)
         else:
             tax_rate = (tax_rate / 10)
+
         return tax_rate
 
 
@@ -2566,7 +2576,7 @@ class CurrencySystem(commands.Cog):
             "transfer"
         ]
 
-        gas = self.calculate_tax_percentage("sell_etf") * 100
+        gas = self.calculate_tax_percentage(ctx, "sell_etf") * 100
         embed = Embed(title="Transaction Metrics", color=discord.Color.blue())
 
         total_transactions = 0
@@ -4087,7 +4097,7 @@ class CurrencySystem(commands.Cog):
             formatted_least_bought_stock = least_bought_stock
             formatted_most_bought_etf = most_bought_etf
             formatted_least_bought_etf = least_bought_etf
-            gas_fee = (self.calculate_tax_percentage("buy_stock") * 100)
+            gas_fee = (self.calculate_tax_percentage(ctx, "buy_stock") * 100)
 
             # Create an embed to display the market statistics
             embed = discord.Embed(
@@ -4267,6 +4277,7 @@ class CurrencySystem(commands.Cog):
 
                     # Calculate Bollinger Bands
                     bb_period = min(20, buy_prices.size)  # Adjust the period as needed
+                    buy_prices = buy_prices.astype('double')
                     if buy_prices.size >= bb_period:
                         upper, middle, lower = talib.BBANDS(buy_prices, timeperiod=bb_period)
                         bb_timestamps = buy_timestamps[-len(upper):]  # Match Bollinger Bands timestamps
@@ -4502,7 +4513,6 @@ class CurrencySystem(commands.Cog):
             currency_conn = sqlite3.connect("currency_system.db")
             currency_cursor = currency_conn.cursor()
 
-
             # Retrieve transfer transactions for the current month where the bot is the receiver
             current_month = datetime.now().month
             ledger_cursor = ledger_conn.cursor()
@@ -4529,6 +4539,11 @@ class CurrencySystem(commands.Cog):
                 try:
                     recipient_user = await self.bot.fetch_user(int(user_id))
                     if recipient_user and not recipient_user.bot and str(user_id) != str(self.bot.user.id):
+                        # Check if the user is staking_qse_genesis and apply an extra 25%
+                        is_staking_qse_genesis = self.is_staking_qse_genesis(user_id)
+                        if is_staking_qse_genesis:
+                            individual_refund *= 1.25  # Apply an extra 25%
+
                         # Convert individual_refund to Decimal before adding
                         individual_refund_decimal = Decimal(str(individual_refund))
 
@@ -4556,7 +4571,6 @@ class CurrencySystem(commands.Cog):
         except Exception as e:
             print(f"Error in Gas_refund: {e}")
             await ctx.send("An error occurred while processing the Gas refund.")
-
 
 
     @commands.command(name="CTR", aliases=["calculate_tax_refund"])
@@ -5024,7 +5038,7 @@ class CurrencySystem(commands.Cog):
         stable_stock_price = await get_stock_price(self.conn, stableStock)
         user_owned_stable = self.get_user_stock_amount(ctx.author.id, stableStock)
         total_buy_cost = Decimal(buy_stock_price) * amount
-        tax_percentage = self.calculate_tax_percentage("buy_stock")
+        tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
         fee = total_buy_cost * tax_percentage
         total_cost_with_tax = total_buy_cost + fee
         shares_to_sell = math.ceil(total_cost_with_tax / Decimal(stable_stock_price))
@@ -5061,7 +5075,7 @@ class CurrencySystem(commands.Cog):
             return
 
         cost = price * Decimal(amount)
-        tax_percentage = self.calculate_tax_percentage("buy_stock")
+        tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
         fee = cost * Decimal(tax_percentage)
         total_cost = cost + fee
 
@@ -5233,7 +5247,7 @@ class CurrencySystem(commands.Cog):
 
             price = Decimal(stock[2])
             earnings = price * Decimal(amount)
-            tax_percentage = self.calculate_tax_percentage("sell_stock")  # Custom function to determine the tax percentage based on quantity and earnings
+            tax_percentage = self.calculate_tax_percentage(ctx, "sell_stock")  # Custom function to determine the tax percentage based on quantity and earnings
             fee = earnings * Decimal(tax_percentage)
             total_earnings = earnings - fee
 
@@ -5836,6 +5850,16 @@ class CurrencySystem(commands.Cog):
 
         cursor = self.conn.cursor()
 
+        cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=? AND amount > 0", (user_id,))
+        user_stocks = cursor.fetchall()
+
+        if not user_stocks:
+            await ctx.send(f"{ctx.author.mention}, you do not own any stocks.")
+            return
+
+        latest_price = await get_stock_price(self.conn, stock_name)
+
+
         if stock_name:
             # Display daily, weekly, and monthly average buy and sell prices for a specific stock
             opening_price, current_price, interval_change = await get_stock_price_interval(stock_name, interval='daily')
@@ -5853,6 +5877,12 @@ class CurrencySystem(commands.Cog):
                 color=discord.Color.green()
             )
 
+            embed.add_field(name="Current Price: ", value=f"${latest_price:,.2f}", inline=False)
+            # Include the amount owned for the specific stock
+            cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (user_id, stock_name))
+            amount_owned = cursor.fetchone()
+            if amount_owned:
+                embed.add_field(name="Amount Owned", value=f"{amount_owned[0]:,}", inline=False)
             embed.add_field(name="Daily Average Buy Price", value=opening_price_str, inline=False)
             embed.add_field(name="Daily Average Sell Price", value=f"${current_price:,.2f}", inline=False)
             embed.add_field(name="Weekly Average Buy Price", value=weekly_opening_price_str, inline=False)
@@ -5863,12 +5893,7 @@ class CurrencySystem(commands.Cog):
             await ctx.send(embed=embed)
             return
 
-        cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=? AND amount > 0", (user_id,))
-        user_stocks = cursor.fetchall()
 
-        if not user_stocks:
-            await ctx.send(f"{ctx.author.mention}, you do not own any stocks.")
-            return
 
         page_size = 25  # Number of stocks to display per page
         total_pages = (len(user_stocks) + page_size - 1) // page_size
@@ -6373,9 +6398,8 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="give_stock", help="Give a user an amount of a stock. Deducts it from the total supply.")
     @is_allowed_user(930513222820331590)  # The user must have the 'admin' role to use this command.
     async def give_stock(self, ctx, target, symbol: str, amount: int, verbose: bool = True):
-        cursor = self.conn.cursor()
 
-        await ctx.message.delete()
+        cursor = self.conn.cursor()
 
         if target.startswith("P3:"):
             p3_address = target
@@ -6452,6 +6476,71 @@ class CurrencySystem(commands.Cog):
         self.conn.commit()
 
         await ctx.send(f"Distributed {amount} of {symbol} to all holders.")
+
+
+    @commands.command(name="change_stock_price", help="Change the price of a specified stock.")
+    @is_allowed_user(930513222820331590, PBot)
+    async def change_stock_price(self, ctx, stock_symbol: str, new_price: float):
+        cursor = self.conn.cursor()
+
+        try:
+            # Update the price of the stock
+            cursor.execute("UPDATE stocks SET price=? WHERE symbol=?", (new_price, stock_symbol))
+            self.conn.commit()
+
+            await ctx.send(f"The price of stock with symbol {stock_symbol} has been updated to {new_price:.10f}.")
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred while updating the stock price: {str(e)}")
+
+
+    @commands.command(name="merge_and_distribute", aliases=["merge"], help="Merge two stocks and distribute a specified amount of a third stock to all holders.")
+    @is_allowed_user(930513222820331590)
+    async def merge_and_distribute_stock(self, ctx, symbol1: str, symbol2: str, new_symbol: str, debug: bool = False):
+        cursor = self.conn.cursor()
+
+        # Check if the stocks exist.
+        cursor.execute("SELECT symbol, available FROM stocks WHERE symbol=?", (symbol1,))
+        stock1 = cursor.fetchone()
+        cursor.execute("SELECT symbol, available FROM stocks WHERE symbol=?", (symbol2,))
+        stock2 = cursor.fetchone()
+        if stock1 is None or stock2 is None:
+            await ctx.send(f"One or more stocks not found.")
+            return
+
+
+        # Get all users holding the specified stocks.
+        cursor.execute("SELECT user_id, amount FROM user_stocks WHERE symbol=? OR symbol=?", (symbol1, symbol2))
+        users_stocks = cursor.fetchall()
+
+        # Combine the amounts for each user.
+        combined_amounts = {}
+        for user_stock in users_stocks:
+            user_id, user_amount = user_stock['user_id'], user_stock['amount']
+            combined_amounts[user_id] = combined_amounts.get(user_id, 0) + user_amount
+
+            await self.remove_stock_from_user(ctx, user_id, symbol1)
+            await self.remove_stock_from_user(ctx, user_id, symbol2)
+
+        # Distribute the specified amount of the new stock to each user.
+        for user_id, user_amount in combined_amounts.items():
+
+            p3Addr = get_p3_address(self.P3addrConn, user_id)
+            if p3Addr and combined_amounts[user_id] != 0:
+
+                await ctx.send(f"User: {p3Addr} Amount: {combined_amounts[user_id]}")
+                await self.give_stock(ctx, p3Addr, new_symbol, combined_amounts[user_id], False)
+
+
+        await self.set_stock_supply(ctx, symbol1, 0, 0)
+        await self.set_stock_supply(ctx, symbol2, 0, 0)
+        symbol1_price = await get_stock_price(self.conn, symbol1)
+        symbol2_price = await get_stock_price(self.conn, symbol2)
+        new_stock_price = symbol1_price + symbol2_price
+        await self.change_stock_price(ctx, symbol1, 0)
+        await self.change_stock_price(ctx, symbol2, 0)
+        await self.change_stock_price(ctx, new_symbol, new_stock_price)
+        await ctx.send(f"Merged {symbol1} and {symbol2} into {new_symbol} and distributed to all holders.")
 
 
     @commands.command(name="send_stock", help="Send a user an amount of a stock from your stash.")
@@ -6625,7 +6714,7 @@ class CurrencySystem(commands.Cog):
         elapsed_time = timeit.default_timer() - self.reserve_timer_start
         self.reserve_avg.append(elapsed_time)
         avg_time = sum(self.reserve_avg) / len(self.reserve_avg)
-        gas = self.calculate_tax_percentage("sell_etf") * 100
+        gas = self.calculate_tax_percentage(ctx, "sell_etf") * 100
         print(f"""
                 Reserve Buy: {stock_name}
                 -------------------------------------
@@ -6682,7 +6771,7 @@ class CurrencySystem(commands.Cog):
         elapsed_time = timeit.default_timer() - self.reserve_timer_start
         self.reserve_avg.append(elapsed_time)
         avg_time = sum(self.reserve_avg) / len(self.reserve_avg)
-        gas = self.calculate_tax_percentage("sell_etf") * 100
+        gas = self.calculate_tax_percentage(ctx, "sell_etf") * 100
         print(f"""
                 Reserve Sell: {stock_name}
                 -------------------------------------
@@ -7147,6 +7236,9 @@ class CurrencySystem(commands.Cog):
 
 
 
+
+
+
     @commands.command(name="increase_price")
     @is_allowed_user(930513222820331590, PBot)
     async def increase_price(self, ctx, stock_name: str, amount: float, burn: bool = False):
@@ -7316,20 +7408,21 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"An error occurred while removing the ETF from user's holdings: {str(e)}")
 
 
-
-    @commands.command(name="clear_etfs", help="Clear all ETFs from the database.")
+    @commands.command(name="remove_stock_from_user", help="Remove a stock from a specified user's holdings.")
     @is_allowed_user(930513222820331590, PBot)
-    async def clear_etfs(self, ctx):
+    async def remove_stock_from_user(self, ctx, user_id: int, stock_symbol: str):
         cursor = self.conn.cursor()
+        p3Addr = get_p3_address(self.P3addrConn, user_id)
 
         try:
-            cursor.execute("DELETE FROM etfs")
-            cursor.execute("DELETE FROM etf_stocks")
-            cursor.execute("DELETE FROM user_etfs")
+            # Remove the stock from user's holdings
+            cursor.execute("DELETE FROM user_stocks WHERE user_id=? AND symbol=?", (user_id, stock_symbol))
             self.conn.commit()
-            await ctx.send("All ETFs have been cleared from the database.")
+
+            await ctx.send(f"Stock with symbol {stock_symbol} has been removed from user with ID {p3Addr}'s holdings.")
+
         except sqlite3.Error as e:
-            await ctx.send(f"An error occurred while clearing the ETFs: {str(e)}")
+            await ctx.send(f"An error occurred while removing the stock from user's holdings: {str(e)}")
 
 
 
@@ -7416,7 +7509,8 @@ class CurrencySystem(commands.Cog):
                 symbol = stock[0]
                 price = stock[1]
                 available = stock[2]
-                embed.add_field(name=symbol, value=f"${price:,.2f} - {available} available", inline=False)
+                if available != 0:
+                    embed.add_field(name=symbol, value=f"${price:,.2f} - {available} available", inline=False)
             if len(stock_chunks) > 1:
                 embed.set_footer(text=f"Page {i}/{len(stock_chunks)}")
             embeds.append(embed)
@@ -7440,7 +7534,8 @@ class CurrencySystem(commands.Cog):
             while True:
                 try:
                     reaction, user = await self.bot.wait_for("reaction_add", timeout=60.0, check=check)
-                except TimeoutError:
+                except asyncio.TimeoutError:
+                    await ctx.send("Pagination timeout.")
                     break
 
                 if str(reaction.emoji) == "▶️" and current_page < len(embeds) - 1:
@@ -7449,9 +7544,17 @@ class CurrencySystem(commands.Cog):
                     current_page -= 1
 
                 await message.edit(embed=embeds[current_page])
-                await message.remove_reaction(reaction, user)
 
-        await ctx.message.delete()
+                try:
+                    await message.remove_reaction(reaction, user)
+                except discord.errors.NotFound:
+                    pass  # Message already deleted or not found
+
+                # Delete the command message during pagination
+                try:
+                    await ctx.message.delete()
+                except discord.errors.NotFound:
+                    pass  # Message already deleted or not found
 
     async def send_percentage_change_embed(self, ctx, interval, percentage_change):
         # Create an embed for the percentage change message
@@ -7488,7 +7591,7 @@ class CurrencySystem(commands.Cog):
                 else:
                     old_gas_fee = 0.0
 
-                new_gas_fee = self.calculate_tax_percentage("sell_etf") * 100
+                new_gas_fee = self.calculate_tax_percentage(ctx, "sell_etf") * 100
                 percentage_change = new_gas_fee - old_gas_fee
 
                 if new_gas_fee > old_gas_fee:
@@ -7496,7 +7599,8 @@ class CurrencySystem(commands.Cog):
                 elif new_gas_fee < old_gas_fee:
                     direction_arrow = "↘"
                 else:
-                    direction_arrow = "→"
+                    if abs(new_gas_fee - old_gas_fee) < 0.01:
+                        direction_arrow = "→"
 
                 if new_gas_fee >= 25:
                     color = f"🔴 {direction_arrow}"
@@ -7548,7 +7652,7 @@ class CurrencySystem(commands.Cog):
                         value=f"{new_gas_fee}% {direction_arrow}",
                         inline=False
                     )
-                    color = f"🟡 →" if percentage_change == 0 else f"🟢 ↗" if percentage_change > 0 else f"🔴 ↘"
+                    color = f"🟡 →" if abs(percentage_change) < 0.01 else f"🟢 ↗" if percentage_change > 0 else f"🔴 ↘"
                     new_name = f"MV: {etf_6_value_formatted} {color}"
                     await voice_channel.edit(name=new_name)
                     await ctx.send(embed=embed)
@@ -7557,26 +7661,8 @@ class CurrencySystem(commands.Cog):
             else:
                 await ctx.send(f"Voice channel with ID '{voice_channel_id}' not found.")
 
-            StockBot.etf_values["5 minutes"] = StockBot.etf_values["15 minutes"]
-            StockBot.etf_values["15 minutes"] = StockBot.etf_values["30 minutes"]
-            StockBot.etf_values["30 minutes"] = StockBot.etf_values["1 hour"]
-            StockBot.etf_values["1 hour"] = StockBot.etf_values["3 hours"]
-            StockBot.etf_values["3 hours"] = StockBot.etf_values["6 hours"]
-            StockBot.etf_values["6 hours"] = StockBot.etf_values["12 hours"]
-            StockBot.etf_values["12 hours"] = StockBot.etf_values["24 hours"]
-            StockBot.etf_values["24 hours"] = etf_6_value
-
-            current_time_minutes = time.time() / 60
-            for interval, old_value in StockBot.etf_values.items():
-                if old_value is not None:
-                    elapsed_time = current_time_minutes - int(interval.split()[0])
-                    if elapsed_time > 0:
-                        percentage_change = ((etf_6_value - old_value) / old_value) * 100
-                        await self.send_percentage_change_embed(ctx, interval, percentage_change)
-
-
             self.run_counter += 1
-            gas = self.calculate_tax_percentage("sell_etf") * 100
+            gas = self.calculate_tax_percentage(ctx, "sell_etf") * 100
             print(f"Gas Debug: {gas}% - Counter: {self.run_counter}")
 
             if self.run_counter == 2016:
@@ -7653,7 +7739,7 @@ class CurrencySystem(commands.Cog):
 
 
         # Calculate the tax amount based on dynamic factors
-        tax_percentage = self.calculate_tax_percentage("buy_etf")
+        tax_percentage = self.calculate_tax_percentage(ctx, "buy_etf")
         fee = total_cost * Decimal(tax_percentage)
         total_cost_with_tax = total_cost + fee
 
@@ -7728,7 +7814,7 @@ class CurrencySystem(commands.Cog):
                 Gas Paid: {fee:,.2f} µPPN
                 Transaction Time: {elapsed_time:.2f}
                 Average Transaction Time: {avg_time:.2f}
-                Gas Fee: {(self.calculate_tax_percentage("buy_etf") * 100):.2f}%
+                Gas Fee: {(self.calculate_tax_percentage(ctx, "buy_etf") * 100):.2f}%
                 Timestamp: {current_timestamp}
                 -------------------------------------
             """)
@@ -7784,7 +7870,7 @@ class CurrencySystem(commands.Cog):
         total_sale_amount = Decimal(etf_value) * Decimal(quantity)
 
         # Calculate the tax amount based on dynamic factors
-        tax_percentage = self.calculate_tax_percentage("sell_etf")  # Custom function to determine the tax percentage based on quantity and total_sale_amount
+        tax_percentage = self.calculate_tax_percentage(ctx, "sell_etf")  # Custom function to determine the tax percentage based on quantity and total_sale_amount
 
         fee = total_sale_amount * Decimal(tax_percentage)
         total_sale_amount_with_tax = total_sale_amount - fee
@@ -7852,7 +7938,7 @@ class CurrencySystem(commands.Cog):
                 Gas Paid: {fee:,.2f} µPPN
                 Transaction Time: {elapsed_time:.2f}
                 Average Transaction Time: {avg_time:.2f}
-                Gas Fee: {(self.calculate_tax_percentage("sell_etf") * 100):.2f}%
+                Gas Fee: {(self.calculate_tax_percentage(ctx, "sell_etf") * 100):.2f}%
                 Timestamp: {current_timestamp}
                 --------------------
             """)
@@ -8045,7 +8131,7 @@ class CurrencySystem(commands.Cog):
             return
 
         # Calculate the tax amount based on dynamic factors
-        tax_percentage = self.calculate_tax_percentage("buy_etf") # Custom function to determine the tax percentage based on quantity and cost
+        tax_percentage = self.calculate_tax_percentage(ctx, "buy_etf") # Custom function to determine the tax percentage based on quantity and cost
         fee = cost * Decimal(tax_percentage)
         total_cost = cost + fee
 
@@ -8357,7 +8443,7 @@ class CurrencySystem(commands.Cog):
         total_cost = Decimal(item_price) * Decimal(quantity)
 
         # Calculate the tax amount based on dynamic factors
-        tax_percentage = self.calculate_tax_percentage("buy_etf")  # Custom function to determine the tax percentage based on quantity and cost
+        tax_percentage = self.calculate_tax_percentage(ctx, "buy_etf")  # Custom function to determine the tax percentage based on quantity and cost
         tax_amount = Decimal(total_cost) * Decimal(tax_percentage)
 
         # Check if the user has enough balance to buy the items
@@ -8451,7 +8537,7 @@ class CurrencySystem(commands.Cog):
             elapsed_time = timeit.default_timer() - self.buy_item_timer_start
             self.buy_item_avg.append(elapsed_time)
             avg_time = sum(self.buy_item_avg) / len(self.buy_item_avg)
-            gas = self.calculate_tax_percentage("sell_etf") * 100
+            gas = self.calculate_tax_percentage(ctx, "sell_etf") * 100
 
             print(f"""
             **Metal Reserve Debug**
@@ -8510,7 +8596,7 @@ class CurrencySystem(commands.Cog):
         # Calculate the total sale amount
         total_sale_amount = Decimal(item_price) * Decimal(quantity)
         # Calculate the tax amount based on dynamic factors
-        tax_percentage = self.calculate_tax_percentage("sell_etf")  # Custom function to determine the tax percentage based on quantity and cost
+        tax_percentage = self.calculate_tax_percentage(ctx, "sell_etf")  # Custom function to determine the tax percentage based on quantity and cost
         fee = total_sale_amount * Decimal(tax_percentage)
         total_sale_amount = total_sale_amount - fee
         total_cost = total_sale_amount
@@ -8975,7 +9061,7 @@ class CurrencySystem(commands.Cog):
         # Spin the wheel
         spin_result, spin_color = random.choice(wheel)
 
-        tax_percentage = self.calculate_tax_percentage("sell_etf")
+        tax_percentage = self.calculate_tax_percentage(ctx, "sell_etf")
         tax = (bet * Decimal(tax_percentage))
         total_cost = bet + tax
 
@@ -9053,7 +9139,7 @@ class CurrencySystem(commands.Cog):
         # Flip the coin
         coin_result = random.choice(['heads', 'tails'])
 
-        tax_percentage = self.calculate_tax_percentage("sell_etf")
+        tax_percentage = self.calculate_tax_percentage(ctx, "sell_etf")
         tax = (bet * Decimal(tax_percentage))
         total_cost = bet + tax
 
@@ -9140,7 +9226,7 @@ class CurrencySystem(commands.Cog):
         win_amount = bet * payout_multiplier
 
         # Calculate tax based on the bet amount
-        tax_percentage = self.calculate_tax_percentage("sell_etf")
+        tax_percentage = self.calculate_tax_percentage(ctx, "sell_etf")
         tax = (bet * Decimal(tax_percentage))
 
         # Calculate total cost including tax
@@ -9181,68 +9267,45 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @commands.command(name='slotmachine2', aliases=['slots2'], help='Play the slot machine. Bet an amount up to 500,000 µPPN.')
-    async def slotmachine2(self, ctx, bet: int):
+    @commands.command(name='dice_roll', aliases=["dice"], help='Roll a dice. Bet on a number (1-6).')
+    async def dice_roll(self, ctx, chosen_number: int, bet_amount: int):
+        await check_store_addr(self, ctx)
         user_id = ctx.author.id
         current_balance = get_user_balance(self.conn, user_id)
-        current_timestamp = datetime.utcnow()
-        self.last_gamble = [entry for entry in self.last_gamble if (current_timestamp - entry[1]).total_seconds() <= 5]
-
-        if self.check_last_action(self.last_gamble, user_id, current_timestamp):
-            await ctx.send("You can't make another play within 5 seconds of your last action.")
-            return
-
-        # Add the current action to the list
-        self.last_gamble.append((user_id, current_timestamp))
 
         # Check if bet amount is positive and within the limit
-        if bet <= 0:
+        if bet_amount <= 0:
             await ctx.send(f"{ctx.author.mention}, bet amount must be a positive number.")
             return
 
-        if bet < minBet:
+        if bet_amount < minBet:
             await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} µPPN.")
             return
 
-        if bet > maxBet:
+        if bet_amount > maxBet:
             await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} µPPN.")
             return
 
-        # Define slot machine symbols and their values with adjusted probabilities
-        symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "7️⃣"]
-        symbol_probabilities = [0.2, 0.15, 0.15, 0.1, 0.1, 0.075, 0.05]
-        payouts = {"🍒": 5, "🍋": 10, "🍊": 15, "🍇": 20, "🔔": 25, "💎": 50, "7️⃣": 100}
+        # Check if chosen number is valid
+        if chosen_number < 1 or chosen_number > 6:
+            await ctx.send("Please choose a number between 1 and 6.")
+            return
 
-        # Shuffle the symbols with adjusted probabilities
-        shuffled_symbols = random.choices(symbols, weights=symbol_probabilities, k=9)
-        rows = [shuffled_symbols[i:i+3] for i in range(0, len(shuffled_symbols), 3)]
+        # Roll the dice
+        dice_result = random.randint(1, 6)
 
-        # Check for three consecutive matching symbols in the same row
-        three_consecutive_in_row = any(has_consecutive_symbols(row) for row in rows)
-
-
-
-        # Calculate the payouts for each row, column, and diagonal
-        row_payouts = [sum(payouts[icon] for icon in row) for row in rows]
-        column_payouts = [sum(payouts[rows[i][j]] for i in range(3)) for j in range(3)]
-        diagonal_payouts = [sum(payouts[rows[i][i]] for i in range(3)),
-                            sum(payouts[rows[i][2 - i]] for i in range(3))]
-
-        # Calculate the total payout
-        total_payout = sum(row_payouts) + sum(column_payouts) + sum(diagonal_payouts)
-
-        # Adjust the total payout if three consecutive matching symbols in the same row
-        if three_consecutive_in_row:
-            total_payout += 2  # Adjust the payout for three consecutive matching symbols in the same row
-
-        win_amount = bet * total_payout
+        # Calculate the payout
+        if dice_result == chosen_number:
+            win_amount = bet_amount * 5  # 5x payout for an exact match
+        else:
+            win_amount = 0
 
         # Calculate tax based on the bet amount
-        tax_percentage = self.calculate_tax_percentage("sell_etf")
-        tax = (bet * Decimal(tax_percentage))
+        tax_percentage = self.calculate_tax_percentage(ctx, "dice_roll")
+        tax = Decimal(bet_amount) * Decimal(tax_percentage)
 
         # Calculate total cost including tax
-        total_cost = bet + tax
+        total_cost = Decimal(bet_amount) + tax
 
         # Check for negative balance after tax
         if current_balance - total_cost < 0:
@@ -9253,23 +9316,22 @@ class CurrencySystem(commands.Cog):
         new_balance = current_balance - total_cost
         update_user_balance(self.conn, user_id, new_balance)
 
-        # Create and send the embed with the slot machine result
-        embed = discord.Embed(title="Slot Machine", color=discord.Color.gold())
-        for i in range(3):
-            embed.add_field(name=f"Row {i + 1}", value=" ".join(rows[i]), inline=False)
+        # Create and send the embed with the dice roll result
+        embed = discord.Embed(title="Dice Roll 🎲", color=discord.Color.gold())
+        embed.add_field(name="Result", value=f"The dice rolled: {dice_result}", inline=False)
 
         if win_amount > 0:
-            new_balance += Decimal(win_amount)
+            new_balance += win_amount
             update_user_balance(self.conn, user_id, new_balance)
-            embed.add_field(name="Congratulations!", value=f"You won {win_amount:,} µPPN!", inline=False)
-            await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"{win_amount}", new_balance)
+            embed.add_field(name="Congratulations!", value=f"You guessed right! You won {win_amount:,.2f} µPPN!", inline=False)
+            await log_gambling_transaction(ledger_conn, ctx, "Dice Roll", bet_amount, f"You won {win_amount} µPPN", new_balance)
             await self.casinoTool(ctx, True)
         else:
-            embed.add_field(name="Better luck next time!", value=f"You lost {total_cost:,} µPPN including Gas. Your new balance is {new_balance} µPPN.", inline=False)
-            await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"{total_cost}", new_balance)
+            embed.add_field(name="Better luck next time!", value=f"You lost {total_cost:,.2f} µPPN including Gas. Your new balance is {new_balance:,.2f} µPPN.", inline=False)
+            await log_gambling_transaction(ledger_conn, ctx, "Dice Roll", bet_amount, f"You lost {total_cost:,.2f} µPPN", new_balance)
             await self.casinoTool(ctx, False)
 
-        embed.set_footer(text=f"Your new balance: {new_balance} µPPN")
+        embed.set_footer(text=f"Your new balance: {new_balance:,.2f} µPPN")
         await ctx.send(embed=embed)
         # Transfer the tax amount to the bot's address P3:03da907038
         update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax)
@@ -9277,6 +9339,74 @@ class CurrencySystem(commands.Cog):
 
 
 
+
+    @commands.command(name='higher_lower', aliases=['hl'], help='Play the Higher or Lower card game.')
+    async def higher_lower(self, ctx, bet_amount: int):
+        await check_store_addr(self, ctx)
+        user_id = ctx.author.id
+        current_balance = get_user_balance(self.conn, user_id)
+
+        # Check if bet amount is positive and within the limit
+        if bet_amount <= 0:
+            await ctx.send(f"{ctx.author.mention}, bet amount must be a positive number.")
+            return
+
+        if bet_amount < minBet:
+            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} µPPN.")
+            return
+
+        if bet_amount > maxBet:
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} µPPN.")
+            return
+
+        # Draw two random cards
+        player_card = random.randint(1, 10)
+        dealer_card = random.randint(1, 10)
+
+        # Convert card numbers to emojis
+        player_card_emoji = f"{player_card}\U000020e3"
+        dealer_card_emoji = "❓❓"
+
+        # Create the main embed with the game start message
+        embed = discord.Embed(title="Higher or Lower", color=discord.Color.blue())
+        embed.add_field(name="Your Card", value=player_card_emoji, inline=False)
+        embed.add_field(name="Dealer's Card", value=dealer_card_emoji, inline=False)
+        embed.add_field(name="Instructions", value="React with ⬆️ for Higher or ⬇️ for Lower.", inline=False)
+        message = await ctx.send(embed=embed)
+
+        # Add emojis to the message
+        await message.add_reaction("⬆️")
+        await message.add_reaction("⬇️")
+
+        # Wait for the user's reaction
+        reaction, _ = await self.bot.wait_for("reaction_add", timeout=30.0, check=lambda r, u: u == ctx.author and str(r.emoji) in ["⬆️", "⬇️"])
+
+        # Reveal the dealer's card
+        embed.set_field_at(1, name="Dealer's Card", value=f"{dealer_card} {dealer_card}\U000020e3", inline=False)
+        await message.edit(embed=embed)
+
+        # Determine the winner
+        if (reaction.emoji == "⬆️" and player_card < dealer_card) or (reaction.emoji == "⬇️" and player_card > dealer_card):
+            result_message = "You guessed wrong! Better luck next time."
+            win_amount = 0
+            await self.casinoTool(ctx, False)
+        else:
+            result_message = f"Congratulations! You guessed right! You won {2 * bet_amount:,.2f} µPPN!"
+            win_amount = 2 * bet_amount
+            await self.casinoTool(ctx, True)
+
+        # Update user's balance
+        new_balance = current_balance + win_amount - bet_amount
+
+        # Send the result message
+        embed.set_footer(text=f"Your new balance: {new_balance:,.2f} µPPN")
+        embed.add_field(name="Result", value=result_message, inline=False)
+        await message.edit(embed=embed)
+
+        # Update user's balance
+        update_user_balance(self.conn, user_id, new_balance)
+
+##
     @commands.command(name='stats', aliases=['portfolio'], help='Displays the user\'s financial stats.')
     async def stats(self, ctx):
         user_id = ctx.author.id
