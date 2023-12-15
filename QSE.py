@@ -150,7 +150,13 @@ MAX_EARNINGS = 500000
 
 ## End Work
 
+buy_sell_semaphore = asyncio.Semaphore(1)
 
+async def wait_for_unlocked():
+    await buy_sell_semaphore.acquire()
+
+async def release_semaphore():
+    buy_sell_semaphore.release()
 
 class ConnectionPool:
     def __init__(self, database):
@@ -499,6 +505,7 @@ def update_burn_history(cursor, user_id):
 async def calculate_min_price(stock_name: str):
     try:
         async with aiosqlite.connect("currency_system.db") as conn:
+            await wait_for_unlocked(conn)
             cursor = await conn.cursor()
 
             # Fetch stock information
@@ -536,6 +543,7 @@ async def calculate_min_price(stock_name: str):
 async def calculate_max_price(stock_symbol):
     try:
         async with aiosqlite.connect("currency_system.db") as conn:
+            await wait_for_unlocked(conn)
             cursor = await conn.cursor()
 
             # Get the current price of the stock
@@ -630,8 +638,8 @@ async def convert_to_float(value):
 async def get_stock_price_interval(stock_symbol, interval='daily'):
     try:
         # Create a connection to the SQLite database using a context manager
-        with sqlite3.connect("p3ledger.db") as conn:
-            cursor = conn.cursor()
+        async with aiosqlite.connect("p3ledger.db") as conn:
+            cursor = await conn.cursor()
 
             # Get the current date
             today = datetime.now().date()
@@ -649,13 +657,13 @@ async def get_stock_price_interval(stock_symbol, interval='daily'):
                 raise ValueError("Invalid interval. Supported intervals: 'daily', 'weekly', 'monthly'")
 
             # Fetch the opening price and the current price for the specified stock within the specified interval
-            cursor.execute("""
+            await cursor.execute("""
                 SELECT
                     COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp <= ? AND action='Buy Stock' ORDER BY timestamp DESC LIMIT 1), 0.0),
                     COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1), 0.0)
             """, (stock_symbol, start_timestamp, stock_symbol, today))
 
-            opening_price, current_price = cursor.fetchone()
+            opening_price, current_price = await cursor.fetchone()
 
             opening_price = await convert_to_float(opening_price)
             current_price = await convert_to_float(current_price)
@@ -664,8 +672,25 @@ async def get_stock_price_interval(stock_symbol, interval='daily'):
 
             return opening_price, current_price, price_change
 
-    except sqlite3.Error as e:
+    except aiosqlite.Error as e:
         print(f"An error occurred: {str(e)}")
+        return 0, 0, 0
+
+
+async def wait_for_unlocked(conn: aiosqlite.Connection):
+    while True:
+        try:
+            # Try executing a simple query to check if the database is locked
+            async with conn.execute("SELECT 1") as cursor:
+                await cursor.fetchall()
+            # If the query succeeds, the database is not locked
+            break
+        except aiosqlite.DatabaseLockedError:
+            # Database is locked, wait for a short duration and try again
+            await asyncio.sleep(0.1)
+        except aiosqlite.OperationalError as e:
+            # Some other operational error occurred, raise it
+            raise e
 
 
 async def count_all_transactions(interval='daily'):
@@ -765,6 +790,7 @@ async def count_transactions(stock_name, interval='daily'):
 async def calculate_volume(stock_symbol, interval='daily'):
     try:
         async with aiosqlite.connect("p3ledger.db") as conn:
+            await wait_for_unlocked(conn)
             cursor = await conn.cursor()
 
             # Get the current date and time
@@ -2469,6 +2495,9 @@ class CurrencySystem(commands.Cog):
         self.run_counter = 0
 
         self.cache = {}
+
+        self.transaction_pool = []
+        self.transaction_lock = asyncio.Lock()
 
 
     def is_staking_qse_genesis(self, user_id):
@@ -4924,10 +4953,104 @@ class CurrencySystem(commands.Cog):
 
 
 # Stock Market
+    async def process_transaction(self, ctx, type, symbol, amount, action):
+        try:
+            async with self.transaction_lock:
+                if action == "buy":
+                    if type.lower() == "stock":
+                        await self.buy_stock(ctx, symbol, amount)
+                    elif type.lower() == "item":
+                        await self.buy_item(ctx, symbol, amount)
+                    elif type.lower() == "etf":
+                        if not symbol.isdigit():
+                            await ctx.send("Invalid ETF symbol. ETF symbol must be an integer.")
+                            return
+                        await self.buy_etf(ctx, symbol, amount)
+                    else:
+                        await ctx.send(f"Transaction Error: {symbol} must be Stock, Item, or ETF")
+                else:
+                    if type.lower() == "stock":
+                        await self.sell_stock(ctx, symbol, amount)
+                    elif type.lower() == "item":
+                        await self.sell_item(ctx, symbol, amount)
+                    elif type.lower() == "etf":
+                        if not symbol.isdigit():
+                            await ctx.send("Invalid ETF symbol. ETF symbol must be an integer.")
+                            return
+                        await self.sell_etf(ctx, symbol, amount)
+                    else:
+                        await ctx.send(f"Transaction Error: {symbol} must be Stock, Item, or ETF")
+        except Exception as e:
+            await ctx.send(f"Transaction failed: {str(e)}")
+
+    async def process_transactions(self):
+        print("Grabbing Pool")
+        while self.transaction_pool:
+            async with self.transaction_lock:
+                print("Aquiring Lock")
+                print("Beginning Transaction")
+                if not self.transaction_pool:
+                    break
+                ctx, type, symbol, amount, action = self.transaction_pool.pop(0)
+            await self.process_transaction(ctx, type, symbol, amount, action)
+
+    @commands.command(name="buy", help="Buy Stocks, ETFs, and Items")
+    async def buy(self, ctx, type: str, symbol, amount):
+        if not type:
+            await ctx.send("Missing 'type'. Please specify 'stock', 'item', or 'etf'. Example: !buy stock P3:BANK 10")
+            return
+        elif not symbol:
+            await ctx.send("Missing 'symbol'. Please provide the asset symbol. Example: !buy stock P3:BANK 10")
+            return
+        elif not amount:
+            await ctx.send("Missing 'amount'. Please specify the quantity. Example: !buy stock P3:BANK 10")
+            return
+
+        user_id = ctx.author.id
+        p3addr = get_p3_address(self.P3addrConn, user_id)
+
+        try:
+            amount = int(amount.replace(",", ""))
+            print(f"Debug Buy Wrapper\nType: {type}\nAsset: {symbol}\nQuantity: {amount}\nUserID: {user_id}\nP3 Address: {p3addr}")
+            async with self.transaction_lock:
+                self.transaction_pool.append((ctx, type, symbol, amount, "buy"))
+                print(f"Pool Size: {len(self.transaction_pool)}")
+            if len(self.transaction_pool) == 1:
+                print("Processing Transactions")
+                await self.process_transactions()
+        except ValueError:
+            await ctx.send("Invalid amount. Please provide a valid integer.")
+
+    @commands.command(name="sell", help="Buy Stocks, ETFs, and Items")
+    async def sell(self, ctx, type: str, symbol, amount):
+        if not type:
+            await ctx.send("Missing 'type'. Please specify 'stock', 'item', or 'etf'. Example: !sell stock P3:BANK 10")
+            return
+        elif not symbol:
+            await ctx.send("Missing 'symbol'. Please provide the asset symbol. Example: !sell stock P3:BANK 10")
+            return
+        elif not amount:
+            await ctx.send("Missing 'amount'. Please specify the quantity. Example: !sell stock P3:BANK 10")
+            return
+        user_id = ctx.author.id
+        p3addr = get_p3_address(self.P3addrConn, user_id)
+
+        try:
+            amount = int(amount.replace(",", ""))
+            print(f"Debug Sell Wrapper\nType: {type}\nAsset: {symbol}\nQuantity: {amount}\nUserID: {user_id}\nP3 Address: {p3addr}")
+            async with self.transaction_lock:
+                self.transaction_pool.append((ctx, type, symbol, amount, "sell"))
+                print(f"Pool Size: {len(self.transaction_pool)}")
+            if len(self.transaction_pool) == 1:
+                print("Processing Transactions")
+                await self.process_transactions()
+        except ValueError:
+            await ctx.send("Invalid amount. Please provide a valid integer.")
 
 
-    @commands.command(name="buy", aliases=["buy_stock"], help="Buy stocks. Provide the stock name and amount.")
-    async def buy(self, ctx, stock_name: str, amount: int, stable_option: str = "False"):
+    @commands.command(name="buy_stock", help="Buy stocks. Provide the stock name and amount.")
+    async def buy_stock(self, ctx, stock_name: str, amount: int, stable_option: str = "False"):
+#        await wait_for_unlocked()
         await check_store_addr(self, ctx)
         if amount == 0:
             await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
@@ -4950,6 +5073,8 @@ class CurrencySystem(commands.Cog):
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
         await ctx.send(embed=embed)
+
+#        await wait_for_unlocked(self.conn)
 
         if stock_name.lower() == "pokerchip":
             await ctx.send("Utility Stock cannot be purchased")
@@ -5173,9 +5298,11 @@ class CurrencySystem(commands.Cog):
             """)
         except Exception as e:
             print(f"Timer error: {e}")
+#        release_semaphore()
 # Sell Stock
-    @commands.command(name="sell", aliases=["sell_stock"], help="Sell stocks. Provide the stock name and amount.")
-    async def sell(self, ctx, stock_name: str, amount: int):
+    @commands.command(name="sell_stock", help="Sell stocks. Provide the stock name and amount.")
+    async def sell_stock(self, ctx, stock_name: str, amount: int):
+#        await wait_for_unlocked()
         await check_store_addr(self, ctx)
         self.sell_timer_start = timeit.default_timer()
         current_timestamp = datetime.utcnow()
@@ -5193,7 +5320,7 @@ class CurrencySystem(commands.Cog):
 
         await ctx.send(embed=embed)
 
-
+#        await wait_for_unlocked(self.conn)
 
         stock_price = await get_stock_price(self.conn, stock_name)
         if (stock_price < 1000) and (stock_name.lower() != "roflstocks" and stock_name.lower() != "p3:stable"):
@@ -5409,7 +5536,7 @@ class CurrencySystem(commands.Cog):
                 Transaction Time: {elapsed_time:.2f}
                 Average Transaction Time: {avg_time:.2f}
                 """)
-
+#                release_semaphore()
 
 
 
