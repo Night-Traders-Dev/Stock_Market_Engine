@@ -2514,6 +2514,8 @@ class CurrencySystem(commands.Cog):
         self.db_semaphore = asyncio.Semaphore()
         # Trading Halt Bool
         self.is_halted = False
+        self.market_circuit_breaker =  False
+        self.stock_circuit_breaker = False
         self.not_trading = []
         self.stock_monitor = defaultdict(list)
         self.last_market_value = 0.0
@@ -5007,9 +5009,14 @@ class CurrencySystem(commands.Cog):
                             self.buy_item_timer_start = timeit.default_timer()
                             await self.buy_item(ctx, symbol, amount)
                         elif type.lower() == "etf":
+                            etfs = ["1", "2", "3", "4", "6", "7", "8", "9", "10", "11", "12"]
                             if not symbol.isdigit():
                                 await ctx.send("Invalid ETF symbol. ETF symbol must be an integer.")
                                 return
+                            for i in etfs:
+                                if symbol not in etfs:
+                                    await ctx.send(f"ETF {symbol} does not exist")
+                                    return
                             self.buy_etf_timer_start = timeit.default_timer()
                             await self.buy_etf(ctx, symbol, amount)
                         else:
@@ -5048,6 +5055,9 @@ class CurrencySystem(commands.Cog):
 
 
     async def check_market(self, ctx):
+#        if self.market_breaker != True:
+#            return
+        etfs = ["1", "2", "3", "4", "6", "7", "8", "9", "10", "11", "12"]
         etf_id = 6
         etf_value = await get_etf_value(self.conn, etf_id)
 
@@ -5055,19 +5065,20 @@ class CurrencySystem(commands.Cog):
             percentage_change = ((etf_value - self.last_market_value) / self.last_market_value) * 100
             print(f"Market Monitor: {percentage_change}%")
 
-            if abs(percentage_change) >= 10:
-                # Halt trading for 30 minutes
-                self.is_halted = True
-                embed = discord.Embed(description="Trading Halted due to a significant market change. Waiting for 30 minutes.", color=discord.Color.red())
-                await ctx.send(embed=embed)
+            if self.market_circuit_breaker == True:
+                if abs(percentage_change) >= 10:
+                    # Halt trading for 30 minutes
+                    self.is_halted = True
+                    embed = discord.Embed(description="Trading Halted due to a significant market change. Waiting for 30 minutes.", color=discord.Color.red())
+                    await ctx.send(embed=embed)
 
-                self.last_market_value = 0.0
+                    self.last_market_value = 0.0
 
-                await asyncio.sleep(1800)  # Sleep for 30 minutes
+                    await asyncio.sleep(1800)  # Sleep for 30 minutes
 
-                self.is_halted = False
-                embed = discord.Embed(description="Trading Resumed after 30 minutes.", color=discord.Color.green())
-                await ctx.send(embed=embed)
+                    self.is_halted = False
+                    embed = discord.Embed(description="Trading Resumed after 30 minutes.", color=discord.Color.green())
+                    await ctx.send(embed=embed)
 
         self.last_market_value = etf_value
 
@@ -5092,15 +5103,43 @@ class CurrencySystem(commands.Cog):
             percentage_change = ((latest_price - oldest_price) / oldest_price) * 100
 
             # Print a statement if the price change is more than 100%
-            if abs(percentage_change) > 100:
-                print(f"Trading Halted for {symbol} due to significant market change")
-                embed = discord.Embed(description=f"Trading Halted due to a significant market change for {symbol}. Waiting for 5 minutes.", color=discord.Color.red())
-                await ctx.send(embed=embed)
-                self.not_trading.append(symbol.lower())
-                await asyncio.sleep(300)
-                self.stock_monitor.pop(symbol)
-                self.not_trading.append(symbol.lower())
+            if self.stock_circuit_breaker == True:
+                if abs(percentage_change) > 100:
+                    print(f"Trading Halted for {symbol} due to significant market change")
+                    embed = discord.Embed(description=f"Trading Halted due to a significant market change for {symbol}. Waiting for 5 minutes.", color=discord.Color.red())
+                    await ctx.send(embed=embed)
+                    self.not_trading.append(symbol.lower())
+                    await asyncio.sleep(300)
+                    self.stock_monitor.pop(symbol)
+                    self.not_trading.remove(symbol.lower())
+                    return
 
+
+
+
+    @commands.command(name="circuit_breaker")
+    @is_allowed_user(930513222820331590, PBot)
+    async def circuit_breaker(self, ctx, circuit: str, halt: bool):
+        if circuit.lower() == "market":
+            if halt == True:
+                self.market_circuit_breaker = True
+                embed = discord.Embed(description=f"{circuit} circuit breaker on", color=discord.Color.green())
+                await ctx.send(embed=embed)
+            else:
+                self.market_circuit_breaker = False
+                embed = discord.Embed(description=f"{circuit} circuit breaker off", color=discord.Color.red())
+                await ctx.send(embed=embed)
+        elif circuit.lower() == "stock":
+            if halt == True:
+                self.stock_circuit_breaker = True
+                embed = discord.Embed(description=f"{circuit} circuit breaker on", color=discord.Color.green())
+                await ctx.send(embed=embed)
+            else:
+                self.stock_circuit_breaker = False
+                embed = discord.Embed(description=f"{circuit} circuit breaker off", color=discord.Color.red())
+                await ctx.send(embed=embed)
+        else:
+            await ctx.send("Wrong Syntax")
 
 
     @commands.command(name="halt_trading")
@@ -5124,6 +5163,8 @@ class CurrencySystem(commands.Cog):
             await ctx.send(embed=embed)
         else:
             self.not_trading.remove(stock.lower())
+            if stock in self.stock_monitor:
+                self.stock_monitor.pop(stock)
             embed = discord.Embed(description=f"Trading Resumed for {stock}", color=discord.Color.green())
             await ctx.send(embed=embed)
 
@@ -6298,6 +6339,97 @@ class CurrencySystem(commands.Cog):
 
         P3conn.close()
 
+    @commands.command(name="top_sellers")
+    async def top_sellers(self, ctx):
+        # Connect to the ledger database
+        with sqlite3.connect("p3ledger.db") as ledger_conn:
+            ledger_cursor = ledger_conn.cursor()
+
+            current_date = datetime.now()
+
+            # Calculate the first day of the current month
+            first_day_of_current_month = current_date.replace(day=1)
+
+            # Calculate one month ago from the first day of the current month
+            one_month_ago = first_day_of_current_month - timedelta(days=1)
+
+            # Retrieve sell transactions for all stocks from the ledger within the last month
+            sell_transactions = ledger_cursor.execute("""
+                SELECT symbol, timestamp, price, user_id
+                FROM stock_transactions
+                WHERE action='Sell Stock' AND timestamp >= ?
+                ORDER BY timestamp
+            """, (one_month_ago,))
+
+            # Create a dictionary to store sellers and their total sell amounts
+            seller_totals = {}
+
+            for symbol, timestamp, price, seller_id in sell_transactions:
+                # Update or initialize the total sell amount for the seller
+                if not isinstance(price, float):
+                    price = Decimal(price.replace(",", ""))
+                seller_totals[seller_id] = seller_totals.get(seller_id, Decimal(0)) + Decimal(price)
+
+            # Get the top 10 sellers by total sell amount across all stocks
+            top_sellers = sorted(seller_totals.items(), key=lambda x: x[1], reverse=True)[:10]
+
+            # Create an embed
+            embed = Embed(title="Top Sellers", color=0x00ff00)
+
+            # Add information to the embed
+            for seller_id, total_sell_amount in top_sellers:
+                p3addr = get_p3_address(self.P3addrConn, seller_id)
+                embed.add_field(name=f"Seller {p3addr}", value=f"Total Sell Amount - {total_sell_amount:,.0f}", inline=False)
+
+            # Send the embed to the channel
+            await ctx.send(embed=embed)
+
+
+    @commands.command(name="top_buyers")
+    async def top_buyers(self, ctx):
+        # Connect to the ledger database
+        with sqlite3.connect("p3ledger.db") as ledger_conn:
+            ledger_cursor = ledger_conn.cursor()
+
+            current_date = datetime.now()
+
+            # Calculate the first day of the current month
+            first_day_of_current_month = current_date.replace(day=1)
+
+            # Calculate one month ago from the first day of the current month
+            one_month_ago = first_day_of_current_month - timedelta(days=1)
+
+            # Retrieve sell transactions for all stocks from the ledger within the last month
+            sell_transactions = ledger_cursor.execute("""
+                SELECT symbol, timestamp, price, user_id
+                FROM stock_transactions
+                WHERE action='Buy Stock' AND timestamp >= ?
+                ORDER BY timestamp
+            """, (one_month_ago,))
+
+            # Create a dictionary to store sellers and their total sell amounts
+            seller_totals = {}
+
+            for symbol, timestamp, price, seller_id in sell_transactions:
+                # Update or initialize the total sell amount for the seller
+                if not isinstance(price, float):
+                    price = Decimal(price.replace(",", ""))
+                seller_totals[seller_id] = seller_totals.get(seller_id, Decimal(0)) + Decimal(price)
+
+            # Get the top 10 sellers by total sell amount across all stocks
+            top_sellers = sorted(seller_totals.items(), key=lambda x: x[1], reverse=True)[:10]
+
+            # Create an embed
+            embed = Embed(title="Top Buyers", color=0x00ff00)
+
+            # Add information to the embed
+            for seller_id, total_sell_amount in top_sellers:
+                p3addr = get_p3_address(self.P3addrConn, seller_id)
+                embed.add_field(name=f"Buyer {p3addr}", value=f"Total Buy Amount - {total_sell_amount:,.0f}", inline=False)
+
+            # Send the embed to the channel
+            await ctx.send(embed=embed)
+
 ##
 
     @commands.command(name="get_total_transactions", help="Get the total of all transactions for the current month for a specified receiver_id.")
@@ -7008,10 +7140,10 @@ class CurrencySystem(commands.Cog):
     async def inverseStock(self, ctx, type: str):
         for symbol in inverseStocks:
             if type.lower() == "buy":
-                boosterAmount = 75000000 * 2
+                boosterAmount = 75000000
                 await self.sell_stock_for_bot(ctx, symbol, boosterAmount)
             elif type.lower() == "sell":
-                boosterAmount = 150000000 * 4
+                boosterAmount = 150000000
                 await self.buy_stock_for_bot(ctx, symbol, boosterAmount)
             else:
                 return
@@ -7690,17 +7822,7 @@ class CurrencySystem(commands.Cog):
 
         await ctx.send(embed=embed)
 
-        if etf_id == 5:
-            await ctx.send("ETF 5 does not exist")
-            return
 
-        if etf_id == 13:
-            await ctx.send("ETF 13 does not exist")
-            return
-
-        if etf_id == 14:
-            await ctx.send("ETF 13 does not exist")
-            return
 
         cursor = self.conn.cursor()
 
