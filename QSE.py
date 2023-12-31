@@ -63,7 +63,7 @@ buyPressureMin = 0.0000155
 buyPressureMax = 0.0001475
 stockDecayValue = 0.0000125
 decayMin = 0.01
-resetµPPN = 100
+resetQSE = 100
 dailyMin = 100000
 dailyMax = 500000
 ticketPrice = 100
@@ -273,7 +273,7 @@ def create_multipage_embeds(data, title):
         for action, symbol, total_quantity, total_pre_tax_amount in chunk:
             embed.add_field(
                 name=f"{action.capitalize()} {symbol}",
-                value=f"Total Quantity: {total_quantity}\nTotal Pre-Gas Amount: {total_pre_tax_amount:,.0f} µPPN",
+                value=f"Total Quantity: {total_quantity}\nTotal Pre-Gas Amount: {total_pre_tax_amount:,.0f} $QSE",
                 inline=True
             )
         pages.append(embed)
@@ -892,15 +892,15 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
                 Verbose: {verbose}
                 Burn: {burn}
                 ------------------------------------
-                Opening: {opening_price:,.2f} µPPN
-                Closest: {closest_price:,.2f} µPPN
+                Opening: {opening_price:,.2f} $QSE
+                Closest: {closest_price:,.2f} $QSE
                 Open-Close: {opening_change:.4f}
                 ------------------------------------
-                Current Price: {current_price:,.2f} µPPN
-                New Price: {new_price:,.2f} µPPN
+                Current Price: {current_price:,.2f} $QSE
+                New Price: {new_price:,.2f} $QSE
                 Change: {percentage_change:.4f}
-                Variable Minimum Price: {min_price:,.2f} µPPN
-                Variable Max Price: {max_price:,.2f} µPPN
+                Variable Minimum Price: {min_price:,.2f} $QSE
+                Variable Max Price: {max_price:,.2f} $QSE
                 Daily Volume Factor: {daily_volume_factor:,.10f}
                 -------------------------------------
                 Daily Volume: {daily_volume:,} Shares
@@ -923,8 +923,8 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
     if verbose:
         color = discord.Color.green() if is_buy else discord.Color.red()
         embed = Embed(title=f"Stock Price {action} Update for {stock_name}", color=color)
-        embed.add_field(name="Old Price", value=f"{current_price:,.2f} µPPN", inline=False)
-        embed.add_field(name="New Price", value=f"{new_price:,.2f} µPPN", inline=False)
+        embed.add_field(name="Old Price", value=f"{current_price:,.2f} $QSE", inline=False)
+        embed.add_field(name="New Price", value=f"{new_price:,.2f} $QSE", inline=False)
         embed.add_field(name="Percentage Change", value=f"{percentage_change:.2f}%", inline=False)
 
         await ctx.send(embed=embed)
@@ -984,7 +984,7 @@ def update_user_balance(conn, user_id, new_balance):
         total_stock_value = 0
 
 
-    MAX_BALANCE = (Pbot_Balance + total_stock_value)# / 2
+    MAX_BALANCE = (Pbot_Balance + total_stock_value) / 2
 #    print(f"Reserve Funds: {Pbot_Balance:,.2f}\nReserve Stocks: {total_stock_value:,.2f}\nReserve Balance: {MAX_BALANCE:,.2f}")
 
     try:
@@ -996,7 +996,7 @@ def update_user_balance(conn, user_id, new_balance):
 
         # Check if new_balance exceeds the maximum allowed
         if user_id not in {PBot} and new_balance > MAX_BALANCE:
-            raise ValueError(f"User balance exceeds the maximum allowed balance of {MAX_BALANCE:,.2f} µPPN. or 50% of the current balance of the Reserve.")
+            raise ValueError(f"User balance exceeds the maximum allowed balance of {MAX_BALANCE:,.2f} $QSE. or 50% of the current balance of the Reserve.")
 
         cursor = conn.cursor()
 
@@ -1373,11 +1373,11 @@ async def log_transaction(ledger_conn, ctx, action, symbol, quantity, pre_tax_am
                 embed = discord.Embed(
                     title=f"{P3Addr} {action} {symbol} {'ETF' if is_etf else 'Stock'} Transaction",
                     description=f"Quantity: {quantity}\n"
-                                f"Price: {price} µPPN\n"
-                                f"Pre-Gas Amount: {pre_tax_amount:,.2f} µPPN\n"
-                                f"Post-Gas Amount: {post_tax_amount:,.2f} µPPN\n"
-                                f"Balance Before: {balance_before:,.2f} µPPN\n"
-                                f"Balance After: {balance_after:,.2f} µPPN\n"
+                                f"Price: {price} $QSE\n"
+                                f"Pre-Gas Amount: {pre_tax_amount:,.2f} $QSE\n"
+                                f"Post-Gas Amount: {post_tax_amount:,.2f} $QSE\n"
+                                f"Balance Before: {balance_before:,.2f} $QSE\n"
+                                f"Balance After: {balance_after:,.2f} $QSE\n"
                                 f"Timestamp: {timestamp}",
                     color=discord.Color.green() if action.startswith("Buy") else discord.Color.red()
                 )
@@ -1412,14 +1412,14 @@ async def log_transfer(self, ledger_conn, ctx, sender_name, receiver_name, recei
         if channel1:
             embed = discord.Embed(
                 title=f"Transfer from {P3Addr_sender} to {P3Addr_receiver}",
-                description=f"Amount: {amount:,.2f} µPPN",
+                description=f"Amount: {amount:,.2f} $QSE",
                 color=discord.Color.purple()
             )
 
             if is_burn:
-                embed.title = f"Burn of {amount:,.2f} µPPN"
+                embed.title = f"Burn of {amount:,.2f} $QSE"
                 embed.color = discord.Color.red()
-                embed.description = f"{sender_name} burned {amount:,.2f} µPPN"
+                embed.description = f"{sender_name} burned {amount:,.2f} $QSE"
                 # Add any additional fields for burn logs if needed
 
             await channel1.send(embed=embed)
@@ -1485,8 +1485,8 @@ async def log_item_transaction(conn, ctx, action, item_name, quantity, total_cos
         if channel1:
             embed = discord.Embed(
                 title=f"{P3Addr} {'Purchase' if is_purchase else 'Sale'} of {quantity:,.2f} {item_name}",
-                description=f"Item: {item_name}\nQuantity: {quantity:,.2f}\nTotal Cost: {total_cost:,.2f} µPPN\n"
-                            f"Gas Amount: {tax_amount:,.2f} µPPN\nNew Balance: {new_balance:,.2f} µPPN\nTimestamp: {timestamp}",
+                description=f"Item: {item_name}\nQuantity: {quantity:,.2f}\nTotal Cost: {total_cost:,.2f} $QSE\n"
+                            f"Gas Amount: {tax_amount:,.2f} $QSE\nNew Balance: {new_balance:,.2f} $QSE\nTimestamp: {timestamp}",
                 color=discord.Color.green() if is_purchase else discord.Color.red()
             )
 
@@ -1522,7 +1522,7 @@ async def log_burn_stocks(ledger_conn, ctx, stock_name, quantity, price_before, 
             embed = discord.Embed(
                 title=f"{P3Addr} Stock Burn Transaction",
                 description=f"Stock Name: {stock_name}\nQuantity Burned: {quantity:,.2f}\n"
-                            f"Price Before Burn: {price_before:,.2f} µPPN\nPrice After Burn: {price_after:,.2f} µPPN\nTimestamp: {timestamp}",
+                            f"Price Before Burn: {price_before:,.2f} $QSE\nPrice After Burn: {price_after:,.2f} $QSE\nTimestamp: {timestamp}",
                 color=discord.Color.yellow()
             )
 
@@ -1555,8 +1555,8 @@ async def log_gambling_transaction(ledger_conn, ctx, game, bet_amount, win_loss,
         if channel1:
             embed = discord.Embed(
                 title=f"{P3Addr} {game} Gambling Transaction",
-                description=f"Game: {game}\nBet Amount: {bet_amount} µPPN\nWin/Loss: {win_loss}\n"
-                            f"Amount Paid/Received After Gas: {amount_after_tax:,.2f} µPPN",
+                description=f"Game: {game}\nBet Amount: {bet_amount} $QSE\nWin/Loss: {win_loss}\n"
+                            f"Amount Paid/Received After Gas: {amount_after_tax:,.2f} $QSE",
                 color=discord.Color.orange() if win_loss.startswith("You won") else discord.Color.orange()
             )
 
@@ -1881,8 +1881,8 @@ def setup_database():
                 symbol TEXT PRIMARY KEY,
                 available INTEGER64 NOT NULL,
                 price NUMERIC(20, 10) NOT NULL,
-                µPPN_required INTEGER NOT NULL,
-                µPPN_rewarded INTEGER NOT NULL
+                QSE_required INTEGER NOT NULL,
+                QSE_rewarded INTEGER NOT NULL
             )
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_stocks_symbol ON stocks(symbol);")
@@ -2512,13 +2512,24 @@ class CurrencySystem(commands.Cog):
         self.transaction_pool = []
         self.transaction_lock = asyncio.Lock()
         self.db_semaphore = asyncio.Semaphore()
-        # Trading Halt Bool
+        self.total_pool = 0
+
+
+        # Circuit Breaker Config
         self.is_halted = False
-        self.market_circuit_breaker =  False
-        self.stock_circuit_breaker = False
+        self.market_circuit_breaker =  True
+        self.stock_circuit_breaker = True
         self.not_trading = []
+        self.maintenance = ['12', 'contrariancraze', 'lol', 'polyinverse', 'p3:gold-reserve', 'p3:copper-reserve', 'p3:silver-reserve', 'p3:platinum-reserve', 'secureharbor']
         self.stock_monitor = defaultdict(list)
         self.last_market_value = 0.0
+        self.market_timeout = 300
+        self.market_limit = 10
+        self.stock_timeout = 300
+        self.stock_limit = 100
+        self.market_halts = 0
+        self.stock_halts = 0
+
 
 
 
@@ -2530,11 +2541,12 @@ class CurrencySystem(commands.Cog):
 
 
     async def is_trading_halted_stock(self, stock: str):
-        for i in self.not_trading:
+        halted_assets = self.not_trading + self.maintenance
+        for i in halted_assets:
             if i == stock.lower():
                 return True
-            else:
-                return False
+        return False
+
 
     def is_staking_qse_genesis(self, user_id):
         try:
@@ -2767,7 +2779,7 @@ class CurrencySystem(commands.Cog):
                     decimal_places = 8 if price < 0.01 else 2
                     embed.add_field(
                         name=f"High #{i}: {symbol}",
-                        value=f"Price: {price:,.{decimal_places}f} µPPN\nAvailable: {available:,}",
+                        value=f"Price: {price:,.{decimal_places}f} $QSE\nAvailable: {available:,}",
                         inline=False
                     )
 
@@ -2776,7 +2788,7 @@ class CurrencySystem(commands.Cog):
                     decimal_places = 8 if price < 0.01 else 2
                     embed.add_field(
                         name=f"Low #{i}: {symbol}",
-                        value=f"Price: {price:,.{decimal_places}f} µPPN\nAvailable: {available:,}",
+                        value=f"Price: {price:,.{decimal_places}f} $QSE\nAvailable: {available:,}",
                         inline=False
                     )
 
@@ -2918,7 +2930,7 @@ class CurrencySystem(commands.Cog):
 
 #Game Help
 
-    @commands.command(name='game-help', aliases=["help"], help='Display available commands for Discord µPPN.')
+    @commands.command(name='game-help', aliases=["help"], help='Display available commands for Discord $QSE.')
     async def game_help(self, ctx):
         stocks_help = """
     View stocks you hold
@@ -3318,7 +3330,7 @@ class CurrencySystem(commands.Cog):
         # Log the transfer
         await log_transfer(self, ledger_conn, ctx, bot_p3_address, get_user_id(self.P3addrConn, bot_p3_address), staker_id, staker_rewards)
 
-        await ctx.send(f"Successfully sent {staker_rewards:,.2f} µPPN rewards to user {get_p3_address(self.P3addrConn, staker_id)}.")
+        await ctx.send(f"Successfully sent {staker_rewards:,.2f} $QSE rewards to user {get_p3_address(self.P3addrConn, staker_id)}.")
 
 
 
@@ -3492,7 +3504,7 @@ class CurrencySystem(commands.Cog):
                 total_value = cursor.fetchone()[0] * etf_value
 
                 embed = Embed(title=f"ETF Metrics for ETF ID {etf_id}", color=discord.Color.green())
-                embed.add_field(name="Current Value", value=f"{etf_value:,.2f} µPPN", inline=False)
+                embed.add_field(name="Current Value", value=f"{etf_value:,.2f} $QSE", inline=False)
                 embed.add_field(name="Number of Holders", value=num_holders, inline=False)
 
                 if top_holders:
@@ -3502,7 +3514,7 @@ class CurrencySystem(commands.Cog):
                     embed.add_field(name="Top Holders", value="No one currently holds shares in this ETF.", inline=False)
 
                 # Include the total value in the footer
-                embed.set_footer(text=f"Total Value of Held ETFs: {total_value:,.2f} µPPN")
+                embed.set_footer(text=f"Total Value of Held ETFs: {total_value:,.2f} $QSE")
 
                 await ctx.send(embed=embed)
 
@@ -3551,16 +3563,35 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @commands.command(name="give", help="Give a specified amount of µPPN to another user.")
+    @commands.command(name="give", help="Give a specified amount of $QSE to another user.")
     async def give_addr(self, ctx, target, amount: int):
         sender_id = ctx.author.id
+        if amount <= 0:
+            await ctx.send("The amount to give should be greater than 0.")
+            return
+
+        sender_balance = get_user_balance(self.conn, sender_id)
+
+        if sender_balance < amount:
+            await ctx.send(f"{ctx.author.mention}, you don't have enough $QSE to give. Your current balance is {sender_balance:,.2f} $QSE.")
+            return
 
         # Check if the target address is the burn address
         if target.lower() == "p3:0x0000burn":
             # Deduct the tokens from the sender's balance (burn)
             update_user_balance(self.conn, sender_id, get_user_balance(self.conn, sender_id) - amount)
+            update_user_balance(self.conn, PBot, get_user_balance(self.conn, PBot) - amount)
             await log_transfer(self, ledger_conn, ctx, ctx.author.name, target, get_user_id(self.P3addrConn, self.bot_address), amount, is_burn=True)
-            await ctx.send(f"{amount:,.2f} µPPN has been burned.")
+            await log_transfer(self, ledger_conn, ctx, ctx.bot.user.name, target, get_user_id(self.P3addrConn, self.bot_address), amount, is_burn=True)
+            ticket_data = await get_ticket_data(self.conn, sender_id)
+
+            if ticket_data is None:
+                await update_ticket_data(self.conn, sender_id, amount, int(time.time()))
+            else:
+                ticket_quantity, _ = ticket_data
+                await update_ticket_data(self.conn, sender_id, ticket_quantity + amount, int(time.time()))
+            await ctx.send(f"{amount:,.0f} $QSE has been burned, received {amount:,.0f} Lottery tickets")
+            print(f"{get_p3_address(self.P3addrConn, sender_id)} burned {amount:,.0f} $QSE Token")
             return
 
         if target.startswith("P3:"):
@@ -3574,46 +3605,31 @@ class CurrencySystem(commands.Cog):
             await ctx.send("Please provide a valid P3 address.")
             return
 
-        if amount <= 0:
-            await ctx.send("The amount to give should be greater than 0.")
-            return
 
-        sender_balance = get_user_balance(self.conn, sender_id)
-
-        if sender_balance < amount:
-            await ctx.send(f"{ctx.author.mention}, you don't have enough µPPN to give. Your current balance is {sender_balance:,.2f} µPPN.")
-            return
 
         # Apply tax for transfers over 100 Trillion
-        if amount > 100000000000:
-            tax_amount = round(amount * 0.0115)
-            transfer_amount = amount - tax_amount
+        tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
+        tax_amount = round(amount * tax_percentage)
+        transfer_amount = amount - tax_amount
 
-            # Deduct the tax from the sender's balance
-            update_user_balance(self.conn, sender_id, sender_balance - transfer_amount)
+        # Deduct the tax from the sender's balance
+        update_user_balance(self.conn, sender_id, sender_balance - transfer_amount)
 
-            # Add the transfer amount to the recipient's balance
-            update_user_balance(self.conn, user_id, get_user_balance(self.conn, user_id) + transfer_amount)
+        # Add the transfer amount to the recipient's balance
+        update_user_balance(self.conn, user_id, get_user_balance(self.conn, user_id) + transfer_amount)
 
-            # Transfer the tax amount to the bot's address P3:03da907038
-            update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax_amount)
+        # Transfer the tax amount to the bot's address P3:03da907038
+        update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax_amount)
 
-            # Log the transfer with tax
-            await log_transfer(self, ledger_conn, ctx, ctx.author.name, target, user_id, amount)
-            await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), tax_amount)
-            await ctx.send(f"{ctx.author.mention}, you have successfully given {amount:,.2f} µPPN to {target}. A Gas of {tax_amount:,.2f} µPPN has been applied.")
-        else:
-            # No tax for transfers under or equal to 100 Trillion
-            update_user_balance(self.conn, sender_id, sender_balance - amount)
-            update_user_balance(self.conn, user_id, get_user_balance(self.conn, user_id) + amount)
-
-            # Log the transfer without tax
-            await log_transfer(self, ledger_conn, ctx, ctx.author.name, target, user_id, amount)
-            await ctx.send(f"{ctx.author.mention}, you have successfully given {amount:,.2f} µPPN to {target}.")
+        # Log the transfer with tax
+        await log_transfer(self, ledger_conn, ctx, ctx.author.name, target, user_id, amount)
+        await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), tax_amount)
+        await ctx.send(f"{ctx.author.mention}, you have successfully given {amount:,.0f} $QSE to {target}. A Gas of {tax_amount:,.2f} $QSE has been applied.")
 
 
 
-    @commands.command(name="daily", help="Claim your daily µPPN.")
+
+    @commands.command(name="daily", help="Claim your daily $QSE.")
     async def daily(self, ctx):
         await check_store_addr(self, ctx)
         async with self.lock:  # Use the asynchronous lock
@@ -3638,7 +3654,7 @@ class CurrencySystem(commands.Cog):
                 await log_transfer(self, ledger_conn, ctx, "P3 Bot", ctx.author.name, user_id, amount)
 
                 update_user_balance(self.conn, user_id, new_balance)
-                await ctx.send(f"{ctx.author.mention}, you have claimed {amount:,.2f} µPPN. Your new balance is: {new_balance:,.2f} µPPN.")
+                await ctx.send(f"{ctx.author.mention}, you have claimed {amount:,.2f} $QSE. Your new balance is: {new_balance:,.2f} $QSE.")
                 self.last_claimed[user_id] = current_time  # Update the last claimed time
             else:
                 time_left = 86400 - (current_time - self.last_claimed[user_id]).total_seconds()
@@ -3658,7 +3674,7 @@ class CurrencySystem(commands.Cog):
 
         # Format balance with commas and make it more visually appealing
         formatted_balance = "{:,}".format(balance)
-        formatted_balance = f"**{formatted_balance}** µPPN"
+        formatted_balance = f"**{formatted_balance}** $QSE"
 
         embed = discord.Embed(
             title="Balance",
@@ -3666,7 +3682,7 @@ class CurrencySystem(commands.Cog):
             color=discord.Color.blue()
         )
         embed.set_thumbnail(url="https://mirror.xyz/_next/image?url=https%3A%2F%2Fimages.mirror-media.xyz%2Fpublication-images%2F8XKxIUMy9CE8zg54-ZsP3.png&w=828&q=75")  # Add your own coin icon URL
-        embed.add_field(name="µPPN", value=formatted_balance, inline=False)
+        embed.add_field(name="$QSE", value=formatted_balance, inline=False)
         embed.set_footer(text="Thank you for using our currency system!")
 
         await ctx.send(embed=embed)
@@ -3679,7 +3695,7 @@ class CurrencySystem(commands.Cog):
         current_balance = get_user_balance(self.conn, user_id)
         new_balance = current_balance + amount
         update_user_balance(self.conn, user_id, new_balance)
-        await ctx.send(f"{ctx.author.mention}, you have added {amount:,.2f} µPPN. Your new balance is: {new_balance:,.2f} µPPN.")
+        await ctx.send(f"{ctx.author.mention}, you have added {amount:,.2f} $QSE. Your new balance is: {new_balance:,.2f} $QSE.")
 
 
 
@@ -3872,22 +3888,22 @@ class CurrencySystem(commands.Cog):
         )
         circulatingValue = circulating_supply * current_price
         formatet_circulating_value = '{:,}'.format(int(circulatingValue))
-        embed.add_field(name="Opening Price", value=f"{opening_price:,.2f} µPPN", inline=False)
-        embed.add_field(name="Current Price", value=f"{formatted_current_price} µPPN", inline=False)
+        embed.add_field(name="Opening Price", value=f"{opening_price:,.2f} $QSE", inline=False)
+        embed.add_field(name="Current Price", value=f"{formatted_current_price} $QSE", inline=False)
         embed.add_field(name="Change from Open", value=f"{opening_change:.4f}%", inline=False)
-        embed.add_field(name="Average Price", value=f"{average_price:,.11f} µPPN🔁", inline=False)
-        embed.add_field(name="Dynamic Minimum Price", value=f"{min_price:,.2f} µPPN", inline=False)
-        embed.add_field(name="Dynamic Max Price", value=f"{max_price:,.2f} µPPN", inline=False)
+        embed.add_field(name="Average Price", value=f"{average_price:,.11f} $QSE🔁", inline=False)
+        embed.add_field(name="Dynamic Minimum Price", value=f"{min_price:,.2f} $QSE", inline=False)
+        embed.add_field(name="Dynamic Max Price", value=f"{max_price:,.2f} $QSE", inline=False)
         embed.add_field(name="Circulating Supply", value=f"{circulating_supply:,} shares🔄", inline=False)
-        embed.add_field(name="Circulating Value", value=f"{formatet_circulating_value} µPPN")
+        embed.add_field(name="Circulating Value", value=f"{formatet_circulating_value} $QSE")
         embed.add_field(name="Daily Volume:", value=f"{daily_volume:,} shares", inline=False)
-        embed.add_field(name="Daily Volume Value:", value=f"{daily_volume_value:,.2f} µPPN", inline=False)
+        embed.add_field(name="Daily Volume Value:", value=f"{daily_volume_value:,.2f} $QSE", inline=False)
         embed.add_field(name="Daily Buy Volume:", value=f"{daily_buy_volume:,} shares 📈", inline=False)
-        embed.add_field(name="Daily Buy Volume Value:", value=f"{daily_buy_volume_value:,.2f} µPPN 📈", inline=False)
+        embed.add_field(name="Daily Buy Volume Value:", value=f"{daily_buy_volume_value:,.2f} $QSE 📈", inline=False)
         embed.add_field(name="Daily Sell Volume:", value=f"{daily_sell_volume:,} shares 📉", inline=False)
-        embed.add_field(name="Daily Sell Volume Value:", value=f"{daily_sell_volume_value:,.2f} µPPN 📉", inline=False)
-        embed.add_field(name="Total Buys💵", value=f"{formatted_total_buys} µPPN ({total_quantity_buys:,} buys📈)", inline=False)
-        embed.add_field(name="Total Sells💵", value=f"{formatted_total_sells} µPPN ({total_quantity_sells:,} sells📉)", inline=False)
+        embed.add_field(name="Daily Sell Volume Value:", value=f"{daily_sell_volume_value:,.2f} $QSE 📉", inline=False)
+        embed.add_field(name="Total Buys💵", value=f"{formatted_total_buys} $QSE ({total_quantity_buys:,} buys📈)", inline=False)
+        embed.add_field(name="Total Sells💵", value=f"{formatted_total_sells} $QSE ({total_quantity_sells:,} sells📉)", inline=False)
         embed.add_field(name="Valuation", value=valuation_label, inline=False)
         if etfs_containing_stock:
             embed.add_field(name="ETFs Containing Stock", value=", ".join(map(str, etfs_containing_stock)), inline=False)
@@ -3988,10 +4004,10 @@ class CurrencySystem(commands.Cog):
                     description=f"Name: {etf_name}\nDescription: {etf_description}\n",
                     color=discord.Color.blue()
                 )
-                embed.add_field(name="Total Buys", value=f"{formatted_total_buys} µPPN ({total_quantity_buys:,} buys)", inline=False)
-                embed.add_field(name="Total Sells", value=f"{formatted_total_sells} µPPN ({total_quantity_sells:,} sells)", inline=False)
-                embed.add_field(name="Average Price", value=f"{formatted_average_price} µPPN", inline=False)
-                embed.add_field(name="Current ETF Value", value=f"{formatted_etf_value} µPPN", inline=False)
+                embed.add_field(name="Total Buys", value=f"{formatted_total_buys} $QSE ({total_quantity_buys:,} buys)", inline=False)
+                embed.add_field(name="Total Sells", value=f"{formatted_total_sells} $QSE ({total_quantity_sells:,} sells)", inline=False)
+                embed.add_field(name="Average Price", value=f"{formatted_average_price} $QSE", inline=False)
+                embed.add_field(name="Current ETF Value", value=f"{formatted_etf_value} $QSE", inline=False)
                 embed.add_field(name="Valuation", value=valuation_label, inline=False)
 
                 await ctx.send(embed=embed)
@@ -4179,8 +4195,8 @@ class CurrencySystem(commands.Cog):
             # Format the values with commas and create an embed
             formatted_total_etf_value = '{:,.2f}'.format(total_etf_value)
             formatted_total_stock_value = '{:,.2f}'.format(total_stock_value)
-            formatted_undervalued_stocks = "\n".join([f"{stock[0]}: {'{:,.2f}'.format(stock[1])} µPPN" for stock in undervalued_stocks])
-            formatted_overvalued_stocks = "\n".join([f"{stock[0]}: {'{:,.2f}'.format(stock[1])} µPPN" for stock in overvalued_stocks])
+            formatted_undervalued_stocks = "\n".join([f"{stock[0]}: {'{:,.2f}'.format(stock[1])} $QSE" for stock in undervalued_stocks])
+            formatted_overvalued_stocks = "\n".join([f"{stock[0]}: {'{:,.2f}'.format(stock[1])} $QSE" for stock in overvalued_stocks])
             formatted_best_etf_id = best_etf_id if best_etf_id else "None"
             formatted_best_etf_value = '{:,.2f}'.format(best_etf_value)
             formatted_total_community_buys = '{:,.2f}'.format(total_community_buys)
@@ -4198,20 +4214,20 @@ class CurrencySystem(commands.Cog):
                 color=discord.Color.blue()
             )
             embed.set_thumbnail(url="attachment://market-stats.jpg")
-            embed.add_field(name="Total ETF Value", value=f"{formatted_total_etf_value} µPPN", inline=False)
-            embed.add_field(name="Total Market Value", value=f"{formatted_total_market_value} µPPN", inline=False)
+            embed.add_field(name="Total ETF Value", value=f"{formatted_total_etf_value} $QSE", inline=False)
+            embed.add_field(name="Total Market Value", value=f"{formatted_total_market_value} $QSE", inline=False)
             embed.add_field(name="Top 5 Undervalued Stocks", value=formatted_undervalued_stocks, inline=False)
             embed.add_field(name="Top 5 Overvalued Stocks", value=formatted_overvalued_stocks, inline=False)
-            embed.add_field(name="Best ETF to Buy", value=f"ETF {formatted_best_etf_id} ({best_etf_name}) with a value of {formatted_best_etf_value} µPPN", inline=False)
-            embed.add_field(name="Community Total Buys", value=f"{formatted_total_community_buys} µPPN", inline=False)
-            embed.add_field(name="Community Total Sells", value=f"{formatted_total_community_sells} µPPN", inline=False)
-            embed.add_field(name="Community Total Profits/Losses", value=f"{formatted_total_community_profits_losses} µPPN", inline=False)
+            embed.add_field(name="Best ETF to Buy", value=f"ETF {formatted_best_etf_id} ({best_etf_name}) with a value of {formatted_best_etf_value} $QSE", inline=False)
+            embed.add_field(name="Community Total Buys", value=f"{formatted_total_community_buys} $QSE", inline=False)
+            embed.add_field(name="Community Total Sells", value=f"{formatted_total_community_sells} $QSE", inline=False)
+            embed.add_field(name="Community Total Profits/Losses", value=f"{formatted_total_community_profits_losses} $QSE", inline=False)
             embed.add_field(name="Most Bought Stock", value=f"{formatted_most_bought_stock}", inline=False)
             embed.add_field(name="Least Bought Stock", value=f"{formatted_least_bought_stock}", inline=False)
             embed.add_field(name="Most Bought ETF", value=f"{formatted_most_bought_etf}", inline=False)
             embed.add_field(name="Least Bought ETF", value=f"{formatted_least_bought_etf}", inline=False)
             embed.add_field(name="Gas Fee", value=f"{gas_fee:,.2f}%", inline=False)
-#            embed.add_field(name="Total User-held Metals Value", value='\n'.join([f"{metal}: {'{:,.2f}'.format(value)} µPPN" for metal, value in total_metals_values.items()]), inline=False)
+#            embed.add_field(name="Total User-held Metals Value", value='\n'.join([f"{metal}: {'{:,.2f}'.format(value)} $QSE" for metal, value in total_metals_values.items()]), inline=False)
 
             # Send the embed as a message
             await ctx.send(embed=embed)
@@ -4616,7 +4632,7 @@ class CurrencySystem(commands.Cog):
             total_amount = sum(received_token[1] for received_token in received_tokens)
 
             # Calculate 10% of the total amount
-            refund_amount = total_amount * 0.1
+            refund_amount = total_amount * 0.05
 
             # Query user_addresses to get the list of users
             P3cursor = P3conn.cursor()
@@ -4696,7 +4712,7 @@ class CurrencySystem(commands.Cog):
             total_amount = sum(received_token[1] for received_token in received_tokens)
 
             # Calculate 10% of the total amount
-            refund_amount = total_amount * 0.1
+            refund_amount = total_amount * 0.05
 
             # Query user_addresses to get the list of users
             P3cursor = P3conn.cursor()
@@ -4725,7 +4741,7 @@ class CurrencySystem(commands.Cog):
             # Create an embed with emojis
             embed = discord.Embed(title=f"💸 {title_prefix} Gas Refund Calculation 💸", color=0x42F56C)
             embed.add_field(name="💰 Total amount received", value=f"{total_amount:,.2f} tokens", inline=False)
-            embed.add_field(name="💸 10% of the total amount", value=f"{refund_amount:,.2f} tokens", inline=False)
+            embed.add_field(name="💸 5% of the total amount", value=f"{refund_amount:,.2f} tokens", inline=False)
             embed.add_field(name="👥 Number of recipients", value=f"{num_recipients}", inline=False)
             embed.add_field(name="💳 Gas refund amount per user", value=f"{individual_refund:,.2f} tokens", inline=False)
             embed.add_field(name="🕕 Gas collected in the last 5 minutes", value=f"{tax_last_5_minutes:,.2f} tokens", inline=False)
@@ -5037,7 +5053,9 @@ class CurrencySystem(commands.Cog):
                         else:
                             await ctx.send(f"Transaction Error: {symbol} must be Stock, Item, or ETF")
         except Exception as e:
-            await ctx.send(f"Transaction failed: {str(e)}")
+            embed = discord.Embed(description=f"Transaction failed: for {symbol} try again shortly", color=discord.Color.red())
+            await ctx.send(embed=embed)
+            print(f"Transaction failed: {str(e)}")
 
     async def process_transactions(self, ctx):
         print("Grabbing Pool")
@@ -5048,9 +5066,13 @@ class CurrencySystem(commands.Cog):
                 if not self.transaction_pool:
                     break
                 print(f"Pool Size: {len(self.transaction_pool)}")
+                if len(self.transaction_pool) > self.total_pool:
+                    pool_difference = (len(self.transaction_pool) - self.total_pool)
+                    self.total_pool += pool_difference
                 print(f"Pool: {self.transaction_pool}")
                 ctx, type, symbol, amount, action = self.transaction_pool.pop(0)
             await self.process_transaction(ctx, type, symbol, amount, action)
+            await self.check_market(ctx)
 
 
 
@@ -5066,18 +5088,19 @@ class CurrencySystem(commands.Cog):
             print(f"Market Monitor: {percentage_change}%")
 
             if self.market_circuit_breaker == True:
-                if abs(percentage_change) >= 10:
+                if abs(percentage_change) >= self.market_limit:
                     # Halt trading for 30 minutes
                     self.is_halted = True
-                    embed = discord.Embed(description="Trading Halted due to a significant market change. Waiting for 30 minutes.", color=discord.Color.red())
+                    embed = discord.Embed(description=f"Trading Halted due to a significant market change. Waiting for {(self.market_timeout / 60)} minutes.", color=discord.Color.red())
                     await ctx.send(embed=embed)
 
+                    self.market_halts += 1
                     self.last_market_value = 0.0
 
-                    await asyncio.sleep(1800)  # Sleep for 30 minutes
+                    await asyncio.sleep(self.market_timeout)  # Sleep for 30 minutes
 
                     self.is_halted = False
-                    embed = discord.Embed(description="Trading Resumed after 30 minutes.", color=discord.Color.green())
+                    embed = discord.Embed(description="Trading Resumed after 5 minutes.", color=discord.Color.green())
                     await ctx.send(embed=embed)
 
         self.last_market_value = etf_value
@@ -5104,18 +5127,41 @@ class CurrencySystem(commands.Cog):
 
             # Print a statement if the price change is more than 100%
             if self.stock_circuit_breaker == True:
-                if abs(percentage_change) > 100:
+                if abs(percentage_change) > self.stock_limit:
                     print(f"Trading Halted for {symbol} due to significant market change")
-                    embed = discord.Embed(description=f"Trading Halted due to a significant market change for {symbol}. Waiting for 5 minutes.", color=discord.Color.red())
+                    embed = discord.Embed(description=f"Trading Halted due to a significant market change for {symbol}. Waiting for {(self.stock_timeout / 60)} minutes.", color=discord.Color.red())
                     await ctx.send(embed=embed)
+                    self.stock_halts += 1
                     self.not_trading.append(symbol.lower())
-                    await asyncio.sleep(300)
+                    await asyncio.sleep(self.stock_timeout)
                     self.stock_monitor.pop(symbol)
                     self.not_trading.remove(symbol.lower())
                     return
 
 
+    @commands.command(name="circuit_stats", aliases=["qsec_config", "qsec_stats"])
+    async def circuit_stats(self, ctx):
+        if self.is_halted:
+            color=discord.Color.red()
+        else:
+            color=discord.Color.blue()
+        embed = discord.Embed(title=f"QSec Platform Config/Stats for QSE Blockchain", color=discord.Color.blue())
+        embed.add_field(name="Market Halted:", value=f"{self.is_halted}", inline=False)
+        embed.add_field(name="Assets Halted", value=f"{self.not_trading}", inline=False)
+        embed.add_field(name="Assets in Debug", value=f"{self.maintenance}", inline=False)
+        embed.add_field(name="Market Circuit Breaker:", value=f"{self.market_circuit_breaker}", inline=False)
+        embed.add_field(name="Market Circuit Limit:", value=f"{self.market_limit}%", inline=False)
+        embed.add_field(name="Market Timeout:", value=f"{(self.market_timeout / 60):,.0f} minutes", inline=False)
+        embed.add_field(name="Stock Circuit Breaker:", value=f"{self.stock_circuit_breaker}", inline=False)
+        embed.add_field(name="Stock Circuit Limit:", value=f"{self.stock_limit}%", inline=False)
+        embed.add_field(name="Stock Timeout:", value=f"{(self.stock_timeout / 60):,.0f} minutes", inline=False)
+        embed.add_field(name="Current Pool Size:", value=f"{len(self.transaction_pool)}", inline=False)
+        embed.add_field(name="Highest Pool Size:", value=f"{self.total_pool}", inline=False)
+        embed.add_field(name="Market Halts since last Reload:", value=f"{self.market_halts}", inline=False)
+        embed.add_field(name="Stock Halts since last Reload:", value=f"{self.stock_halts}", inline=False)
 
+
+        await ctx.send(embed=embed)
 
     @commands.command(name="circuit_breaker")
     @is_allowed_user(930513222820331590, PBot)
@@ -5170,6 +5216,10 @@ class CurrencySystem(commands.Cog):
 
     @commands.command(name="buy", help="Buy Stocks, ETFs, and Items")
     async def buy(self, ctx, type: str, symbol, amount):
+        if int(amount) > 500000000000:
+            embed = discord.Embed(description="Can only purchase, 500,000,000,000 at a time", color=discord.Color.red())
+            await ctx.send(embed=embed)
+            return
         if await self.is_trading_halted() == True:
             embed = discord.Embed(description="Trading Temporarily Halted", color=discord.Color.red())
             await ctx.send(embed=embed)
@@ -5178,9 +5228,9 @@ class CurrencySystem(commands.Cog):
             embed = discord.Embed(description=f"Trading Temporarily Halted for {symbol}", color=discord.Color.red())
             await ctx.send(embed=embed)
             return
-        await self.check_stock_change(ctx, symbol)
-        await self.check_market(ctx)
         await check_store_addr(self, ctx)
+        if type.lower() == "stock":
+            await self.check_stock_change(ctx, symbol)
         user_id = ctx.author.id
         p3addr = get_p3_address(self.P3addrConn, user_id)
 
@@ -5197,6 +5247,10 @@ class CurrencySystem(commands.Cog):
 
     @commands.command(name="sell", help="Buy Stocks, ETFs, and Items")
     async def sell(self, ctx, type: str, symbol, amount):
+        if int(amount) > 500000000000:
+            embed = discord.Embed(description="Can only sell, 500,000,000,000 at a time", color=discord.Color.red())
+            await ctx.send(embed=embed)
+            return
         if await self.is_trading_halted() == True:
             await ctx.send("All Trading Temporarily Halted")
             return
@@ -5204,9 +5258,10 @@ class CurrencySystem(commands.Cog):
             embed = discord.Embed(description=f"Trading Temporarily Halted for {symbol}", color=discord.Color.red())
             await ctx.send(embed=embed)
             return
-        await self.check_stock_change(ctx, symbol)
-        await self.check_market(ctx)
+
         await check_store_addr(self, ctx)
+        if type.lower() == "stock":
+            await self.check_stock_change(ctx, symbol)
         user_id = ctx.author.id
         p3addr = get_p3_address(self.P3addrConn, user_id)
 
@@ -5251,7 +5306,7 @@ class CurrencySystem(commands.Cog):
             await ctx.send("Amount must be a positive number.")
             return
         current_timestamp = datetime.utcnow()
-        self.last_buyers = [entry for entry in self.last_buyers if (current_timestamp - entry[1]).total_seconds() <= 5]
+        self.last_buyers = [entry for entry in self.last_buyers if (current_timestamp - entry[1]).total_seconds() <= self.calculate_average_time_type("buy_stock")]
         user_id = ctx.author.id
         P3addrConn = sqlite3.connect("P3addr.db")
         P3addr = get_p3_address(P3addrConn, user_id)
@@ -5276,7 +5331,7 @@ class CurrencySystem(commands.Cog):
         cursor = self.conn.cursor()
 
         if self.check_last_action(self.last_buyers, user_id, current_timestamp):
-            await ctx.send("You can't make another buy within 5 seconds of your last action.")
+#            await ctx.send(f"You can't make another buy within {self.calculate_average_time_type("buy_stock")} seconds of your last action.")
             return
         # Add the current action to the list
         self.last_buyers.append((user_id, current_timestamp))
@@ -5419,8 +5474,8 @@ class CurrencySystem(commands.Cog):
 
         if total_cost > current_balance:
             missing_amount = total_cost - current_balance
-            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy these stocks. "
-                           f"You need {missing_amount:,.2f} more µPPN, including Gas, to complete this purchase.")
+            await ctx.send(f"{ctx.author.mention}, you do not have enough $QSE to buy these stocks. "
+                           f"You need {missing_amount:,.2f} more $QSE, including Gas, to complete this purchase.")
             return
 
         new_balance = current_balance - total_cost
@@ -5467,8 +5522,8 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
         embed.add_field(name="Amount:", value=f"{amount:,.2f}", inline=False)
-        embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} µPPN", inline=False)
-        embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} µPPN", inline=False)
+        embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
+        embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
         tax_rate = tax_percentage * 100
         embed.add_field(name="Gas Rate:", value=f"{tax_rate:.2f}%", inline=False)
         elapsed_time = timeit.default_timer() - self.buy_timer_start
@@ -5496,7 +5551,7 @@ class CurrencySystem(commands.Cog):
     @is_allowed_user(930513222820331590, PBot)
     async def sell_stock(self, ctx, stock_name: str, amount: int):
         current_timestamp = datetime.utcnow()
-        self.last_sellers = [entry for entry in self.last_sellers if (current_timestamp - entry[1]).total_seconds() <= 5]
+        self.last_sellers = [entry for entry in self.last_sellers if (current_timestamp - entry[1]).total_seconds() <= self.calculate_average_time_type("sell_stock")]
         user_id = ctx.author.id
         P3addrConn = sqlite3.connect("P3addr.db")
         P3addr = get_p3_address(P3addrConn, user_id)
@@ -5523,7 +5578,7 @@ class CurrencySystem(commands.Cog):
 #        result = await check_impact(cursor, ctx, stock_name, amount, is_buy=False)
 
         if self.check_last_action(self.last_sellers, user_id, current_timestamp):
-            await ctx.send("You can't make another sell within 5 seconds of your last action.")
+#            await ctx.send(f"You can't make another sell within {self.calculate_average_time_type("sell_stock")} seconds of your last action.")
             return
             # Add the current action to the list
         self.last_sellers.append((user_id, current_timestamp))
@@ -5636,11 +5691,11 @@ class CurrencySystem(commands.Cog):
                     if buyer:
                         try:
                             await buyer.send(f"Your buy order for {order_quantity:,.2f} stocks of '{stock_name}' at {order_price:,.2f} each has been filled. "
-                                             f"Total: {total_earnings:,.2f} µPPN. New balance: {formatted_seller_balance} µPPN.")
+                                             f"Total: {total_earnings:,.2f} $QSE. New balance: {formatted_seller_balance} $QSE.")
                         except discord.errors.Forbidden:
                             print(f"Unable to send a message to the buyer with ID {buyer_id}. They may have blocked DMs or disabled them.")
 
-                    await ctx.send(f"{ctx.author.mention}, you have sold {amount:,.2f} stocks of '{stock_name}' to a buy order from the order book. Your new balance is: {formatted_seller_balance} µPPN.")
+                    await ctx.send(f"{ctx.author.mention}, you have sold {amount:,.2f} stocks of '{stock_name}' to a buy order from the order book. Your new balance is: {formatted_seller_balance} $QSE.")
 
                     amount -= order_quantity  # Subtract the sold quantity from the requested amount
 
@@ -5702,8 +5757,8 @@ class CurrencySystem(commands.Cog):
                 embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
                 embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
                 embed.add_field(name="Amount:", value=f"{amount:,.2f}", inline=False)
-                embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} µPPN", inline=False)
-                embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} µPPN", inline=False)
+                embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
+                embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
                 tax_rate = tax_percentage * 100
                 embed.add_field(name="Gas Rate:", value=f"{tax_rate:.2f}%", inline=False)
                 elapsed_time = timeit.default_timer() - self.sell_timer_start
@@ -5809,13 +5864,36 @@ class CurrencySystem(commands.Cog):
     @is_allowed_user(930513222820331590)
     async def vacuum_database(self, ctx):
         try:
+            self.halt_trading = True
+            embed = discord.Embed(description=f"Trading Halted for Database Vaccum", color=discord.Color.yellow())
+            await ctx.send(embed=embed)
+            embed = discord.Embed(description=f"Currency System Vaccum Started", color=discord.Color.yellow())
+            await ctx.send(embed=embed)
             conn = sqlite3.connect("currency_system.db")
             conn.execute("VACUUM;")
             conn.close()
-            await ctx.send("Database vacuumed successfully.")
+            embed = discord.Embed(description=f"Currency System Vaccum Succesful", color=discord.Color.green())
+            await ctx.send(embed=embed)
+            embed = discord.Embed(description=f"Address Database Vaccum Started", color=discord.Color.yellow())
+            await ctx.send(embed=embed)
+            conn = sqlite3.connect("P3addr.db")
+            conn.execute("VACUUM;")
+            conn.close()
+            embed = discord.Embed(description=f"Address Database Vaccum Succesful", color=discord.Color.green())
+            await ctx.send(embed=embed)
+            embed = discord.Embed(description=f"Ledger Database Vaccum Started", color=discord.Color.yellow())
+            await ctx.send(embed=embed)
+            conn = sqlite3.connect("p3ledger.db")
+            conn.execute("VACUUM;")
+            conn.close()
+            embed = discord.Embed(description=f"Ledger Database Vaccum Succesful", color=discord.Color.green())
+            await ctx.send(embed=embed)
         except Exception as e:
             await ctx.send(f"An error occurred while vacuuming the database: {str(e)}")
-
+        finally:
+            self.halt_trading = False
+            embed = discord.Embed(description=f"Trading Resumed, Database Vacuum Completed", color=discord.Color.green())
+            await ctx.send(embed=embed)
 
     @commands.command(name="my_stocks", help="Shows the user's stocks.")
     async def my_stocks(self, ctx, stock_name: str = None):
@@ -5954,7 +6032,7 @@ class CurrencySystem(commands.Cog):
         end_index = start_index + items_per_page
 
         for stock in stocks[start_index:end_index]:
-            stock_info = f"{stock[0]}: {stock[1]:,} (Price: {stock[2]:,.2f})"
+            stock_info = f"{stock[0]}: {stock[1]:,.0f} (Price: {stock[2]:,.2f})"
             embed.add_field(name="Stock", value=stock_info, inline=False)
 
         message = await ctx.send(embed=embed)
@@ -6031,7 +6109,7 @@ class CurrencySystem(commands.Cog):
                 decimal_places = 8 if price < 0.01 else 2
                 embed.add_field(
                     name=f"#{i}: {symbol}",
-                    value=f"Price: {price:,.{decimal_places}f} µPPN\nAvailable: {available:,}",
+                    value=f"Price: {price:,.{decimal_places}f} $QSE\nAvailable: {available:,}",
                     inline=False
                 )
 
@@ -6453,7 +6531,7 @@ class CurrencySystem(commands.Cog):
 
             total_amount = cursor.fetchone()[0]
 
-            await ctx.send(f"The total transactions for {ctx.message.author.mention} this month is: {total_amount:,.2f} µPPN.")
+            await ctx.send(f"The total transactions for {ctx.message.author.mention} this month is: {total_amount:,.2f} $QSE.")
 
         except Exception as e:
             await ctx.send(f"An error occurred: {e}")
@@ -6659,7 +6737,7 @@ class CurrencySystem(commands.Cog):
         # Log the stock transfer
         await log_stock_transfer(self, ledger_conn, ctx, ctx.author, user_id, symbol, amount)
 
-        await ctx.send(f"Sent {amount} of {symbol} to {target}.")
+        await ctx.send(f"Sent {amount:,} of {symbol} to {target}.")
 
 
     @commands.command(name="add_stock", help="Add a new stock. Provide the stock symbol, name, price, total supply, and available amount.")
@@ -7073,8 +7151,8 @@ class CurrencySystem(commands.Cog):
         is_buy = type.lower() == "buy"
         color = discord.Color.green() if is_buy else discord.Color.red()
         embed = discord.Embed(title=f"Stock Price {'Buy' if is_buy else 'Sell'} Update for {STABLE_STOCK}", color=color)
-        embed.add_field(name="Old Price", value=f"{current_stable_price:,.2f} µPPN", inline=False)
-        embed.add_field(name="New Price", value=f"{new_price:,.2f} µPPN", inline=False)
+        embed.add_field(name="Old Price", value=f"{current_stable_price:,.2f} $QSE", inline=False)
+        embed.add_field(name="New Price", value=f"{new_price:,.2f} $QSE", inline=False)
 
         await ctx.send(embed=embed)
 
@@ -7138,15 +7216,16 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="inverseStock")
     @is_allowed_user(930513222820331590, PBot)
     async def inverseStock(self, ctx, type: str):
-        for symbol in inverseStocks:
-            if type.lower() == "buy":
-                boosterAmount = 75000000
-                await self.sell_stock_for_bot(ctx, symbol, boosterAmount)
-            elif type.lower() == "sell":
-                boosterAmount = 150000000
-                await self.buy_stock_for_bot(ctx, symbol, boosterAmount)
-            else:
-                return
+        return
+#        for symbol in inverseStocks:
+#            if type.lower() == "buy":
+#                boosterAmount = 75000000
+#                await self.sell_stock_for_bot(ctx, symbol, boosterAmount)
+#            elif type.lower() == "sell":
+#                boosterAmount = 150000000
+#                await self.buy_stock_for_bot(ctx, symbol, boosterAmount)
+#            else:
+#                return
 
 
 
@@ -7300,7 +7379,7 @@ class CurrencySystem(commands.Cog):
                     description=f"{supply_boost} shares have been unlocked for {stock_name}.",
                     color=discord.Color.green()
                 )
-                embed.add_field(name="Current Price", value=f"{current_price:,.2f} µPPN", inline=False)
+                embed.add_field(name="Current Price", value=f"{current_price:,.2f} $QSE", inline=False)
                 embed.add_field(name="Total Supply", value=f"{total_supply:,.2f} shares", inline=True)
                 embed.add_field(name="Available Supply", value=f"{current_supply:,.2f} shares", inline=True)
 
@@ -7311,7 +7390,7 @@ class CurrencySystem(commands.Cog):
                     description=f"{supply_boost} shares have been unlocked for {reward_stock}.",
                     color=discord.Color.green()
                 )
-                embed.add_field(name="Current Price", value=f"{reward_price:,.2f} µPPN", inline=False)
+                embed.add_field(name="Current Price", value=f"{reward_price:,.2f} $QSE", inline=False)
                 embed.add_field(name="Total Supply", value=f"{reward_supply:,.2f} shares", inline=True)
                 embed.add_field(name="Available Supply", value=f"{reward_current:,.2f} shares", inline=True)
 
@@ -7442,7 +7521,7 @@ class CurrencySystem(commands.Cog):
                 if stock_price:
                     etf_value += stock_price[0] * quantity
 
-            embed.add_field(name=f"ETF ID: {etf_id}", value=f"Name: {etf_name}\nValue: {etf_value:,.2f} µPPN", inline=False)
+            embed.add_field(name=f"ETF ID: {etf_id}", value=f"Name: {etf_name}\nValue: {etf_value:,.2f} $QSE", inline=False)
 
         await ctx.message.delete()
         await ctx.send(embed=embed)
@@ -7474,9 +7553,9 @@ class CurrencySystem(commands.Cog):
 
             total_value += (etf_value or 0) * quantity
             if quantity != 0.0:
-                embed.add_field(name=f"ETF ID: {etf_id}", value=f"Name: {etf_name}\nQuantity: {quantity:,}\nCurrent ETF value: {etf_value:,.2f}\nValue: {(etf_value or 0) * quantity:,.2f} µPPN", inline=False)
+                embed.add_field(name=f"ETF ID: {etf_id}", value=f"Name: {etf_name}\nQuantity: {quantity:,}\nCurrent ETF value: {etf_value:,.2f}\nValue: {(etf_value or 0) * quantity:,.2f} $QSE", inline=False)
 
-        embed.set_footer(text=f"Total Value: {total_value:,.2f} µPPN")
+        embed.set_footer(text=f"Total Value: {total_value:,.2f} $QSE")
         await ctx.send(embed=embed)
 
 
@@ -7593,7 +7672,7 @@ class CurrencySystem(commands.Cog):
         embeds = []
         for i, stock_chunk in enumerate(stock_chunks, start=1):
             embed = discord.Embed(title=f"ETF Information (ETF ID: {etf_id})", color=discord.Color.blue())
-            embed.add_field(name="Stock", value="Price (µPPN) - Available Supply", inline=False)
+            embed.add_field(name="Stock", value="Price ($QSE) - Available Supply", inline=False)
             for stock in stock_chunk:
                 symbol = stock[0]
                 price = stock[1]
@@ -7695,7 +7774,7 @@ class CurrencySystem(commands.Cog):
 
                                 await self.sell_stock_for_bot(ctx, chosen_stock, boost)
                     except Exception as e:
-                        await ctx.send(f"Transaction failed: {str(e)}")
+                        print(f"Transaction failed: {str(e)}")
 
             etf_6_value = await get_etf_value(self.conn, 6)
             etf_6_value_formatted = locale.format_string("%0.2f", etf_6_value, grouping=True)
@@ -7788,7 +7867,7 @@ class CurrencySystem(commands.Cog):
 
             self.run_counter += 1
             gas = self.calculate_tax_percentage(ctx, "sell_etf") * 100
-            print(f"Gas Debug: {gas}% - Counter: {self.run_counter}")
+            print(f"Gas Debug: {gas}%\nCounter: {self.run_counter}\nMarket: {etf_6_value_formatted}({percentage_change:,.5f}%)\nTrading Halted: {self.is_halted}\nHalted Stocks: {self.not_trading}\nStocks in maintenance: {self.maintenance}")
 
             if self.run_counter == 2016:
                 self.buy_stock_avg = [1]
@@ -7817,7 +7896,7 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="ETF:", value=f"{etf_id}", inline=False)
         embed.add_field(name="Amount:", value=f"{quantity:,.2f}", inline=False)
-        embed.add_field(name="Value:", value=f"{etf_value:,.2f} µPPN", inline=False)
+        embed.add_field(name="Value:", value=f"{etf_value:,.2f} $QSE", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
         await ctx.send(embed=embed)
@@ -7828,9 +7907,9 @@ class CurrencySystem(commands.Cog):
 
 
         current_timestamp = datetime.utcnow()
-        self.last_buyers = [entry for entry in self.last_buyers if (current_timestamp - entry[1]).total_seconds() <= 5]
+        self.last_buyers = [entry for entry in self.last_buyers if (current_timestamp - entry[1]).total_seconds() <= self.calculate_average_time_type("buy_etf")]
         if self.check_last_action(self.last_buyers, user_id, current_timestamp):
-            await ctx.send("You can't make another buy within 30 seconds of your last action.")
+#            await ctx.send(f"You can't make another buy within {self.calculate_average_time_type("buy_etf")} seconds of your last action.")
             return
         # Add the current action to the list
         self.last_buyers.append((user_id, current_timestamp))
@@ -7863,7 +7942,7 @@ class CurrencySystem(commands.Cog):
         if total_cost_with_tax > current_balance:
             # Calculate the missing amount needed to complete the transaction including tax.
             missing_amount = total_cost - current_balance
-            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy this etf. You need {missing_amount:,.2f} more µPPN, including Gas, to complete this purchase.")
+            await ctx.send(f"{ctx.author.mention}, you do not have enough $QSE to buy this etf. You need {missing_amount:,.2f} more $QSE, including Gas, to complete this purchase.")
             return
 
         new_balance = current_balance - total_cost_with_tax
@@ -7908,9 +7987,9 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="ETF:", value=f"{etf_id}", inline=False)
         embed.add_field(name="Amount:", value=f"{quantity:,.2f}", inline=False)
-        embed.add_field(name="Total Cost w/Gas:", value=f"{total_cost_with_tax:,.2f} µPPN", inline=False)
-        embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} µPPN", inline=False)
-        embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} µPPN", inline=False)
+        embed.add_field(name="Total Cost w/Gas:", value=f"{total_cost_with_tax:,.2f} $QSE", inline=False)
+        embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
+        embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
         tax_rate = tax_percentage * 100
         embed.add_field(name="Gas Rate:", value=f"{tax_rate:.2f}%", inline=False)
         embed.add_field(name="Transaction Time:", value=f"{elapsed_time:.2f} seconds", inline=False)
@@ -7924,8 +8003,8 @@ class CurrencySystem(commands.Cog):
                 Action: Buy
                 User: {generate_crypto_address(user_id)}
                 Amount: {quantity:,}
-                Price: {etf_value:,.2f} µPPN
-                Gas Paid: {fee:,.2f} µPPN
+                Price: {etf_value:,.2f} $QSE
+                Gas Paid: {fee:,.2f} $QSE
                 Transaction Time: {elapsed_time:.2f}
                 Average Transaction Time: {avg_time:.2f}
                 Gas Fee: {(self.calculate_tax_percentage(ctx, "buy_etf") * 100):.2f}%
@@ -7953,7 +8032,7 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="ETF:", value=f"{etf_id}", inline=False)
         embed.add_field(name="Amount:", value=f"{quantity:,.2f}", inline=False)
-        embed.add_field(name="Value:", value=f"{etf_value:,.2f} µPPN", inline=False)
+        embed.add_field(name="Value:", value=f"{etf_value:,.2f} $QSE", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
         await ctx.send(embed=embed)
@@ -7962,9 +8041,9 @@ class CurrencySystem(commands.Cog):
 
 
         current_timestamp = datetime.utcnow()
-        self.last_sellers = [entry for entry in self.last_sellers if (current_timestamp - entry[1]).total_seconds() <= 5]
+        self.last_sellers = [entry for entry in self.last_sellers if (current_timestamp - entry[1]).total_seconds() <= self.calculate_average_time_type("sell_etf")]
         if self.check_last_action(self.last_sellers, user_id, current_timestamp):
-            await ctx.send("You can't make another sell within 30 seconds of your last action.")
+#            await ctx.send(f"You can't make another sell within {self.calculate_average_time_type("sell_etf")} seconds of your last action.")
             return
             # Add the current action to the list
         self.last_sellers.append((user_id, current_timestamp))
@@ -8030,9 +8109,9 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="ETF:", value=f"{etf_id}", inline=False)
         embed.add_field(name="Amount:", value=f"{quantity:,.2f}", inline=False)
-        embed.add_field(name="Total Sale w/Gas:", value=f"{total_sale_amount_with_tax:,.2f} µPPN", inline=False)
-        embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} µPPN", inline=False)
-        embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} µPPN", inline=False)
+        embed.add_field(name="Total Sale w/Gas:", value=f"{total_sale_amount_with_tax:,.2f} $QSE", inline=False)
+        embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
+        embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
         tax_rate = tax_percentage * 100
         embed.add_field(name="Gas Rate:", value=f"{tax_rate:.2f}%", inline=False)
         embed.add_field(name="Transaction Time:", value=f"{elapsed_time:.2f} seconds", inline=False)
@@ -8047,8 +8126,8 @@ class CurrencySystem(commands.Cog):
                 Action: Sell
                 User: {generate_crypto_address(user_id)}
                 Amount: {quantity:,}
-                Price: {etf_value:,.2f} µPPN
-                Gas Paid: {fee:,.2f} µPPN
+                Price: {etf_value:,.2f} $QSE
+                Gas Paid: {fee:,.2f} $QSE
                 Transaction Time: {elapsed_time:.2f}
                 Average Transaction Time: {avg_time:.2f}
                 Gas Fee: {(self.calculate_tax_percentage(ctx, "sell_etf") * 100):.2f}%
@@ -8240,7 +8319,7 @@ class CurrencySystem(commands.Cog):
         cost = quantity * ticketPrice
 
         if user_balance < cost:
-            await ctx.send(f"{ctx.author.mention}, you don't have enough µPPN to buy {quantity} tickets. You need {cost} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, you don't have enough $QSE to buy {quantity} tickets. You need {cost} $QSE.")
             return
 
         # Calculate the tax amount based on dynamic factors
@@ -8326,7 +8405,7 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, you have no tickets.")
         else:
             ticket_quantity, _ = ticket_data
-            await ctx.send(f"{ctx.author.mention}, you have {ticket_quantity} tickets.")
+            await ctx.send(f"{ctx.author.mention}, you have {ticket_quantity:,.0f} tickets.")
 
 
 
@@ -8352,7 +8431,7 @@ class CurrencySystem(commands.Cog):
             item_price = item[2]
             is_usable = item[3]
 
-            embed.add_field(name=item_name, value=f"Description: {item_description}\nPrice: {item_price} µPPN\nUsable: {'Yes' if is_usable else 'No'}", inline=False)
+            embed.add_field(name=item_name, value=f"Description: {item_description}\nPrice: {item_price} $QSE\nUsable: {'Yes' if is_usable else 'No'}", inline=False)
 
         await ctx.send(embed=embed)
 
@@ -8395,13 +8474,13 @@ class CurrencySystem(commands.Cog):
             formatted_quantity = "{:,}".format(quantity)
             formatted_item_value = "{:,.2f}".format(item_value)
 
-            embed.add_field(name=item_name, value=f"Description: {item_description}\nQuantity: {formatted_quantity}\nValue: {formatted_item_value} µPPN", inline=False)
+            embed.add_field(name=item_name, value=f"Description: {item_description}\nQuantity: {formatted_quantity}\nValue: {formatted_item_value} $QSE", inline=False)
 
         # Format the total inventory value with commas
         formatted_total_value = "{:,.2f}".format(total_value)
 
         # Add the total value of the inventory to the embed
-        embed.add_field(name="Total Inventory Value", value=f"{formatted_total_value} µPPN", inline=False)
+        embed.add_field(name="Total Inventory Value", value=f"{formatted_total_value} $QSE", inline=False)
 
         await ctx.send(embed=embed)
 
@@ -8536,7 +8615,7 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="Item:", value=f"{item_name}", inline=False)
         embed.add_field(name="Amount:", value=f"{quantity:,.2f}", inline=False)
-#        embed.add_field(name="Value:", value=f"{etf_value:,.2f} µPPN", inline=False)
+#        embed.add_field(name="Value:", value=f"{etf_value:,.2f} $QSE", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
         await ctx.send(embed=embed)
@@ -8563,7 +8642,7 @@ class CurrencySystem(commands.Cog):
         current_balance = get_user_balance(self.conn, user_id)
 
         if total_cost + tax_amount > current_balance:
-            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to buy these items.")
+            await ctx.send(f"{ctx.author.mention}, you do not have enough $QSE to buy these items.")
             return
 
         new_balance = current_balance - (total_cost + tax_amount)
@@ -8638,8 +8717,8 @@ class CurrencySystem(commands.Cog):
             embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
             embed.add_field(name="Item:", value=f"{item_name}", inline=False)
             embed.add_field(name="Amount:", value=f"{quantity:,.2f}", inline=False)
-            embed.add_field(name="Value:", value=f"{total_cost:,.2f} µPPN", inline=False)
-            embed.add_field(name="Gas:", value=f"{tax_amount:,.2f} µPPN", inline=False)
+            embed.add_field(name="Value:", value=f"{total_cost:,.2f} $QSE", inline=False)
+            embed.add_field(name="Gas:", value=f"{tax_amount:,.2f} $QSE", inline=False)
             embed.add_field(name="Reserve Stock:", value=f"{stock_symbol}", inline=False)
             embed.add_field(name="Shares purchased by Reserve:", value=f"{shares_to_buy:,}", inline=False)
             embed.set_footer(text=f"Timestamp: {current_timestamp}")
@@ -8681,7 +8760,7 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="Item:", value=f"{item_name}", inline=False)
         embed.add_field(name="Amount:", value=f"{quantity:,.2f}", inline=False)
-#        embed.add_field(name="Value:", value=f"{etf_value:,.2f} µPPN", inline=False)
+#        embed.add_field(name="Value:", value=f"{etf_value:,.2f} $QSE", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
         await ctx.send(embed=embed)
@@ -8758,8 +8837,8 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="Item:", value=f"{item_name}", inline=False)
         embed.add_field(name="Amount:", value=f"{quantity:,.2f}", inline=False)
-        embed.add_field(name="Value:", value=f"{total_cost:,.2f} µPPN", inline=False)
-        embed.add_field(name="Gas:", value=f"{tax_amount:,.2f} µPPN", inline=False)
+        embed.add_field(name="Value:", value=f"{total_cost:,.2f} $QSE", inline=False)
+        embed.add_field(name="Gas:", value=f"{tax_amount:,.2f} $QSE", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
         await ctx.send(embed=embed)
@@ -8836,7 +8915,7 @@ class CurrencySystem(commands.Cog):
         try:
             cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance_str, user_id))
             self.conn.commit()
-            await ctx.send(f"The balance for user with ID {user_id} has been adjusted to {new_balance:,.2f} µPPN.")
+            await ctx.send(f"The balance for user with ID {user_id} has been adjusted to {new_balance:,.2f} $QSE.")
         except Exception as e:
             await ctx.send(f"An error occurred while adjusting the balance: {str(e)}")
 
@@ -9154,16 +9233,16 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, bet amount must be a positive number.")
 
         if bet < minBet:
-            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} $QSE.")
             return
 
         if bet > maxBet:
-            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} $QSE.")
             return
         if bet > current_balance:
             # Calculate the missing amount needed to complete the transaction including tax.
             missing_amount = bet - current_balance
-            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to place the bet. You need {missing_amount:,.2f} more µPPN, including Gas, to place this bet.")
+            await ctx.send(f"{ctx.author.mention}, you do not have enough $QSE to place the bet. You need {missing_amount:,.2f} more $QSE, including Gas, to place this bet.")
             return
 
         # Initialize roulette wheel as numbers 0-36 with their associated colors
@@ -9179,7 +9258,7 @@ class CurrencySystem(commands.Cog):
 
         # Check for negative balance after tax
         if current_balance - total_cost < 0:
-            await ctx.send(f"{ctx.author.mention}, you don't have enough µPPN to cover the bet and Gas.")
+            await ctx.send(f"{ctx.author.mention}, you don't have enough $QSE to cover the bet and Gas.")
             return
 
         # Deduct bet and tax from user's current balance
@@ -9200,12 +9279,12 @@ class CurrencySystem(commands.Cog):
         if win_amount > 0:
             new_balance += win_amount
             update_user_balance(self.conn, user_id, new_balance)
-            await ctx.send(f"{ctx.author.mention}, congratulations! The ball landed on {spin_result} ({spin_color}). You won {win_amount} µPPN. Your new balance is {new_balance:,.2f}.")
-            await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You won {win_amount} µPPN", new_balance)
+            await ctx.send(f"{ctx.author.mention}, congratulations! The ball landed on {spin_result} ({spin_color}). You won {win_amount} $QSE. Your new balance is {new_balance:,.2f}.")
+            await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You won {win_amount} $QSE", new_balance)
             await self.casinoTool(ctx, True)
         else:
-            await ctx.send(f"{ctx.author.mention}, the ball landed on {spin_result} ({spin_color}). You lost {total_cost} µPPN including Gas. Your new balance is {new_balance:,.2f}.")
-            await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You lost {total_cost} µPPN", new_balance)
+            await ctx.send(f"{ctx.author.mention}, the ball landed on {spin_result} ({spin_color}). You lost {total_cost} $QSE including Gas. Your new balance is {new_balance:,.2f}.")
+            await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You lost {total_cost} $QSE", new_balance)
             await self.casinoTool(ctx, False)
         # Transfer the tax amount to the bot's address P3:03da907038
         update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax)
@@ -9234,17 +9313,17 @@ class CurrencySystem(commands.Cog):
             return
 
         if bet < minBet:
-            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} $QSE.")
             return
 
         if bet > maxBet:
-            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} $QSE.")
             return
 
         if bet > current_balance:
             # Calculate the missing amount needed to complete the transaction including tax.
             missing_amount = bet - current_balance
-            await ctx.send(f"{ctx.author.mention}, you do not have enough µPPN to place the bet. You need {missing_amount:,.2f} more µPPN, including Gas, to place this bet.")
+            await ctx.send(f"{ctx.author.mention}, you do not have enough $QSE to place the bet. You need {missing_amount:,.2f} more $QSE, including Gas, to place this bet.")
             return
 
         # Flip the coin
@@ -9256,7 +9335,7 @@ class CurrencySystem(commands.Cog):
 
         # Check for negative balance after tax
         if current_balance - total_cost < 0:
-            await ctx.send(f"{ctx.author.mention}, you don't have enough µPPN to cover the bet and Gas.")
+            await ctx.send(f"{ctx.author.mention}, you don't have enough $QSE to cover the bet and Gas.")
             return
 
         # Deduct bet and tax from user's current balance
@@ -9274,13 +9353,13 @@ class CurrencySystem(commands.Cog):
         if win:
             win_amount = bet * 4  # Payout for correct choice is 2x
             new_balance += win_amount
-            embed.add_field(name="Congratulations!", value=f"You won {win_amount:,.2f} µPPN", inline=False)
+            embed.add_field(name="Congratulations!", value=f"You won {win_amount:,.2f} $QSE", inline=False)
             await self.casinoTool(ctx, True)
         else:
-            embed.add_field(name="Oops!", value=f"You lost {total_cost:,.2f} µPPN including Gas", inline=False)
+            embed.add_field(name="Oops!", value=f"You lost {total_cost:,.2f} $QSE including Gas", inline=False)
             await self.casinoTool(ctx, False)
 
-        embed.add_field(name="New Balance", value=f"{new_balance:,.2f} µPPN", inline=False)
+        embed.add_field(name="New Balance", value=f"{new_balance:,.2f} $QSE", inline=False)
 
         await ctx.send(embed=embed)
         await log_gambling_transaction(ledger_conn, ctx, "Coinflip", bet, f"{'Win' if win else 'Loss'}", new_balance)
@@ -9290,7 +9369,7 @@ class CurrencySystem(commands.Cog):
         elapsed_time = timeit.default_timer() - self.casino_timer_start
         self.casino_avg.append(elapsed_time)
 
-    @commands.command(name='slotmachine', aliases=['slots'], help='Play the slot machine. Bet an amount up to 500,000 µPPN.')
+    @commands.command(name='slotmachine', aliases=['slots'], help='Play the slot machine. Bet an amount up to 500,000 $QSE.')
     async def slotmachine(self, ctx, bet: int):
         self.casino_timer_start = timeit.default_timer()
         user_id = ctx.author.id
@@ -9311,11 +9390,11 @@ class CurrencySystem(commands.Cog):
             return
 
         if bet < minBet:
-            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} $QSE.")
             return
 
         if bet > maxBet:
-            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} $QSE.")
             return
 
         # Define slot machine symbols and their values
@@ -9344,7 +9423,7 @@ class CurrencySystem(commands.Cog):
 
         # Check for negative balance after tax
         if current_balance - total_cost < 0:
-            await ctx.send(f"{ctx.author.mention}, you don't have enough µPPN to cover the bet and Gas.")
+            await ctx.send(f"{ctx.author.mention}, you don't have enough $QSE to cover the bet and Gas.")
             return
 
         # Deduct the bet and tax from the user's current balance
@@ -9358,15 +9437,15 @@ class CurrencySystem(commands.Cog):
         if win_amount > 0:
             new_balance += Decimal(win_amount)
             update_user_balance(self.conn, user_id, new_balance)
-            embed.add_field(name="Congratulations!", value=f"You won {win_amount:,} µPPN!", inline=False)
-            await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"You won {win_amount} µPPN", new_balance)
+            embed.add_field(name="Congratulations!", value=f"You won {win_amount:,} $QSE!", inline=False)
+            await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"You won {win_amount} $QSE", new_balance)
             await self.casinoTool(ctx, True)
         else:
-            embed.add_field(name="Better luck next time!", value=f"You lost {total_cost:,.2f} µPPN including Gas. Your new balance is {new_balance:,.2f} µPPN.", inline=False)
-            await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"You lost {total_cost:,.2f} µPPN", new_balance)
+            embed.add_field(name="Better luck next time!", value=f"You lost {total_cost:,.2f} $QSE including Gas. Your new balance is {new_balance:,.2f} $QSE.", inline=False)
+            await log_gambling_transaction(ledger_conn, ctx, "Slots", bet, f"You lost {total_cost:,.2f} $QSE", new_balance)
             await self.casinoTool(ctx, False)
 
-        embed.set_footer(text=f"Your new balance: {new_balance:,.2f} µPPN")
+        embed.set_footer(text=f"Your new balance: {new_balance:,.2f} $QSE")
         await ctx.send(embed=embed)
         # Transfer the tax amount to the bot's address P3:03da907038
         update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax)
@@ -9389,11 +9468,11 @@ class CurrencySystem(commands.Cog):
             return
 
         if bet_amount < minBet:
-            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} $QSE.")
             return
 
         if bet_amount > maxBet:
-            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} $QSE.")
             return
 
         # Check if chosen number is valid
@@ -9419,7 +9498,7 @@ class CurrencySystem(commands.Cog):
 
         # Check for negative balance after tax
         if current_balance - total_cost < 0:
-            await ctx.send(f"{ctx.author.mention}, you don't have enough µPPN to cover the bet and Gas.")
+            await ctx.send(f"{ctx.author.mention}, you don't have enough $QSE to cover the bet and Gas.")
             return
 
         # Deduct the bet and tax from the user's current balance
@@ -9433,15 +9512,15 @@ class CurrencySystem(commands.Cog):
         if win_amount > 0:
             new_balance += win_amount
             update_user_balance(self.conn, user_id, new_balance)
-            embed.add_field(name="Congratulations!", value=f"You guessed right! You won {win_amount:,.2f} µPPN!", inline=False)
-            await log_gambling_transaction(ledger_conn, ctx, "Dice Roll", bet_amount, f"You won {win_amount} µPPN", new_balance)
+            embed.add_field(name="Congratulations!", value=f"You guessed right! You won {win_amount:,.2f} $QSE!", inline=False)
+            await log_gambling_transaction(ledger_conn, ctx, "Dice Roll", bet_amount, f"You won {win_amount} $QSE", new_balance)
             await self.casinoTool(ctx, True)
         else:
-            embed.add_field(name="Better luck next time!", value=f"You lost {total_cost:,.2f} µPPN including Gas. Your new balance is {new_balance:,.2f} µPPN.", inline=False)
-            await log_gambling_transaction(ledger_conn, ctx, "Dice Roll", bet_amount, f"You lost {total_cost:,.2f} µPPN", new_balance)
+            embed.add_field(name="Better luck next time!", value=f"You lost {total_cost:,.2f} $QSE including Gas. Your new balance is {new_balance:,.2f} $QSE.", inline=False)
+            await log_gambling_transaction(ledger_conn, ctx, "Dice Roll", bet_amount, f"You lost {total_cost:,.2f} $QSE", new_balance)
             await self.casinoTool(ctx, False)
 
-        embed.set_footer(text=f"Your new balance: {new_balance:,.2f} µPPN")
+        embed.set_footer(text=f"Your new balance: {new_balance:,.2f} $QSE")
         await ctx.send(embed=embed)
         # Transfer the tax amount to the bot's address P3:03da907038
         update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax)
@@ -9462,11 +9541,11 @@ class CurrencySystem(commands.Cog):
             return
 
         if bet_amount < minBet:
-            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} $QSE.")
             return
 
         if bet_amount > maxBet:
-            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} µPPN.")
+            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} $QSE.")
             return
 
         # Draw two random cards
@@ -9501,7 +9580,7 @@ class CurrencySystem(commands.Cog):
             win_amount = 0
             await self.casinoTool(ctx, False)
         else:
-            result_message = f"Congratulations! You guessed right! You won {2 * bet_amount:,.2f} µPPN!"
+            result_message = f"Congratulations! You guessed right! You won {2 * bet_amount:,.2f} $QSE!"
             win_amount = 2 * bet_amount
             await self.casinoTool(ctx, True)
 
@@ -9509,7 +9588,7 @@ class CurrencySystem(commands.Cog):
         new_balance = current_balance + win_amount - bet_amount
 
         # Send the result message
-        embed.set_footer(text=f"Your new balance: {new_balance:,.2f} µPPN")
+        embed.set_footer(text=f"Your new balance: {new_balance:,.2f} $QSE")
         embed.add_field(name="Result", value=result_message, inline=False)
         await message.edit(embed=embed)
 
@@ -9518,9 +9597,14 @@ class CurrencySystem(commands.Cog):
 
 ##
     @commands.command(name='stats', aliases=['portfolio'], help='Displays the user\'s financial stats.')
-    async def stats(self, ctx):
-        user_id = ctx.author.id
-        P3Addr = generate_crypto_address(user_id)
+    async def stats(self, ctx, address: str = None):
+        if address == None:
+            user_id = ctx.author.id
+            P3Addr = generate_crypto_address(user_id)
+        else:
+            P3Addr = address
+            user_id = get_user_id(self.P3addrConn, address)
+
 
         try:
             # Connect to databases using context managers
@@ -9620,14 +9704,14 @@ class CurrencySystem(commands.Cog):
                 # Create the embed
                 embed = Embed(title=f"{P3Addr} Financial Stats", color=Colour.green())
                 embed.set_thumbnail(url="attachment://portfolio.jpeg")
-                embed.add_field(name="Balance", value=f"{current_balance:,.0f} µPPN" if current_balance != 0 else "Data Missing", inline=False)
-                embed.add_field(name="Total Stock Value", value=f"{total_stock_value:,.0f} µPPN" if total_stock_value != 0 else "Data Missing", inline=False)
-                embed.add_field(name="Total ETF Value", value=f"{total_etf_value:,.0f} µPPN" if total_etf_value != 0 else "Data Missing", inline=False)
-                embed.add_field(name="P3:Stable Value", value=f"{user_stable_value:,.0f} µPPN" if user_stable_value != 0 else "Data Missing", inline=False)
-                embed.add_field(name="Total Metal Value", value=f"{total_metal_value:,.2f} µPPN" if total_metal_value != 0 else "Data Missing", inline=False)
-                embed.add_field(name="Total Funds Value", value=f"{total_funds_value:,.0f} µPPN" if total_funds_value != 0 else "Data Missing", inline=False)
-#                embed.add_field(name=f"Stock Profits/Losses ({current_month_name})", value=f"{total_stock_profits_losses:,.0f} µPPN" if total_stock_profits_losses != 0 else "Data Missing", inline=False)
-#                embed.add_field(name=f"ETF Profits/Losses ({current_month_name})", value=f"{total_etf_profits_losses:,.0f} µPPN" if total_etf_profits_losses != 0 else "Data Missing", inline=False)
+                embed.add_field(name="Balance", value=f"{current_balance:,.0f} $QSE" if current_balance != 0 else "Data Missing", inline=False)
+                embed.add_field(name="Total Stock Value", value=f"{total_stock_value:,.0f} $QSE" if total_stock_value != 0 else "Data Missing", inline=False)
+                embed.add_field(name="Total ETF Value", value=f"{total_etf_value:,.0f} $QSE" if total_etf_value != 0 else "Data Missing", inline=False)
+                embed.add_field(name="P3:Stable Value", value=f"{user_stable_value:,.0f} $QSE" if user_stable_value != 0 else "Data Missing", inline=False)
+                embed.add_field(name="Total Metal Value", value=f"{total_metal_value:,.2f} $QSE" if total_metal_value != 0 else "Data Missing", inline=False)
+                embed.add_field(name="Total Funds Value", value=f"{total_funds_value:,.0f} $QSE" if total_funds_value != 0 else "Data Missing", inline=False)
+#                embed.add_field(name=f"Stock Profits/Losses ({current_month_name})", value=f"{total_stock_profits_losses:,.0f} $QSE" if total_stock_profits_losses != 0 else "Data Missing", inline=False)
+#                embed.add_field(name=f"ETF Profits/Losses ({current_month_name})", value=f"{total_etf_profits_losses:,.0f} $QSE" if total_etf_profits_losses != 0 else "Data Missing", inline=False)
 
 
                 await ctx.send(embed=embed, file=File("./stock_images/portfolio.jpeg"))
@@ -9639,6 +9723,89 @@ class CurrencySystem(commands.Cog):
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
             await ctx.send("An unexpected error occurred. Please try again later.")
+
+    @commands.command(name='total_stats', aliases=['total_portfolio'], help='Displays the total financial stats of all users.')
+    async def total_stats(self, ctx):
+        try:
+            # Connect to databases using context managers
+            with sqlite3.connect('currency_system.db') as conn, sqlite3.connect("p3ledger.db") as ledger_conn:
+                cursor = conn.cursor()
+                ledger_cursor = ledger_conn.cursor()
+
+                # Get all user IDs
+                user_ids = cursor.execute("SELECT DISTINCT user_id FROM users").fetchall()
+
+                # Initialize total values
+                total_balance = 0
+                total_stock_value = 0
+                total_etf_value = 0
+                total_stable_value = 0
+                total_metal_value = 0
+                total_funds_value = 0
+
+                # Iterate over each user
+                for user_id, in user_ids:
+                    if user_id == 1092870544988319905:
+                        continue
+                    try:
+                        # Get user balance
+                        user_balance_result = cursor.execute("SELECT COALESCE(balance, 0) FROM users WHERE user_id=?", (user_id,)).fetchone()
+                        current_balance = user_balance_result[0] if user_balance_result is not None else 0
+
+                        # Calculate total stock value
+                        user_stocks = cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=?", (user_id,)).fetchall()
+                        total_stock_value += sum(price * amount for symbol, amount in user_stocks
+                                                  for price in cursor.execute("SELECT COALESCE(price, 0) FROM stocks WHERE symbol=?", (symbol,)).fetchone())
+
+                        # Calculate total ETF value
+                        user_etfs = cursor.execute("SELECT etf_id, quantity FROM user_etfs WHERE user_id=?", (user_id,)).fetchall()
+                        total_etf_value += sum(etf_value * quantity for etf_id, quantity in user_etfs
+                                               for etf_value in cursor.execute("""
+                                                   SELECT COALESCE(SUM(stocks.price * etf_stocks.quantity), 0)
+                                                   FROM etf_stocks JOIN stocks ON etf_stocks.symbol = stocks.symbol
+                                                   WHERE etf_stocks.etf_id=? GROUP BY etf_stocks.etf_id""", (etf_id,)).fetchone())
+
+                        # Calculate total value of metals in the user's inventory
+                        metal_values = cursor.execute("""
+                            SELECT items.price * inventory.quantity
+                            FROM inventory
+                            JOIN items ON inventory.item_id = items.item_id
+                            WHERE user_id=? AND items.item_name IN ('Copper', 'Platinum', 'Gold', 'Silver', 'Lithium')
+                        """, (user_id,)).fetchall()
+                        total_metal_value += sum(metal_value[0] for metal_value in metal_values) or 0
+
+                        # Get P3:Stable value
+                        stable_stock = "P3:Stable"
+                        stable_stock_price = await get_stock_price(self.conn, stable_stock) or 0
+                        user_owned_stable = self.get_user_stock_amount(user_id, stable_stock) or 0
+                        total_stable_value += stable_stock_price * user_owned_stable
+
+                        # Calculate total funds value for each user
+                        total_funds_value += current_balance + total_stock_value + total_etf_value + total_metal_value
+                        total_balance = total_funds_value - (total_stock_value + total_etf_value + total_metal_value)
+
+                    except Exception as e:
+                        print(f"An error occurred for user {user_id}: {e}")
+
+                # Create the embed for total stats
+                embed = Embed(title="Total Financial Stats for All Users", color=Colour.green())
+                embed.add_field(name="Total Balance", value=f"{total_balance:,.0f} $QSE", inline=False)
+                embed.add_field(name="Total Stock Value", value=f"{total_stock_value:,.0f} $QSE", inline=False)
+                embed.add_field(name="Total ETF Value", value=f"{total_etf_value:,.0f} $QSE", inline=False)
+                embed.add_field(name="Total P3:Stable Value", value=f"{total_stable_value:,.0f} $QSE", inline=False)
+                embed.add_field(name="Total Metal Value", value=f"{total_metal_value:,.2f} $QSE", inline=False)
+                embed.add_field(name="Total Funds Value", value=f"{total_funds_value:,.0f} $QSE", inline=False)
+
+                await ctx.send(embed=embed)
+
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            await ctx.send("An error occurred while retrieving total stats. Please try again later.")
+
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            await ctx.send("An unexpected error occurred. Please try again later.")
+
 
     @commands.command(name='leaderboard', aliases=['top10'], help='Displays the top 10 P/L for Stocks and ETFs.')
     async def leaderboard(self, ctx):
@@ -9670,12 +9837,12 @@ class CurrencySystem(commands.Cog):
                 # Create the embed for Stocks leaderboard
                 stock_leaderboard_embed = Embed(title="Top 10 Stocks P/L", color=Colour.blue())
                 for rank, (symbol, total_pl) in enumerate(top_stock_data, start=1):
-                    stock_leaderboard_embed.add_field(name=f"{rank}. {symbol}", value=f"Total P/L: {total_pl:,.0f} µPPN", inline=False)
+                    stock_leaderboard_embed.add_field(name=f"{rank}. {symbol}", value=f"Total P/L: {total_pl:,.0f} $QSE", inline=False)
 
                 # Create the embed for ETFs leaderboard
                 etf_leaderboard_embed = Embed(title="Top 10 ETFs P/L", color=Colour.orange())
                 for rank, (etf_id, total_pl) in enumerate(top_etf_data, start=1):
-                    etf_leaderboard_embed.add_field(name=f"{rank}. {etf_id}", value=f"Total P/L: {total_pl:,.0f} µPPN", inline=False)
+                    etf_leaderboard_embed.add_field(name=f"{rank}. {etf_id}", value=f"Total P/L: {total_pl:,.0f} $QSE", inline=False)
 
                 await ctx.send(embed=stock_leaderboard_embed)
                 await ctx.send(embed=etf_leaderboard_embed)
@@ -10110,7 +10277,7 @@ class CurrencySystem(commands.Cog):
                 await log_transfer(self, ledger_conn, ctx, self.bot.user, user_id, user_id, tokens_reward)
                 await log_stock_transfer(self, ledger_conn, ctx, self.bot.user, ctx.author, stocks_reward_symbol, stocks_reward_amount)
 
-                message = f"🛠️ You've worked hard and earned {tokens_reward} µPPN and {stocks_reward_amount} shares of {stocks_reward_symbol}! 🚀"
+                message = f"🛠️ You've worked hard and earned {tokens_reward} $QSE and {stocks_reward_amount} shares of {stocks_reward_symbol}! 🚀"
             else:
                 message = "😴 You worked, but it seems luck wasn't on your side this time. Try again later!"
 
