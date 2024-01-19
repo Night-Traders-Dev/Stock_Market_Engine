@@ -519,19 +519,50 @@ async def send_stock(self, ctx, target, symbol: str, amount: int, verbose: bool 
         await ctx.send(f"Sent {amount:,} of {symbol} to {target}.")
     return True
 
+async def fetch_sell_orders(self, stock_name):
+    cursor = self.conn.cursor()
 
-async def add_limit_order(self, ctx, user_id, symbol, order_type, price, quantity):
+    # Fetch sell orders for the specified stock
+    cursor.execute("""
+        SELECT * FROM limit_orders
+        WHERE symbol = ? AND order_type = 'sell'
+        ORDER BY price ASC, created_at ASC
+    """, (stock_name,))
+    return cursor.fetchall()
+
+async def display_transaction_details(ctx, p3addr, stock_name, amount):
+    # Fetch relevant details for displaying transaction details
+    current_balance = get_user_balance(self.conn, ctx.author.id)
+    new_balance = get_user_balance(self.conn, ctx.author.id)
+
+    # Display the transaction details
+    color = discord.Color.green()
+    embed = discord.Embed(title=f"Stock Transaction Completed", color=color)
+    embed.add_field(name="Address:", value=f"{p3addr}", inline=False)
+    embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
+    embed.add_field(name="Amount:", value=f"{amount:,.2f}", inline=False)
+    embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
+    embed.set_footer(text=f"Timestamp: {datetime.utcnow()}")
+
+    # Send the transaction details to the user
+    await ctx.send(embed=embed)
+
+
+async def add_limit_order(self, ctx, user_id, symbol, order_type, price, quantity, verbose: bool = True):
     try:
-        if order_type.lower() == "sell":
-            await send_stock(self, ctx, self.bot_address, symbol, quantity, False)
-        else:
-            P3addrConn = sqlite3.connect("P3addr.db")
-            PBotAddr = get_p3_address(P3addrConn, PBot)
-            tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
-            cost = price * quantity
-            fee = Decimal(cost) * Decimal(tax_percentage)
-            total = int(cost) + int(fee)
-            await self.give_addr(ctx, PBotAddr, int(total), False)
+        if verbose:
+            if order_type.lower() == "sell":
+                result = await send_stock(self, ctx, self.bot_address, symbol, quantity, False)
+                if not result:
+                    return
+            else:
+                P3addrConn = sqlite3.connect("P3addr.db")
+                PBotAddr = get_p3_address(P3addrConn, PBot)
+                tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
+                cost = price * quantity
+                fee = Decimal(cost) * Decimal(tax_percentage)
+                total = int(cost) + int(fee)
+                await self.give_addr(ctx, PBotAddr, int(total), False)
 
         cursor = self.conn.cursor()
         cursor.execute("""
@@ -557,6 +588,22 @@ async def add_limit_order(self, ctx, user_id, symbol, order_type, price, quantit
 
     except sqlite3.Error as e:
         await ctx.send(f"An error occurred while adding a limit order: {e}")
+
+async def remove_zero_quantity_orders_from_db(self, ctx, symbol):
+    cursor = self.conn.cursor()
+
+    # Fetch orders with quantity 0 for the specified symbol
+    cursor.execute("SELECT * FROM limit_orders WHERE symbol=? AND quantity=0", (symbol,))
+    zero_quantity_orders = cursor.fetchall()
+
+    for order in zero_quantity_orders:
+        order_id = order['order_id']
+        await self.remove_limit_order_command(ctx, order_id)
+
+    # Optionally, you can fetch the updated list after removal
+    updated_orders = await fetch_sell_orders(self, symbol)
+    return updated_orders
+
 
 async def remove_limit_order(self, ctx, order_id):
     try:
@@ -595,7 +642,8 @@ async def update_limit_order(self, ctx, order_id, new_quantity):
 #            embed.add_field(name="Remaining Quantity:", value=f"{remaining_quantity:,.2f}", inline=False)
 #            await ctx.send(embed=embed)
         else:
-            await ctx.send(f"No limit order found with order_id {order_id}.")
+            #await ctx.send(f"No limit order found with order_id {order_id}.")
+            pass
     except sqlite3.Error as e:
         await ctx.send(f"An error occurred while updating the limit order: {e}")
 
@@ -628,7 +676,36 @@ async def read_limit_orders(self, ctx):
         embed = discord.Embed(description=f"An error occurred while reading limit orders: {e}")
         await ctx.send(embed=embed)
 
-async def lowest_price_order(self, ctx, order_type, symbol):
+async def orders_at_price(self, ctx, order_type, symbol):
+    try:
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT * FROM limit_orders
+            WHERE order_type = ? AND symbol = ?
+            ORDER BY price ASC, created_at ASC
+        """, (order_type, symbol))
+
+        rows = cursor.fetchall()
+
+        if rows:
+            orders_info = [{
+                'order_id': row['order_id'],
+                'user_id': row['user_id'],
+                'symbol': row['symbol'],
+                'order_type': row['order_type'],
+                'price': row['price'],
+                'quantity': row['quantity'],
+                'created_at': row['created_at']
+            } for row in rows]
+
+            return orders_info
+        else:
+            return []
+    except sqlite3.Error as e:
+        print(f"An error occurred while fetching orders at a specific price: {e}")
+        return []
+
+async def lowest_price_order(self, ctx, order_type, symbol, skip_user_id: bool = False):
     try:
         cursor = self.conn.cursor()
         cursor.execute("""
@@ -812,6 +889,7 @@ async def calculate_max_price(stock_symbol):
 
                 max_price += max(price_difference, Decimal(current_price) * max_price_change)
                 max_price = min(max_price, Decimal(20000000))  # Ensure it doesn't exceed 20,000,000
+
 
             return max_price
 
@@ -1053,7 +1131,13 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
         final_price_range = random.uniform(price_change_range, modified_price_range)
         potential_new_price = current_price + (final_price_range * amount)
         gas = self.calculate_tax_percentage(ctx, "buy_etf")
+        result = await lowest_price_order(self, ctx, "sell", stock_name)
+
+
         new_price = min(potential_new_price, max_price, 50000000)
+#        if result:
+#            new_price = (new_price + int(result["price"])) / 2
+
     else:
         # Sell logic
         daily_volume_factor = (daily_volume / monthly_volume)
@@ -1063,6 +1147,7 @@ async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: boo
 #        potential_new_price = current_price + (final_price_range * amount)
 
         new_price = max(current_price + (price_change_range * amount), min_price)
+
 
 
     # Calculate percentage change
@@ -1464,6 +1549,63 @@ async def get_etf_stocks(conn, etf_id):
 
     return symbols
 
+async def get_total_shares_in_orders(self, symbol):
+    try:
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT SUM(quantity) as total_shares
+            FROM limit_orders
+            WHERE symbol = ? AND (order_type = 'sell' OR order_type = 'buy')
+        """, (symbol,))
+
+        result = cursor.fetchone()
+
+        if result and result['total_shares']:
+            return result['total_shares']
+        else:
+            return 0
+    except sqlite3.Error as e:
+        print(f"An error occurred while fetching total shares in orders: {e}")
+        return 0
+
+async def get_total_shares_in_escrow_all_stocks(self):
+    try:
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT SUM(quantity) as total_shares
+            FROM limit_orders
+            WHERE order_type IN ('sell', 'buy')
+        """)
+
+        result = cursor.fetchone()
+
+        if result and result['total_shares']:
+            return result['total_shares']
+        else:
+            return 0
+    except sqlite3.Error as e:
+        print(f"An error occurred while fetching total shares in escrow for all stocks: {e}")
+        return 0
+
+async def get_total_shares_in_escrow_user(self, user_id):
+    try:
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT SUM(quantity) as total_shares
+            FROM limit_orders
+            WHERE user_id = ? AND (order_type = 'sell' OR order_type = 'buy')
+        """, (user_id,))
+
+        result = cursor.fetchone()
+
+        if result and result['total_shares']:
+            return result['total_shares']
+        else:
+            return 0
+    except sqlite3.Error as e:
+        print(f"An error occurred while fetching total shares in escrow for user {user_id}: {e}")
+        return 0
+
 
 
 def get_top_ten_users(conn):
@@ -1595,6 +1737,70 @@ async def log_transaction(ledger_conn, ctx, action, symbol, quantity, pre_tax_am
                 # Send the log message as an embed to the specified channels
                 await channel1.send(embed=embed)
 
+
+async def log_order_transaction(ledger_conn, ctx, action, symbol, quantity, pre_tax_amount, post_tax_amount, balance_before, balance_after, price, verbose, userid):
+    # Get the user's username from the context
+    if balance_before == 0 and balance_after == 0:
+        P3Addr = "P3:03da907038"
+    else:
+#        username = ctx.author.name
+        P3Addr = generate_crypto_address(userid)
+
+    # Batch convert Decimal values to strings
+    values_to_string = lambda *values: [str(value) for value in values]
+    pre_tax_amount_str, post_tax_amount_str, balance_before_str, balance_after_str, price_str = values_to_string(
+        pre_tax_amount, post_tax_amount, balance_before, balance_after, price
+    )
+
+    # Convert Decimal values to strings
+    pre_tax_amount_str = str(pre_tax_amount)
+    post_tax_amount_str = str(post_tax_amount)
+    balance_before_str = str(balance_before)
+    balance_after_str = str(balance_after)
+    price_str = '{:,.11f}'.format(price) if symbol.lower() == "roflstocks" else '{:,.2f}'.format(price)
+
+    # Create a timestamp for the transaction
+    timestamp = ctx.message.created_at.strftime("%Y-%m-%d %H:%M:%S")
+
+    # Insert the transaction into the stock_transactions table
+    cursor = ledger_conn.cursor()
+    cursor.execute("""
+        INSERT INTO stock_transactions (user_id, action, symbol, quantity, pre_tax_amount, post_tax_amount, balance_before, balance_after, price)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (userid, action, symbol, quantity, pre_tax_amount_str, post_tax_amount_str, balance_before_str, balance_after_str, price_str))
+    ledger_conn.commit()
+
+    if verbose == "True":
+        # Determine whether it's a stock or ETF transaction
+        is_etf = True if action in ["Buy ETF", "Sell ETF"] else False
+
+        # Replace GUILD_ID with the actual ID of your guild
+        guild_id = 1161678765894664323
+        guild = ctx.bot.get_guild(guild_id)
+
+        if guild:
+            # Replace CHANNEL_ID with the actual ID of your logging channels
+            channel1_id = ledger_channel
+
+            # Get the channels from the guild
+            channel1 = guild.get_channel(channel1_id)
+
+            if channel1:
+                # Create an embed for the log message
+                embed = discord.Embed(
+                    title=f"{P3Addr} {action} {symbol} {'ETF' if is_etf else 'Stock'} Transaction",
+                    description=f"Quantity: {quantity}\n"
+                                f"Price: {price} $QSE\n"
+                                f"Pre-Gas Amount: {pre_tax_amount:,.2f} $QSE\n"
+                                f"Post-Gas Amount: {post_tax_amount:,.2f} $QSE\n"
+                                f"Balance Before: {balance_before:,.2f} $QSE\n"
+                                f"Balance After: {balance_after:,.2f} $QSE\n"
+                                f"Timestamp: {timestamp}",
+                    color=discord.Color.green() if action.startswith("Buy") else discord.Color.red()
+                )
+
+                # Send the log message as an embed to the specified channels
+                await channel1.send(embed=embed)
 
 
 
@@ -3013,72 +3219,34 @@ class CurrencySystem(commands.Cog):
         conn.close()
         return [stock[0] for stock in stocks]
 
-    async def execute_buy_order(self, user_id, stock_name, amount, price):
-        cursor = self.conn.cursor()
+    async def execute_buy_order(self, ctx, P3addrConn, PBotAddr, user_id, stock_name, amount, order_price):
+        seller_old = get_user_balance(self.conn, user_id)
+        current_balance = get_user_balance(self.conn, ctx.author.id)
+        tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
+        cost = order_price * amount
+        fee = Decimal(cost) * Decimal(tax_percentage)
+        target = get_p3_address(P3addrConn, user_id)
+        target_amount = order_price * amount
 
-        current_balance = self.get_user_balance(user_id)
-        total_cost = price * Decimal(amount)
-        tax_percentage = self.get_tax_percentage(amount, total_cost)
-        fee = total_cost * Decimal(tax_percentage)
-        total_cost_with_tax = total_cost + fee
+        # Execute the buy order
+        await self.give_addr(ctx, target, int(target_amount - int(fee)), False)
+        await self.give_addr(ctx, PBotAddr, int(fee), False)
+        await self.give_stock(ctx, target, stock_name, amount, False)
 
-        if total_cost_with_tax > current_balance:
-            return False  # Insufficient funds
+        seller_new = get_user_balance(self.conn, user_id)
+        new_balance = get_user_balance(self.conn, ctx.author.id)
+        print(f"Remaining Amount: {amount}, Seller Balance Before: {seller_old}, Seller Balance After: {seller_new}")
+        await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, (int(cost) + int(fee)), current_balance, new_balance, order_price, "True")
+        await log_order_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, cost, (int(cost) + int(fee)), seller_old, seller_new, order_price, "True", user_id)
 
-        new_balance = current_balance - total_cost_with_tax
+    async def remove_or_update_order(self, ctx, order_id, remaining_amount):
+        if remaining_amount != 0:
+            # Update the order quantity
+            await update_limit_order(self, ctx, order_id, remaining_amount)
+        else:
+            # Remove the order
+            await self.remove_limit_order_command(ctx, order_id)
 
-        try:
-            self.update_user_balance(user_id, new_balance)
-        except ValueError:
-            return False  # Error updating user balance
-
-
-        update_user_stocks(user_id, stock_name, amount, "buy")
-
-
-        # Record the transaction
-        await self.log_transaction("Buy Stock", user_id, stock_name, amount, total_cost, total_cost_with_tax, current_balance, new_balance, price)
-
-        self.conn.commit()
-        return True
-
-    async def execute_sell_order(self, user_id, stock_name, amount, price):
-        cursor = self.conn.cursor()
-
-        current_stock_amount = self.get_user_stock_amount(user_id, stock_name)
-        if current_stock_amount < amount:
-            return False  # Insufficient stocks
-
-        earnings = price * Decimal(amount)
-        tax_percentage = self.get_tax_percentage(amount, earnings)
-        fee = earnings * Decimal(tax_percentage)
-        total_earnings = earnings - fee
-
-        current_balance = self.get_user_balance(user_id)
-        new_balance = current_balance + total_earnings
-
-        try:
-            self.update_user_balance(user_id, new_balance)
-        except ValueError:
-            return False  # Error updating user balance
-
-        cursor.execute("""
-            UPDATE user_stocks
-            SET amount = amount - ?
-            WHERE user_id = ? AND symbol = ?
-        """, (amount, user_id, stock_name))
-
-        cursor.execute("""
-            UPDATE stocks
-            SET available = available + ?
-            WHERE symbol = ?
-        """, (amount, stock_name))
-
-        # Record the transaction
-        await self.log_transaction("Sell Stock", user_id, stock_name, amount, earnings, total_earnings, current_balance, new_balance, price, "True")
-
-        self.conn.commit()
-        return True
 
     @commands.command(name="check_stock_supply", help="Check and update stock supply.")
     async def check_stock_supply(self, ctx):
@@ -3612,6 +3780,45 @@ class CurrencySystem(commands.Cog):
         else:
             return f"User ID: {user_id}"
 
+
+    @commands.command(name='top_escrow_users', help='Show the top 10 users by total amount of shares in escrow.')
+    async def top_escrow_users(self, ctx):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT user_id, SUM(quantity) as total_shares
+                FROM limit_orders
+                WHERE order_type = 'sell' OR order_type = 'buy'
+                GROUP BY user_id
+                ORDER BY total_shares DESC
+                LIMIT 10
+            """)
+
+            top_users = cursor.fetchall()
+
+            if top_users:
+                embed = discord.Embed(
+                    title="Top 10 Users by Total Shares in Escrow",
+                    color=discord.Color.gold()
+                )
+
+                for rank, (user_id, total_shares) in enumerate(top_users, start=1):
+                    p3addr = get_p3_address(self.P3addrConn, user_id)
+
+                    embed.add_field(
+                        name=f"{rank}. {p3addr}",
+                        value=f"Total Shares: {total_shares:,.0f}",
+                        inline=False
+                    )
+
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send("No users found with shares in escrow.")
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred while fetching top escrow users: {e}")
+
+
     def calculate_total_wealth(self, user_id):
         cursor = self.conn.cursor()
 
@@ -3758,10 +3965,9 @@ class CurrencySystem(commands.Cog):
             async with self.transaction_lock:
                 sender_id = ctx.author.id
                 if amount <= 0:
-                    await ctx.send("The amount to give should be greater than 0.")
                     return
 
-                if amount > 100000000000000000:
+                if amount > 1000000000000000000000:
                     await ctx.send("The amount to give should be less than 100 Quadrillion.")
                     return
 
@@ -4062,8 +4268,8 @@ class CurrencySystem(commands.Cog):
         valuation_label = "Overvalued🔴" if current_price > average_price else "Undervalued🟢"
 
         # Format totals with commas
-        formatted_total_buys = '{:,}'.format(int(total_buys))
-        formatted_total_sells = '{:,}'.format(int(total_sells))
+        formatted_total_buys = '{:,.0f}'.format(int(total_buys))
+        formatted_total_sells = '{:,.0f}'.format(int(total_sells))
         total_buy_volume, total_sell_volume, total_volume = await calculate_volume(symbol, interval='daily')
         daily_volume = total_volume or 0
         daily_volume_value = daily_volume * current_price or 0
@@ -4092,15 +4298,15 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Current Price", value=f"{formatted_current_price} $QSE", inline=False)
         embed.add_field(name="Change from Open", value=f"{opening_change:.4f}%", inline=False)
         embed.add_field(name="Average Price", value=f"{average_price:,.11f} $QSE🔁", inline=False)
-        embed.add_field(name="Dynamic Minimum Price", value=f"{min_price:,.2f} $QSE", inline=False)
-        embed.add_field(name="Dynamic Max Price", value=f"{max_price:,.2f} $QSE", inline=False)
-        embed.add_field(name="Circulating Supply", value=f"{circulating_supply:,} shares🔄", inline=False)
-        embed.add_field(name="Circulating Value", value=f"{formatet_circulating_value} $QSE")
+#        embed.add_field(name="Dynamic Minimum Price", value=f"{min_price:,.2f} $QSE", inline=False)
+#        embed.add_field(name="Dynamic Max Price", value=f"{max_price:,.2f} $QSE", inline=False)
+#        embed.add_field(name="Circulating Supply", value=f"{circulating_supply:,} shares🔄", inline=False)
+#        embed.add_field(name="Circulating Value", value=f"{formatet_circulating_value} $QSE")
         embed.add_field(name="Daily Volume:", value=f"{daily_volume:,} shares", inline=False)
         embed.add_field(name="Daily Volume Value:", value=f"{daily_volume_value:,.2f} $QSE", inline=False)
-        embed.add_field(name="Daily Buy Volume:", value=f"{daily_buy_volume:,} shares 📈", inline=False)
+        embed.add_field(name="Daily Buy Volume:", value=f"{daily_buy_volume:,.0f} shares 📈", inline=False)
         embed.add_field(name="Daily Buy Volume Value:", value=f"{daily_buy_volume_value:,.2f} $QSE 📈", inline=False)
-        embed.add_field(name="Daily Sell Volume:", value=f"{daily_sell_volume:,} shares 📉", inline=False)
+        embed.add_field(name="Daily Sell Volume:", value=f"{daily_sell_volume:,.0f} shares 📉", inline=False)
         embed.add_field(name="Daily Sell Volume Value:", value=f"{daily_sell_volume_value:,.2f} $QSE 📉", inline=False)
         embed.add_field(name="Total Buys💵", value=f"{formatted_total_buys} $QSE ({total_quantity_buys:,} buys📈)", inline=False)
         embed.add_field(name="Total Sells💵", value=f"{formatted_total_sells} $QSE ({total_quantity_sells:,} sells📉)", inline=False)
@@ -4499,14 +4705,22 @@ class CurrencySystem(commands.Cog):
                             file = discord.File(buffer, filename='chart.png')
                             await ctx.send(file=file)
 
+                            result = await lowest_price_order(self, ctx, "sell", stock_symbol)
+                            if result:
+                                order_price = result["price"]
+                            else:
+                                order_price = 0
+
                             # Create an embed with information
                             embed = discord.Embed(title=f"Stock Information for {stock_symbol}")
                             if stock_symbol.lower() == "roflstocks":
                                 embed.add_field(name="Current Price", value=f"{current_price:,.11f}")
+                                embed.add_field(name="Escrow Price", value=f"{order_price:,.11f}")
                                 embed.add_field(name="Average Buy Price", value=f"{average_buy_price:,.11f}")
                                 embed.add_field(name="Average Sell Price", value=f"{average_sell_price:,.11f}")
                             else:
                                 embed.add_field(name="Current Price", value=f"{current_price:,.2f}")
+                                embed.add_field(name="Escrow Price", value=f"{order_price:,.2f}")
                                 embed.add_field(name="Average Buy Price", value=f"{average_buy_price:,.2f}")
                                 embed.add_field(name="Average Sell Price", value=f"{average_sell_price:,.2f}")
                             embed.add_field(name="Valuation", value=valuation)
@@ -5250,20 +5464,108 @@ class CurrencySystem(commands.Cog):
             await self.process_transaction(ctx, type, symbol, amount, action)
             await self.check_market(ctx)
 
+    @commands.command(name="order")
+    async def place_order(self, ctx, order_type: str, symbol: str, price: float, quantity: int):
+        if order_type.lower() == "buy":
+            await self.add_limit_order_command(ctx, symbol, order_type, price, quantity)
+        elif order_type.lower() == "sell":
+            await self.add_limit_order_command(ctx, symbol, order_type, price, quantity)
+        else:
+            await ctx.send("Command syntax: !order order_type, symbol, price, quantity")
+
+
+
 
     @commands.command(name="add_limit_order", aliases=["place_order"], help="Add a limit order.")
     async def add_limit_order_command(self, ctx, symbol: str, order_type: str, price: float, quantity: int):
         if quantity > 5000000000000000:
             await ctx.send("All orders must be under 500 Trillion Shares")
             return
+        if quantity * price >= 100000000000000000:
+            await ctx.send("Value of order cannot be greater than 100 Quadrillion QSE")
+            return
+        no_order = ["p3:stable", "roflstocks"]
+        if symbol.lower() in no_order:
+            await ctx.send(f"Orders not allowed for {symbol}")
+            return
+        if order_type.lower() == "buy":
+            lowest = await lowest_price_order(self, ctx, "sell", symbol)
+            highest = await highest_price_order(self, ctx, "buy", symbol)
+            if lowest and highest:
+                if int(lowest["price"]) > int(highest["price"]):
+                    await ctx.send(f"Buy order must be lower than {lowest['price']:,.0f} QSE per Share")
+                    return
+            if lowest:
+                if int(price) > int(lowest["price"]):
+                    await ctx.send(f"Buy order must be lower than {lowest['price']:,.0f} QSE per Share")
+                    return
+
+        if order_type.lower() == "sell":
+            highest = await highest_price_order(self, ctx, "buy", symbol)
+            lowest = await lowest_price_order(self, ctx, "sell", symbol)
+            if highest and lowest:
+                if int(highest["price"]) > int(lowest["price"]):
+                    await ctx.send(f"Sell order must be higher than {highest['price']:,.0f} QSE per Share")
+                    return
+            if highest:
+                if int(price) < int(highest["price"]):
+                    await ctx.send(f"Sell order must be higher than {highest['price']:,.0f} QSE per Share")
+                    return
+
+
+
         user_id = ctx.author.id
         await add_limit_order(self, ctx, user_id, symbol, order_type, price, quantity)
 
+    @commands.command(name="add_limit_order_bot", aliases=["place_order_bot"], help="Add a limit order.")
+    @is_allowed_user(930513222820331590, PBot)
+    async def add_limit_order_command_bot(self, ctx, symbol: str, order_type: str, price: float, quantity: int):
+        if quantity > 5000000000000000:
+            await ctx.send("All orders must be under 500 Trillion Shares")
+            return
+        if quantity * price >= 100000000000000000:
+            await ctx.send("Value of order cannot be greater than 100 Quadrillion QSE")
+            return
+        no_order = ["p3:stable", "roflstocks"]
+        if symbol.lower() in no_order:
+            await ctx.send(f"Orders not allowed for {symbol}")
+            return
+        if order_type.lower() == "buy":
+            lowest = await lowest_price_order(self, ctx, "sell", symbol)
+            highest = await highest_price_order(self, ctx, "buy", symbol)
+            if lowest and highest:
+                if int(lowest["price"]) > int(highest["price"]):
+                    await ctx.send(f"Buy order must be lower than {lowest['price']:,.0f} QSE per Share")
+                    return
+            if lowest:
+                if int(price) > int(lowest["price"]):
+                    await ctx.send(f"Buy order must be lower than {lowest['price']:,.0f} QSE per Share")
+                    return
+
+        if order_type.lower() == "sell":
+            highest = await highest_price_order(self, ctx, "buy", symbol)
+            lowest = await lowest_price_order(self, ctx, "sell", symbol)
+            if highest and lowest:
+                if int(highest["price"]) > int(lowest["price"]):
+                    await ctx.send(f"Sell order must be higher than {highest['price']:,.0f} QSE per Share")
+                    return
+            if highest:
+                if int(price) < int(highest["price"]):
+                    await ctx.send(f"Sell order must be higher than {highest['price']:,.0f} QSE per Share")
+                    return
+
+
+
+        user_id = PBot
+        await add_limit_order(self, ctx, user_id, symbol, order_type, price, quantity, False)
+
     @commands.command(name="remove_order", help="Remove a limit order by order_id.")
+    @is_allowed_user(930513222820331590, PBot)
     async def remove_limit_order_command(self, ctx, order_id: int):
         await remove_limit_order(self, ctx, order_id)
 
     @commands.command(name="read_limit_orders", help="Read all limit orders.")
+    @is_allowed_user(930513222820331590, PBot)
     async def read_limit_orders_command(self, ctx):
         await read_limit_orders(self, ctx)
 
@@ -5290,8 +5592,16 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="buy", help="Buy Stocks, ETFs, and Items")
     async def buy(self, ctx, type: str, symbol, amount, Repeat: int = 1):
         userid = ctx.author.id
+        if type.lower() == "order":
+            await self.transact_order2(ctx, symbol, int(amount))
+            return
         if type.lower() == "stock":
             current_price = await get_stock_price(self.conn, symbol)
+            order_price = await lowest_price_order(self, ctx, "sell", symbol)
+            if order_price:
+                if current_price > order_price["price"]:
+                    await self.transact_order2(ctx, symbol, int(amount))
+                    return
             if current_price > 50000000:
                 embed = discord.Embed(description="Can't buy stock current price over 50,000,000", color=discord.Color.red())
                 await ctx.send(embed=embed)
@@ -5403,62 +5713,87 @@ class CurrencySystem(commands.Cog):
                 await self.process_transactions()
         except ValueError:
             await ctx.send("Invalid amount. Please provide a valid integer.")
-    @commands.command(name="depth", help="Show buy/sell depth of a stock.")
-    async def show_depth(self, ctx, symbol: str, depth_limit: int = 10):
+
+
+    @commands.command(name="depth_chart", help="Show buy/sell depth of a stock.")
+    async def show_depth_chart(self, ctx, symbol: str, depth_limit: int = 10):
         try:
+            plt.switch_backend('Agg')  # Set the backend to 'Agg'
+
             cursor = self.conn.cursor()
 
-            # Fetch buy orders for the specified symbol and group by price
+            # Fetch all buy orders for the specified symbol
             cursor.execute("""
                 SELECT price, SUM(quantity) as total_quantity FROM limit_orders
                 WHERE order_type = 'buy' AND symbol = ?
                 GROUP BY price
-                ORDER BY price DESC
-                LIMIT ?
-            """, (symbol, depth_limit))
+            """, (symbol,))
             buy_orders = cursor.fetchall()
 
-            # Fetch sell orders for the specified symbol and group by price
+            # Fetch all sell orders for the specified symbol
             cursor.execute("""
                 SELECT price, SUM(quantity) as total_quantity FROM limit_orders
                 WHERE order_type = 'sell' AND symbol = ?
                 GROUP BY price
-                ORDER BY price ASC
-                LIMIT ?
-            """, (symbol, depth_limit))
+            """, (symbol,))
             sell_orders = cursor.fetchall()
 
-            if not buy_orders and not sell_orders:
-                embed = discord.Embed(description=f"No buy/sell orders found for {symbol}.")
-                await ctx.send(embed=embed)
-                return
+            # Calculate the overall market price using the full set of orders
+            all_orders = buy_orders + sell_orders
+            weighted_average_price = sum(order['price'] * order['total_quantity'] for order in all_orders) / sum(order['total_quantity'] for order in all_orders)
 
-            def format_order(order):
-                total_value = order['price'] * order['total_quantity']
-                return f"Price: {order['price']:.2f}\nTotal Quantity: {order['total_quantity']:,}\n"
+            # Create buy and sell order book data for plotting
+            buy_prices = [order['price'] for order in buy_orders[:depth_limit]]
+            buy_quantities = [order['total_quantity'] for order in buy_orders[:depth_limit]]
 
-            buy_depth = "\n".join([format_order(order) for order in buy_orders])
-            sell_depth = "\n".join([format_order(order) for order in sell_orders])
+            sell_prices = [order['price'] for order in sell_orders[:depth_limit]]
+            sell_quantities = [order['total_quantity'] for order in sell_orders[:depth_limit]]
 
-            # Calculate the total value of the entire depth
+            # Plotting the order book
+            fig, ax = plt.subplots(2, 1, sharex=True, figsize=(10, 8))
+
+            ax[0].bar(buy_prices, buy_quantities, color='green', alpha=0.7, label='Buy Orders')
+            ax[0].set_ylabel('Quantity')
+            ax[0].legend()
+
+            ax[1].bar(sell_prices, sell_quantities, color='red', alpha=0.7, label='Sell Orders')
+            ax[1].set_xlabel('Price')
+            ax[1].set_ylabel('Quantity')
+            ax[1].legend()
+
+            plt.title(f"Buy/Sell Depth for {symbol}")
+
+            # Save the plot to a BytesIO object
+            img_stream = io.BytesIO()
+            plt.savefig(img_stream, format='png')
+            img_stream.seek(0)
+
+            # Send the image file in the Discord message
+            file = discord.File(img_stream, filename='depth_chart.png')
+            await ctx.send(file=file)
+
+            # Close the plot to avoid memory leaks
+            plt.close()
+
+            # Display additional information in the embed
+            buy_depth_info = "\n".join([f"Price: {order['price']:,.0f}\nTotal Quantity: {order['total_quantity']:,}\n" for order in buy_orders[:depth_limit]])
+            sell_depth_info = "\n".join([f"Price: {order['price']:,.0f}\nTotal Quantity: {order['total_quantity']:,}\n" for order in sell_orders[:depth_limit]])
+
             buy_value_depth = sum(order['price'] * order['total_quantity'] for order in buy_orders)
             sell_value_depth = sum(order['price'] * order['total_quantity'] for order in sell_orders)
             total_value_depth = buy_value_depth + sell_value_depth
 
-            # Calculate the market price (average of the highest buy and lowest sell)
-            market_price = (
-                max(buy_orders, key=lambda x: x['price'])['price'] +
-                min(sell_orders, key=lambda x: x['price'])['price']
-            ) / 2
+            result = await lowest_price_order(self, ctx, "sell", symbol)
 
             embed = discord.Embed(title=f"Buy/Sell Depth for {symbol}", color=discord.Color.blue())
-            embed.add_field(name="Buy Depth", value=buy_depth, inline=False)
-            embed.add_field(name="Sell Depth", value=sell_depth, inline=False)
-            embed.add_field(name="",value=f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~", inline=False)
+            embed.add_field(name="Buy Depth", value=buy_depth_info, inline=False)
+            embed.add_field(name="Sell Depth", value=sell_depth_info, inline=False)
+            embed.add_field(name="", value=f"-------------------------------------", inline=False)
             embed.add_field(name="Total Value of Buy Orders", value=f"{buy_value_depth:,.0f} QSE", inline=False)
             embed.add_field(name="Total Value of Sell Orders", value=f"{sell_value_depth:,.0f} QSE", inline=False)
             embed.add_field(name="Total Value of Depth", value=f"{total_value_depth:,.0f} QSE", inline=False)
-            embed.add_field(name="Market Price", value=f"{market_price:,.0f} QSE", inline=False)
+            embed.add_field(name="Average Market Price", value=f"{weighted_average_price:,.2f} QSE", inline=False)
+            embed.add_field(name="Current Market Price", value=f"{result['price']:,.0f} QSE", inline=False)
 
             await ctx.send(embed=embed)
 
@@ -5466,90 +5801,334 @@ class CurrencySystem(commands.Cog):
             embed = discord.Embed(description=f"An error occurred while fetching the buy/sell depth: {e}")
             await ctx.send(embed=embed)
 
-    @commands.command(name="transact_order")
-    @is_allowed_user(930513222820331590, PBot)
-    async def transact_order(self, ctx, stock_name: str, amount: int, type: str):
 
-        if stock_name.lower() != "celestialvoyage":
-            await ctx.send(f"Order Book: Can only purchase CelestialVoyage during alpha testing")
-            return
+    @commands.command(name="depth", help="Show buy/sell depth of a stock.")
+    async def show_depth(self, ctx, symbol: str, depth_limit: int = 10):
+        try:
+            cursor = self.conn.cursor()
+
+            # Fetch all buy orders for the specified symbol
+            cursor.execute("""
+                SELECT price, SUM(quantity) as total_quantity FROM limit_orders
+                WHERE order_type = 'buy' AND symbol = ?
+                GROUP BY price
+            """, (symbol,))
+            buy_orders = cursor.fetchall()
+
+            # Fetch all sell orders for the specified symbol
+            cursor.execute("""
+                SELECT price, SUM(quantity) as total_quantity FROM limit_orders
+                WHERE order_type = 'sell' AND symbol = ?
+                GROUP BY price
+            """, (symbol,))
+            sell_orders = cursor.fetchall()
+
+            # Calculate the overall market price using the full set of orders
+            all_orders = buy_orders + sell_orders
+            weighted_average_price = sum(order['price'] * order['total_quantity'] for order in all_orders) / sum(order['total_quantity'] for order in all_orders)
+
+            def format_order(order):
+                total_value = order['price'] * order['total_quantity']
+                return f"Price: {order['price']:,.0f}\nTotal Quantity: {order['total_quantity']:,}\n"
+
+            # Display only a limited number of orders based on the depth limit
+            buy_depth_info = "\n".join([format_order(order) for order in buy_orders[:depth_limit]])
+            sell_depth_info = "\n".join([format_order(order) for order in sell_orders[:depth_limit]])
+
+            # Calculate the total value of the entire depth
+            buy_value_depth = sum(order['price'] * order['total_quantity'] for order in buy_orders)
+            sell_value_depth = sum(order['price'] * order['total_quantity'] for order in sell_orders)
+            total_value_depth = buy_value_depth + sell_value_depth
+
+            embed = discord.Embed(title=f"Buy/Sell Depth for {symbol}", color=discord.Color.blue())
+            embed.add_field(name="Buy Depth", value=buy_depth_info, inline=False)
+            embed.add_field(name="Sell Depth", value=sell_depth_info, inline=False)
+            embed.add_field(name="", value=f"-------------------------------------", inline=False)
+            embed.add_field(name="Total Value of Buy Orders", value=f"{buy_value_depth:,.0f} QSE", inline=False)
+            embed.add_field(name="Total Value of Sell Orders", value=f"{sell_value_depth:,.0f} QSE", inline=False)
+            embed.add_field(name="Total Value of Depth", value=f"{total_value_depth:,.0f} QSE", inline=False)
+            embed.add_field(name="Average Market Price", value=f"{weighted_average_price:,.2f} QSE", inline=False)
+            result = await lowest_price_order(self, ctx, "sell", symbol)
+            embed.add_field(name="Current Market Price", value=f"{result['price']:,.0f} QSE", inline=False)
+
+            await ctx.send(embed=embed)
+
+        except sqlite3.Error as e:
+            embed = discord.Embed(description=f"An error occurred while fetching the buy/sell depth: {e}")
+            await ctx.send(embed=embed)
+
+
+    @commands.command(name="send_from_reserve")
+    @is_allowed_user(930513222820331590, PBot)
+    async def send_from_reserve(self, ctx, amount: int):
+        user_id = ctx.author.id
+        current_balance = get_user_balance(self.conn, user_id)
+        new_balance = current_balance + amount
+        update_user_balance(self.conn, user_id, new_balance)
+
+        reserve_balance = get_user_balance(self.conn, PBot)
+        updated_balance = reserve_balance - amount
+        update_user_balance(self.conn, PBot, updated_balance)
+
+    @commands.command(name="cancel_order", help="Cancel an order by providing its order ID.")
+#    @is_allowed_user(930513222820331590, PBot)
+    async def cancel_order(self, ctx, order_id: int):
+        try:
+            cursor = self.conn.cursor()
+
+            # Check if the order with the given ID exists and belongs to the user
+            cursor.execute("""
+                SELECT * FROM limit_orders
+                WHERE order_id = ? AND user_id = ?
+            """, (order_id, ctx.author.id))
+            order = cursor.fetchone()
+
+            if order:
+                target = get_p3_address(self.P3addrConn, order["user_id"])
+                if order["order_type"].lower() == "buy":
+                    tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
+                    cost = order["quantity"] * order["price"]
+                    fee = Decimal(cost) * Decimal(tax_percentage)
+                    await self.send_from_reserve(ctx, (int(cost) - int(fee)))
+                    print(f"""
+                        Address: {target}
+                        Refund: {cost:,}
+                        Gas: {fee:,}
+                    """)
+                else:
+                    await self.give_stock(ctx, target, order["symbol"], order["quantity"], False)
+                    print(f"""
+                        Address: {target}
+                        Refund Stock: {order["symbol"]}
+                        Amount: {order["quantity"]:,}
+                    """)
+
+                # Perform the cancellation by deleting the order
+                cursor.execute("""
+                    DELETE FROM limit_orders
+                    WHERE order_id = ?
+                """, (order_id,))
+
+                self.conn.commit()
+
+                embed = discord.Embed(description=f"Order {order_id} successfully canceled.")
+                await ctx.send(embed=embed)
+            else:
+                embed = discord.Embed(description="Either the order does not exist or you are not the owner of the order.")
+                await ctx.send(embed=embed)
+
+        except sqlite3.Error as e:
+            embed = discord.Embed(description=f"An error occurred while canceling the order: {e}")
+            await ctx.send(embed=embed)
+
+    @commands.command(name="my_orders", help="Show your placed orders.")
+    async def show_my_orders(self, ctx):
+        try:
+            cursor = self.conn.cursor()
+
+            # Fetch orders placed by the user
+            cursor.execute("""
+                SELECT * FROM limit_orders
+                WHERE user_id = ?
+            """, (ctx.author.id,))
+            user_orders = cursor.fetchall()
+
+            if not user_orders:
+                embed = discord.Embed(description="You have no placed orders.")
+                await ctx.send(embed=embed)
+                return
+
+            results_per_page = 5  # Adjust this based on how many results you want per page
+            total_pages = (len(user_orders) + results_per_page - 1) // results_per_page
+
+            for page_num in range(total_pages):
+                start_index = page_num * results_per_page
+                end_index = min((page_num + 1) * results_per_page, len(user_orders))
+
+                embed = discord.Embed(title=f"Your Placed Orders - Page {page_num + 1}/{total_pages}", color=discord.Color.green())
+
+                for index in range(start_index, end_index):
+                    order = user_orders[index]
+
+                    embed.add_field(name=f"Order ID: {order['order_id']}",
+                                    value=f"Symbol: {order['symbol']}\nOrder Type: {order['order_type']}\nPrice: {order['price']:,.2f}\nQuantity: {order['quantity']:,.0f}",
+                                    inline=False)
+
+                message = await ctx.send(embed=embed)
+
+                if total_pages > 1:
+                    if page_num > 0:
+                        await message.add_reaction("⬅️")  # Previous page
+
+                    if page_num < total_pages - 1:
+                        await message.add_reaction("➡️")  # Next page
+
+                def check(reaction, user):
+                    return user == ctx.author and reaction.message.id == message.id
+
+                try:
+                    reaction, user = await self.bot.wait_for('reaction_add', timeout=60.0, check=check)
+
+                    if str(reaction.emoji) == "⬅️" and page_num > 0:
+                        page_num -= 1
+                    elif str(reaction.emoji) == "➡️" and page_num < total_pages - 1:
+                        page_num += 1
+
+                    await message.clear_reactions()
+                except asyncio.TimeoutError:
+                    break
+
+        except sqlite3.Error as e:
+            embed = discord.Embed(description=f"An error occurred while fetching your orders: {e}")
+            await ctx.send(embed=embed)
+
+    @commands.command(name="grab_orders")
+    @is_allowed_user(930513222820331590, PBot)
+    async def grab_orders(self, ctx, stock_name: str, type: str):
+        if type.lower() == "sell":
+            result = await lowest_price_order(self, ctx, "sell", stock_name)
+        elif type.lower() == "buy":
+            result = await lowest_price_order(self, ctx, "buy", stock_name)
+
+        if result:
+            return result
+        else:
+            return False
+
+
+    @commands.command(name="buy_order2")
+    @is_allowed_user(930513222820331590, PBot)
+    async def transact_order2(self, ctx, stock_name: str, amount: int):
+        cursor = self.conn.cursor()
+
         if amount == 0:
             await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
             return
         if amount <= 0:
             await ctx.send("Amount must be a positive number.")
             return
-        if type.lower() == "buy":
-            self.buy_timer_start = timeit.default_timer()
-            current_timestamp = datetime.utcnow()
-            user_id = ctx.author.id
-            P3addrConn = sqlite3.connect("P3addr.db")
-            P3addr = get_p3_address(P3addrConn, user_id)
-            PBotAddr = get_p3_address(P3addrConn, PBot)
-            is_staking_qse_genesis = self.is_staking_qse_genesis(user_id)
-            color = discord.Color.green()
-            embed = discord.Embed(title=f"Stock Transaction Processing", color=color)
-            embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
-            embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
-            embed.add_field(name="Amount:", value=f"{amount:,.2f}", inline=False)
-            current_balance = get_user_balance(self.conn, user_id)
-            embed.add_field(name="Current Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
 
-            embed.set_footer(text=f"Timestamp: {current_timestamp}")
+        # Check the existing amount of this stock owned by the user
+
+        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+        stock = cursor.fetchone()
+        available, price, total_supply = int(stock[4]), Decimal(stock[2]), int(stock[3])
+        cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (ctx.author.id, stock_name))
+        user_stock = cursor.fetchone()
+        user_owned = int(user_stock[0]) if user_stock else 0
+
+        if (user_owned + amount) > (total_supply * 0.51):
+            embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 51% of the total supply of {stock_name} stocks.\nAvailable: {available:,}\nTotal: {total_supply:,}\nYour Shares: {user_owned:,}", color=discord.Color.red())
             await ctx.send(embed=embed)
-            result = await lowest_price_order(self, ctx, "sell", stock_name)
-            if result:
-                order_id = result['order_id']
-                order_user_id = result['user_id']
-                order_symbol = result['symbol']
-                order_type = result['order_type']
-                order_price = result['price']
-                order_quantity = result['quantity']
-                order_timestamp = result['created_at']
-                if amount > order_quantity:
-                    print(f"{amount} is greater than {order_quantity}")
+            return
+
+        self.buy_timer_start = timeit.default_timer()
+
+        current_timestamp = datetime.utcnow()
+
+        user_id = ctx.author.id
+
+        P3addrConn = sqlite3.connect("P3addr.db")
+        P3addr = get_p3_address(P3addrConn, user_id)
+        PBotAddr = get_p3_address(P3addrConn, PBot)
+
+        is_staking_qse_genesis = self.is_staking_qse_genesis(user_id)
+
+        color = discord.Color.green()
+        embed = discord.Embed(title=f"Stock Transaction Processing", color=color)
+        embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
+        embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
+        embed.add_field(name="Amount:", value=f"{amount:,.2f}", inline=False)
+        current_balance = get_user_balance(self.conn, user_id)
+        embed.add_field(name="Current Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
+
+        embed.set_footer(text=f"Timestamp: {current_timestamp}")
+        await ctx.send(embed=embed)
+
+        # Fetch all sell orders for the specified stock
+        sell_orders = await fetch_sell_orders(self, stock_name)
+
+        total_amount_to_buy = amount
+        orders_to_go_through = []
+
+        for order in sell_orders:
+            order_quantity = order['quantity']
+            if order_quantity == 0:
+                await self.remove_limit_order_command(ctx, order["order_id"])
+            if user_id == order["user_id"]:
+                continue
+            if total_amount_to_buy > 0:
+                if total_amount_to_buy >= order_quantity:
+                    orders_to_go_through.append({
+                        'order_id': order['order_id'],
+                        'order_quantity': order_quantity,
+                        'order_price': order['price']
+                    })
+                    total_amount_to_buy -= order_quantity
                 else:
-                    tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
-                    cost = order_price * amount
-                    fee = Decimal(cost) * Decimal(tax_percentage)
-                    target = get_p3_address(P3addrConn, order_user_id)
-                    target_amount = order_price * amount
-                    await self.give_addr(ctx, target, int(target_amount - int(fee)), False)
-                    await self.give_addr(ctx, PBotAddr, int(fee), False)
-                    await self.give_stock(ctx, P3addr, order_symbol, amount, False)
-                    remaining_amount = (order_quantity - amount)
-                    if remaining_amount != 0:
-                        await update_limit_order(self, ctx, order_id, amount)
-                    else:
-                        await self.remove_limit_order_command(ctx, order_id)
-
-                    current_timestamp = datetime.utcnow()
-                    color = discord.Color.green()
-                    embed = discord.Embed(title=f"Stock Transaction Completed", color=color)
-                    embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
-                    embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
-                    embed.add_field(name="Amount:", value=f"{amount:,.2f}", inline=False)
-                    embed.add_field(name="Price:", value=f"{order_price:,.2f}", inline=False)
-                    current_balance = get_user_balance(self.conn, user_id)
-                    embed.add_field(name="New Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
-                    tax_rate = tax_percentage * 100
-                    embed.add_field(name="Gas Rate:", value=f"{tax_rate:.2f}%", inline=False)
-                    elapsed_time = timeit.default_timer() - self.buy_timer_start
-                    embed.add_field(name="Transaction Time:", value=f"{elapsed_time:.2f} seconds", inline=False)
-                    embed.set_footer(text=f"Timestamp: {current_timestamp}")
-
-                    await ctx.send(embed=embed)
+                    orders_to_go_through.append({
+                        'order_id': order['order_id'],
+                        'order_quantity': total_amount_to_buy,
+                        'order_price': order['price']
+                    })
+                    total_amount_to_buy = 0
             else:
-                color = discord.Color.red()
-                embed = discord.Embed(title=f"Stock Transaction Failed", color=color)
+                break  # No need to check further if total_amount_to_buy is zero
+
+        # Now orders_to_go_through contains the necessary sell orders to fulfill the buy order
+
+        for order_info in orders_to_go_through:
+            order_id = order_info['order_id']
+            order_quantity = order_info['order_quantity']
+            order_price = order_info['order_price']
+
+            seller_old = get_user_balance(self.conn, order['user_id'])
+            tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
+            cost = order_price * order_quantity
+            fee = Decimal(cost) * Decimal(tax_percentage)
+            target = get_p3_address(P3addrConn, order['user_id'])
+            target_amount = order_price * order_quantity
+            await self.give_addr(ctx, target, int(target_amount - int(fee)), False)
+            await self.give_addr(ctx, PBotAddr, int(fee), False)
+            await self.give_stock(ctx, P3addr, stock_name, order_quantity, False)
+            remaining_amount = (order['quantity'] - order_quantity)
+            seller_new = get_user_balance(self.conn, order['user_id'])
+
+            if remaining_amount != 0:
+                await update_limit_order(self, ctx, order_id, order_quantity)
+            else:
+                await self.remove_limit_order_command(ctx, order_id)
+            # Remove orders with 0 quantity from orders_to_go_through
+            orders_to_go_through = [order_info for order_info in orders_to_go_through if order_info['order_quantity'] > 0]
+
+            if order_quantity == 0:
+                pass
+            else:
+                current_timestamp = datetime.utcnow()
+                color = discord.Color.green()
+                embed = discord.Embed(title=f"Stock Transaction Completed", color=color)
                 embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
                 embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
-                embed.add_field(name="Amount:", value=f"{amount:,.2f}", inline=False)
+                embed.add_field(name="Amount:", value=f"{order_quantity:,.2f}", inline=False)
+                embed.add_field(name="Price:", value=f"{order_price:,.2f}", inline=False)
+                new_balance = get_user_balance(self.conn, user_id)
+                embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
+                tax_rate = tax_percentage * 100
+                embed.add_field(name="Gas Rate:", value=f"{tax_rate:.2f}%", inline=False)
                 elapsed_time = timeit.default_timer() - self.buy_timer_start
                 embed.add_field(name="Transaction Time:", value=f"{elapsed_time:.2f} seconds", inline=False)
-                embed.add_field(name="Reason:", value=f"No open orders", inline=False)
                 embed.set_footer(text=f"Timestamp: {current_timestamp}")
+
+                updated_orders = await remove_zero_quantity_orders_from_db(self, ctx, stock_name)
+                new_price = await lowest_price_order(self, ctx, "sell", stock_name)
+                if new_price:
+                    await self.change_stock_price(ctx, stock_name, new_price["price"])
+
+
                 await ctx.send(embed=embed)
+                await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, order_quantity, cost, (int(cost) + int(fee)), current_balance, new_balance, order_price, "True")
+                await log_order_transaction(ledger_conn, ctx, "Sell Stock", stock_name, order_quantity, cost, (int(cost) - int(fee)), seller_old, seller_new, order_price, "True", order['user_id'])
+
 
 
 
@@ -5561,6 +6140,9 @@ class CurrencySystem(commands.Cog):
             return
         if amount <= 0:
             await ctx.send("Amount must be a positive number.")
+            return
+        if stock_name.lower() in ["terrawave", "solarhub"]:
+            await ctx.send(f"Can only buy {stock_name} using buy_order")
             return
         current_timestamp = datetime.utcnow()
         self.last_buyers = [entry for entry in self.last_buyers if (current_timestamp - entry[1]).total_seconds() <= self.calculate_average_time_type("buy_stock")]
@@ -5820,6 +6402,9 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="sell_stock", help="Sell stocks. Provide the stock name and amount.")
     @is_allowed_user(930513222820331590, PBot)
     async def sell_stock(self, ctx, stock_name: str, amount: int):
+        if stock_name.lower() in ["terrawave", "solarhub"]:
+            await ctx.send(f"Can only sell {stock_name} using place_order")
+            return
         current_timestamp = datetime.utcnow()
         self.last_sellers = [entry for entry in self.last_sellers if (current_timestamp - entry[1]).total_seconds() <= self.calculate_average_time_type("sell_stock")]
         user_id = ctx.author.id
@@ -6274,8 +6859,19 @@ class CurrencySystem(commands.Cog):
         end_index = start_index + items_per_page
 
         for stock in stocks[start_index:end_index]:
+            result = await lowest_price_order(self, ctx, "sell", stock[0])
+            lowest_sell_price = result["price"] if result else None
+            total_shares_in_escrow = await get_total_shares_in_orders(self, stock[0])
 
-            stock_info = f"{stock[0]}\nAvailable: {stock[1]:,.0f}\nCirculating: {int(stock[2] - stock[1]):,.0f}\n(Price: {stock[3]:,.2f} QSE)"
+
+            stock_info = (
+                f"{stock[0]}\n"
+                f"Available: {stock[1]:,.0f}\n"
+                f"Circulating: {int(stock[2] - stock[1]):,.0f}\n"
+                f"Total Shares in Escrow: {total_shares_in_escrow:,.0f}\n"
+                f"Market Price: {stock[3]:,.2f}\n"
+                f"Order Price: {lowest_sell_price:,.2f} QSE"# if lowest_sell_price else "Order Price: No sell orders"
+            )
             embed.add_field(name="Stock:", value=stock_info, inline=False)
 
         message = await ctx.send(embed=embed)
@@ -6306,7 +6902,21 @@ class CurrencySystem(commands.Cog):
                 embed.clear_fields()
 
                 for stock in stocks[start_index:end_index]:
-                    stock_info = f"{stock[0]}\nAvailable: {stock[1]:,.0f}\nCirculating: {int(stock[2] - stock[1]):,.0f}\n(Price: {stock[3]:,.2f} QSE)"
+                    result = await lowest_price_order(self, ctx, "sell", stock[0])
+                    if result:
+                        lowest_sell_price = result["price"] if result else None
+                        total_shares_in_escrow = await get_total_shares_in_orders(self, stock[0])
+                    else:
+                        lowest_sell_price = 0
+                        total_shares_in_escrow = 0
+                    stock_info = (
+                        f"{stock[0]}\n"
+                        f"Available: {stock[1]:,.0f}\n"
+                        f"Circulating: {int(stock[2] - stock[1]):,.0f}\n"
+                        f"Total Shares in Escrow: {total_shares_in_escrow:,.0f}\n"
+                        f"Market Price: {stock[3]:,.2f}\n"
+                        f"Order Price: {lowest_sell_price:,.2f} QSE"# if lowest_sell_price else "Order: Price: No sell orders"
+                    )
                     embed.add_field(name="Stock:", value=stock_info, inline=False)
 
                 embed.set_footer(text="Page {} of {}".format(page, total_pages))
@@ -6885,7 +7495,7 @@ class CurrencySystem(commands.Cog):
             cursor.execute("UPDATE stocks SET price=? WHERE symbol=?", (new_price, stock_symbol))
             self.conn.commit()
 
-            await ctx.send(f"The price of stock with symbol {stock_symbol} has been updated to {new_price:.10f}.")
+#            await ctx.send(f"The price of stock with symbol {stock_symbol} has been updated to {new_price:.10f}.")
 
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred while updating the stock price: {str(e)}")
@@ -6968,6 +7578,10 @@ class CurrencySystem(commands.Cog):
 
             await ctx.message.delete()
 
+            cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (PBot, symbol))
+            user_stock = cursor.fetchone()
+            reserve_owned = int(user_stock[0]) if user_stock else 0
+
             # Get the top holders of the stock
             cursor.execute("""
                 SELECT user_id, amount
@@ -6994,10 +7608,17 @@ class CurrencySystem(commands.Cog):
             available_percentage = (current_supply / total_supply) * 100
             circulating_supply = (total_supply - current_supply)
             circulating_percentage = (circulating_supply / total_supply) * 100
+            total_shares_in_orders = await get_total_shares_in_orders(self, symbol)
+            escrow_percentage = (total_shares_in_orders / total_supply) * 100
+            reserve_owned = reserve_owned - total_shares_in_orders
+            reserve_percentage = (reserve_owned / total_supply) * 100
 
             embed.add_field(name="Circulating Supply", value=f"{circulating_supply:,.0f} shares\n({circulating_percentage:,.2f}%)", inline=False)
-            embed.add_field(name="Available Supply", value=f"{current_supply:,.0f} shares\n({available_percentage:,.2f}%)", inline=False)
-            embed.add_field(name="Total Supply", value=f"{total_supply:,.0f} shares", inline=False)
+            embed.add_field(name="Market Supply", value=f"{current_supply:,.0f} shares\n({available_percentage:,.2f}%)", inline=False)
+            embed.add_field(name="Escrow Supply", value=f"{total_shares_in_orders:,.0f} shares\n({escrow_percentage:,.2f}%)", inline=False)
+            embed.add_field(name="Reserve Supply", value=f"{reserve_owned:,.0f} shares\n({reserve_percentage:,.2f}%)", inline=False)
+            embed.add_field(name="Total Supply", value=f"{total_supply:,.0f} shares\n\n------------------------------------------", inline=False)
+
 
             if top_holders:
                 top_holders_str = "\n".join([
@@ -7892,23 +8513,41 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"No stocks found for ETF ID: {etf_id}.")
             return
 
-        etf_price = sum(price for _, price, _ in stock_data)
+        # Fetch additional information for each stock
+        stocks_info = []
+        for stock in stock_data:
+            result = await lowest_price_order(self, ctx, "sell", stock[0])
+            lowest_sell_price = result["price"] if result else None
+            total_shares_in_escrow = await get_total_shares_in_orders(self, stock[0])
+            stocks_info.append({
+                'symbol': stock[0],
+                'price': stock[1],
+                'available': stock[2],
+                'lowest_sell_price': lowest_sell_price,
+                'total_shares_in_escrow': total_shares_in_escrow
+            })
+
+        etf_price = sum(stock['price'] for stock in stocks_info)
 
         # Chunk the stock data into groups of 10 for easier display
         chunk_size = 10
-        stock_chunks = list(chunk_list(stock_data, chunk_size))
+        stock_chunks = list(chunk_list(stocks_info, chunk_size))
 
         # Create an embed for each chunk of stocks
         embeds = []
         for i, stock_chunk in enumerate(stock_chunks, start=1):
             embed = discord.Embed(title=f"ETP Information (Index ID: {etf_id})", color=discord.Color.blue())
-            embed.add_field(name="Asset", value="Price ($QSE) - Available Supply", inline=False)
+            embed.add_field(name="Asset", value="Price ($QSE)\nAvailable Supply\nTotal Shares in Escrow\nOrder Price", inline=False)
             for stock in stock_chunk:
-                symbol = stock[0]
-                price = stock[1]
-                available = stock[2]
+                symbol = stock['symbol']
+                price = stock['price']
+                available = stock['available']
+                total_shares_in_escrow = stock['total_shares_in_escrow']
+                lowest_sell_price = stock['lowest_sell_price']
+
                 if available != 0:
-                    embed.add_field(name=symbol, value=f"{price:,.2f} $QSE - {int(available):,.0f}", inline=False)
+                    embed.add_field(name=symbol, value=f"{price:,.2f} $QSE\n{int(available):,.0f} shares\n{total_shares_in_escrow:,.0f} shares\n{lowest_sell_price:,.2f} $QSE" if lowest_sell_price else f"{price:,.2f} $QSE\n{int(available):,.0f} shares\n{total_shares_in_escrow:,.0f} shares", inline=False)
+
             if len(stock_chunks) > 1:
                 embed.set_footer(text=f"Page {i}/{len(stock_chunks)}")
             embeds.append(embed)
@@ -7970,41 +8609,30 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="market_polling", help="Update the name of the ETF 6 voice channel with its value.")
     async def update_etf_value(self, ctx):
         locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
-        boost = 300000000
+#        boost = 300000000
 
         while True:
-            async with self.db_semaphore:
-                async with self.transaction_lock:
-                    try:
-                        cursor = self.conn.cursor()
-                        stocks = await get_etf_stocks(self.conn, 6)
-                        exclude_stocks = ["P3:Stable", "ROFLStocks", "Chi", "Evermore", "CRYPTO:XENCOIN", "CRYPTO:XYZ"]
-                        filtered_stocks = [stock for stock in stocks if stock not in exclude_stocks]
-                        chosen_stocks = random.sample(filtered_stocks, 10)
-                        for chosen_stock in chosen_stocks:
-                            cursor.execute("SELECT * FROM stocks WHERE symbol=?", (chosen_stock,))
-                            stock = cursor.fetchone()
+#            async with self.db_semaphore:
+#                async with self.transaction_lock:
+#                    try:
+#                        cursor = self.conn.cursor()
+#                        stocks = await get_etf_stocks(self.conn, 6)
+#                        exclude_stocks = ["P3:Stable", "ROFLStocks", "Chi", "Evermore", "CRYPTO:XENCOIN", "CRYPTO:XYZ"]
+#                        filtered_stocks = [stock for stock in stocks if stock not in exclude_stocks]
+#                        chosen_stocks = random.sample(filtered_stocks, 20)
+#                        for chosen_stock in chosen_stocks:
+#                            cursor.execute("SELECT * FROM stocks WHERE symbol=?", (chosen_stock,))
+#                            stock = cursor.fetchone()
 
-                            available, price, total_supply = int(stock[4]), Decimal(stock[2]), int(stock[3])
-                            if available >= boost:
-                                pass
+#                            available, price, total_supply = int(stock[4]), Decimal(stock[2]), int(stock[3])
+#                            if available >= boost:
+#                                pass
 
-                            if random.randint(0, 1) == 0:
-                                print(f"Reserve Buy: {chosen_stock}")
-                                await self.buy_stock_for_bot(ctx, chosen_stock, boost)
-                            else:
-                                print(f"Reserve Sell: {chosen_stock}")
-                                variable_sell = random.randint(0,2)
-                                if variable_sell == 0:
-                                    boost = 300000000
-                                elif variable_sell == 1:
-                                    boost = round(300000000 / 2)
-                                else:
-                                    boost = round(300000000 / 4)
+#                            print(f"Reserve Buy: {chosen_stock}")
+#                            await self.buy_stock_for_bot(ctx, chosen_stock, boost)
 
-                                await self.sell_stock_for_bot(ctx, chosen_stock, boost)
-                    except Exception as e:
-                        print(f"Transaction failed: {str(e)}")
+#                    except Exception as e:
+#                        print(f"Transaction failed: {str(e)}")
 
             etf_6_value = await get_etf_value(self.conn, 6)
             etf_6_value_formatted = locale.format_string("%0.2f", etf_6_value, grouping=True)
@@ -9942,6 +10570,8 @@ class CurrencySystem(commands.Cog):
                         embed.add_field(name="Total ETP Value", value=f"{total_etf_value:,.0f} $QSE" if total_etf_value != 0 else "0", inline=False)
                         embed.add_field(name="P3:Stable Value", value=f"{user_stable_value:,.0f} $QSE" if user_stable_value != 0 else "0", inline=False)
                         embed.add_field(name="Total Metal Value", value=f"{total_metal_value:,.2f} $QSE" if total_metal_value != 0 else "0", inline=False)
+                        shares_in_escrow = await get_total_shares_in_escrow_user(self, user_id)
+                        embed.add_field(name="Total Escrow", value=f"{shares_in_escrow:,.0f} shares" if shares_in_escrow != 0 else "0", inline=False)
                         embed.add_field(name="Total Funds Value", value=f"{total_funds_value:,.0f} $QSE" if total_funds_value != 0 else "0", inline=False)
 #                embed.add_field(name=f"Stock Profits/Losses ({current_month_name})", value=f"{total_stock_profits_losses:,.0f} $QSE" if total_stock_profits_losses != 0 else "Data Missing", inline=False)
 #                embed.add_field(name=f"ETF Profits/Losses ({current_month_name})", value=f"{total_etf_profits_losses:,.0f} $QSE" if total_etf_profits_losses != 0 else "Data Missing", inline=False)
