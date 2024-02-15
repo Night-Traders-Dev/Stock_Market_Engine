@@ -53,11 +53,11 @@ matplotlib.use('agg')
 # Hardcoded Variables
 
 announcement_channel_ids = [1093540470593962014, 1124784361766650026, 1124414952812326962]
-stockMin = 1000
-baseMinPrice = 1000
+stockMin = 1
+baseMinPrice = 1
 stockMax = 10000000
 dStockLimit = 150000000 #2000000 standard
-dETFLimit = 500000000000
+dETFLimit = 5000000000000
 treasureMin = 10000000
 treasureMax = 50000000
 MAX_BALANCE = Decimal('5000000000000000000')
@@ -132,30 +132,972 @@ MAX_EARNINGS = 500000
 
 ## End Work
 
-buy_sell_semaphore = asyncio.Semaphore(1)
+def setup_ledger():
+    try:
+        # Create a connection to the SQLite database with caching and paging
+        conn = sqlite3.connect("p3ledger.db", check_same_thread=False, isolation_level=None)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA cache_size = 10000")  # Set cache size (adjust as needed)
+        conn.execute("PRAGMA page_size = 4096")   # Set page size (adjust as needed)
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        cursor = conn.cursor()
 
-async def wait_for_unlocked():
-    await buy_sell_semaphore.acquire()
+        # Create a table for stock transactions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stock_transactions (
+                transaction_id INTEGER PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                pre_tax_amount REAL NOT NULL,
+                post_tax_amount REAL NOT NULL,
+                balance_before REAL NOT NULL,
+                balance_after REAL NOT NULL,
+                price NUMERIC(20, 10) NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-async def release_semaphore():
-    buy_sell_semaphore.release()
+        # Add an index on user_id and symbol for faster retrieval
+        cursor.execute("""
+            CREATE INDEX idx_symbol_action_timestamp
+            ON stock_transactions (symbol, action, timestamp);
+        """)
 
-class ConnectionPool:
-    def __init__(self, database):
-        self.database = database
-        self._pool = []
+        # Create a table for transfer transactions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transfer_transactions (
+                transaction_id INTEGER PRIMARY KEY,
+                sender_id TEXT NOT NULL,
+                receiver_id TEXT NOT NULL,
+                amount REAL NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-    @contextmanager
-    def acquire(self):
-        if not self._pool:
-            self._pool.append(sqlite3.connect(self.database, isolation_level=None))
-        connection = self._pool.pop()
-        yield connection
-        self._pool.append(connection)
+        # Create a table for stock burning transactions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stock_burning_transactions (
+                transaction_id INTEGER PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                stock_name TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                price_before REAL NOT NULL,
+                price_after REAL NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+           )
+        """)
 
-conn_pool = ConnectionPool("currency_system.db")
+        # Create a table for gambling transactions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS gambling_transactions (
+                transaction_id INTEGER PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                game TEXT NOT NULL,
+                bet_amount REAL NOT NULL,
+                win_loss TEXT NOT NULL,
+                amount_after_tax REAL NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-## BalckJack Helpers and Functions
+        # Create a table for stock transfers
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stock_transfer_transactions (
+                id INTEGER PRIMARY KEY,
+                sender_id INTEGER NOT NULL,
+                receiver_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Commit the changes and close the connection
+        conn.commit()
+        conn.close()
+        print("Ledger created successfully")
+
+    except sqlite3.Error as e:
+        # Handle the database error
+        print(f"Database error: {e}")
+
+    except Exception as e:
+        # Handle unexpected errors
+        print(f"An unexpected error occurred: {e}")
+
+
+
+def create_vip_table():
+    conn = sqlite3.connect("VIP.db")
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_transactions (
+                transaction_id INTEGER PRIMARY KEY,
+                user_id TEXT,
+                etf_id INTEGER,
+                transaction_type TEXT,
+                amount REAL,
+                tax_amount REAL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    except sqlite3.Error as e:
+        # Handle any errors, if necessary
+        print(f"Error creating etf_transactions table: {e}")
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_percentages (
+                role_id INTEGER PRIMARY KEY,
+                role_name TEXT,
+                percentage REAL
+            )
+        """)
+    except sqlite3.Error as e:
+        # Handle any errors, if necessary
+        print(f"Error creating etf_percentages table: {e}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS treasure_percentages (
+                role_id INTEGER PRIMARY KEY,
+                role_name TEXT,
+                percentage REAL
+            )
+        """)
+    except sqlite3.Error as e:
+        # Handle any errors, if necessary
+        print(f"Error creating treasure_percentages table: {e}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_stock_percentages (
+                role_id INTEGER PRIMARY KEY,
+                role_name TEXT,
+                percentage REAL
+            )
+        """)
+    except sqlite3.Error as e:
+        # Handle any errors, if necessary
+        print(f"Error creating daily_stock_percentages table: {e}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS weekly_tax_distribution (
+                distribution_id INTEGER PRIMARY KEY,
+                etf_id INTEGER,
+                role_id INTEGER,
+                total_tax REAL,
+                distributed_amount REAL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    except sqlite3.Error as e:
+        # Handle any errors, if necessary
+        print(f"Error creating weekly_tax_distribution table: {e}")
+    finally:
+        conn.commit()
+        conn.close()
+
+
+def create_p3addr_table():
+
+    # Connect to the database
+    conn = sqlite3.connect("P3addr.db")
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA cache_size = 10000")  # Set cache size (adjust as needed)
+    conn.execute("PRAGMA page_size = 4096")   # Set page size (adjust as needed)
+    conn.execute("PRAGMA synchronous=NORMAL;")
+
+    # Create a cursor object to execute SQL commands
+    cursor = conn.cursor()
+
+
+    # Execute the SQL command to create the table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_addresses (
+            user_id TEXT PRIMARY KEY,
+            p3_address TEXT NOT NULL,
+            vanity_address TEXT NOT NULL DEFAULT ''
+        )
+    ''')
+
+    # Commit the changes and close the connection
+    print("P3 Address Database Created")
+    conn.commit()
+    conn.close()
+
+def setup_database():
+    conn = sqlite3.connect("currency_system.db")
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA cache_size = 10000")  # Set cache size (adjust as needed)
+    conn.execute("PRAGMA page_size = 4096")   # Set page size (adjust as needed)
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    # Add available column to stocks table if not exists
+    cursor.execute("PRAGMA table_info(stocks)")
+    columns = cursor.fetchall()
+    if 'available' not in [column[1] for column in columns]:
+        cursor.execute("ALTER TABLE stocks ADD COLUMN available INT")
+
+    # Create 'users' table
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                balance BLOB NOT NULL
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id);")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'users' table: {e}")
+
+    # Create 'raffle_tickets' table
+    try:
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS raffle_tickets (
+                user_id INTEGER PRIMARY KEY,
+                quantity INTEGER,
+                timestamp INTEGER
+            )
+        ''')
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_raffle_tickets_user_id ON raffle_tickets(user_id);")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'raffle_tickets' table: {e}")
+
+    # Create 'stocks' table
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stocks (
+                symbol TEXT PRIMARY KEY,
+                available INTEGER64 NOT NULL,
+                price NUMERIC(20, 10) NOT NULL,
+                QSE_required INTEGER NOT NULL,
+                QSE_rewarded INTEGER NOT NULL
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_stocks_symbol ON stocks(symbol);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_stocks_price ON stocks(price);")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'stocks' table: {e}")
+
+    # Create 'user_stocks' table
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_stocks (
+                user_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                amount REAL NOT NULL,
+                action TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                FOREIGN KEY (symbol) REFERENCES stocks(symbol),
+                PRIMARY KEY (user_id, symbol)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_stocks_user_id ON user_stocks(user_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_stocks_symbol ON user_stocks(symbol);")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'user_stocks' table: {e}")
+
+
+
+
+
+    try:
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS etfs (
+                etf_id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                value REAL NOT NULL DEFAULT 0
+             )
+         ''')
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'etfs' table: {e}")
+
+    try:
+       cursor.execute('''
+           CREATE TABLE IF NOT EXISTS etf_stocks (
+                etf_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                FOREIGN KEY (etf_id) REFERENCES etfs(etf_id),
+                FOREIGN KEY (symbol) REFERENCES stocks(symbol),
+                PRIMARY KEY (etf_id, symbol)
+            )
+        ''')
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'etf_stocks' table: {e}")
+
+    try:
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_etfs (
+                user_id INTEGER NOT NULL,
+                etf_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (etf_id) REFERENCES etfs(etf_id),
+                FOREIGN KEY (symbol) REFERENCES etf_stocks(symbol),
+                PRIMARY KEY (user_id, etf_id)
+            )
+        ''')
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'user_etfs' table: {e}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS metrics (
+                metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                metric_name TEXT NOT NULL,
+                metric_value INTEGER NOT NULL
+            )
+        """)
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'metrics' table: {e}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tax_distribution (
+                id INTEGER PRIMARY KEY,
+                user_id INTEGER,
+                tax_amount DECIMAL(18, 2),
+                distribution_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        print("Table 'tax_distribution' created successfully.")
+    except sqlite3.Error as e:
+        print(f"Error creating table: {e}")
+
+
+    try:
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS limit_orders (
+                order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                order_type TEXT NOT NULL,
+                price REAL NOT NULL,
+                quantity INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (symbol) REFERENCES stocks(symbol),
+                CREATE INDEX idx_limit_orders_symbol_order_type_price_created_at
+                ON limit_orders (symbol, order_type, price, created_at);
+
+            )
+        """)
+
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'limit_orders' table: {e}")
+
+
+
+    try:
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS items (
+                item_id INTEGER PRIMARY KEY,
+                item_name TEXT NOT NULL,
+                item_description TEXT,
+                price DECIMAL(18, 2) NOT NULL,
+                is_usable INTEGER NOT NULL DEFAULT 0
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS inventory (
+                user_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                quantity INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, item_id),
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (item_id) REFERENCES items(item_id)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                transaction_id INTEGER PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                quantity INTEGER NOT NULL,
+                total_cost DECIMAL(18, 2) NOT NULL,
+                tax_amount DECIMAL(18, 2) NOT NULL,
+                transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (item_id) REFERENCES items(item_id)
+            )
+        ''')
+        print("Table 'Marketplace' created successfully.")
+    except sqlite3.Error as e:
+        print(f"Error executing SQL query: {e}")
+
+    try:
+        # Create stock_metrics table if not exists
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS stock_metrics (
+                metric_id INTEGER PRIMARY KEY,
+                stock_name TEXT NOT NULL,
+                date_recorded DATE NOT NULL,
+                open_price REAL NOT NULL,
+                close_price REAL NOT NULL,
+                high_price REAL NOT NULL,
+                low_price REAL NOT NULL,
+                volume INTEGER NOT NULL
+            )
+        ''')
+
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'stock_metrics' table: {e}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trading_teams (
+                team_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                total_profit_loss DECIMAL DEFAULT 0
+            );
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS team_members (
+                user_id INTEGER,
+                team_id INTEGER,
+                FOREIGN KEY (team_id) REFERENCES trading_teams(team_id),
+                PRIMARY KEY (user_id, team_id)
+            );
+        """)
+        print("Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS team_transactions (
+                transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                team_id INTEGER,
+                symbol TEXT,
+                amount INTEGER,
+                price DECIMAL,
+                type TEXT, -- "buy" or "sell"
+                FOREIGN KEY (team_id) REFERENCES trading_teams(team_id)
+            );
+        """)
+        print("Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
+
+            CREATE TABLE IF NOT EXISTS user_daily_buys (
+                user_id INTEGER,
+                symbol TEXT,
+                amount INTEGER,
+                timestamp DATETIME
+            );
+        """)
+        print("Stock Limit created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
+
+            CREATE TABLE IF NOT EXISTS user_daily_sells (
+                user_id INTEGER,
+                symbol TEXT,
+                amount INTEGER,
+                timestamp DATETIME
+            );
+        """)
+        print("Daily Sells Limit created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+
+    try:
+        cursor.execute("""
+
+            CREATE TABLE IF NOT EXISTS burn_history (
+                user_id TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        print("Burn Limit created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
+
+            CREATE TABLE IF NOT EXISTS item_usage (
+                user_id TEXT NOT NULL,
+                item_name TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, item_name)
+            );
+        """)
+        print("Item limit created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS swap_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                stock1 TEXT,
+                amount1 INTEGER,
+                stock2 TEXT,
+                amount2 INTEGER,
+                status TEXT CHECK (status IN ('open', 'matched')),
+                FOREIGN KEY (stock1) REFERENCES stocks(symbol),
+                FOREIGN KEY (stock2) REFERENCES stocks(symbol)
+            )
+        """)
+        print("Swap Orders created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        # Create Users table if not exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_wallets (
+                user_id INTEGER PRIMARY KEY,
+                wallet_address TEXT NOT NULL,
+                p3_address TEXT NOT NULL
+            )
+        """)
+        print("WalletConnect created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        # Create user_stakes table if not exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_stakes (
+                user_id INTEGER,
+                nft TEXT NOT NULL,
+                tokenid TEXT NOT NULL,
+                stake_timestamp TEXT,
+                PRIMARY KEY (user_id, nft, tokenid),
+                FOREIGN KEY (user_id) REFERENCES user_wallets (user_id)
+            )
+        """)
+        print("user_stakes table created successfully")
+
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the user_stakes table: {e}")
+
+    try:
+
+        # Create a table to store user deposits
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS deposits (
+                user_id INTEGER,
+                lock_duration INTEGER,
+                amount REAL,
+                interest_rate REAL,
+                start_date TIMESTAMP,
+                PRIMARY KEY (user_id, lock_duration)
+            );
+        ''')
+
+    except sqlite3.Error as e:
+        print(f"An error occurred: {str(e)}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users_level (
+                user_id INTEGER PRIMARY KEY,
+                level INTEGER NOT NULL DEFAULT 1,
+                experience INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'user_level' table: {e}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users_rpg_stats (
+                user_id INTEGER PRIMARY KEY,
+                cur_hp INTEGER NOT NULL DEFAULT 10,
+                max_hp INTEGER NOT NULL DEFAULT 10,
+                atk INTEGER NOT NULL DEFAULT 1,
+                def INTEGER NOT NULL DEFAULT 1,
+                eva INTEGER NOT NULL DEFAULT 1,
+                luck INTEGER NOT NULL DEFAULT 1,
+                chr INTEGER NOT NULL DEFAULT 1,
+                spd INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'user_stats' table: {e}")
+
+
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users_rpg_metrics (
+                user_id INTEGER PRIMARY KEY,
+                kills INTEGER NOT NULL DEFAULT 0,
+                deaths INTEGER NOT NULL DEFAULT 0,
+                heals INTEGER NOT NULL DEFAULT 0,
+                healed INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'user_rpg_metrics' table: {e}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users_rpg_inventory (
+                user_id INTEGER PRIMARY KEY,
+                firearm TEXT NOT NULL DEFAULT None,
+                ammo TEXT NOT NULL DEFAULT None,
+                bodyarmor TEXT NOT NULL DEFAULT None,
+                medpack TEXT NOT NULL DEFAULT None
+            )
+        """)
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'user_rpg_inventory' table: {e}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users_rpg_cities (
+                user_id INTEGER PRIMARY KEY,
+                current_city TEXT NOT NULL DEFAULT 'StellarHub',
+                last_city TEXT NOT NULL DEFAULT None,
+                traveling TEXT NOT NULL DEFAULT 'No',
+                timestamp TIMESTAMP NOT NULL DEFAULT None
+            )
+        """)
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'user_rpg_cities' table: {e}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_city_stats (
+                city TEXT PRIMARY KEY,
+                QSE TEXT NOT NULL DEFAULT 0,
+                Resources INTEGER NOT NULL DEFAULT 0,
+                Stocks INTEGER NOT NULL DEFAULT 0,
+                ETPs INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'user_city_stats' table: {e}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS updown_orders (
+                user_id INTEGER NULL DEFAULT None,
+                asset TEXT NOT NULL DEFAULT None,
+                current_price INTEGER NOT NULL DEFAULT None,
+                lower_limit INTEGER NOT NULL DEFAULT None,
+                upper_limit INTEGER NOT NULL DEFAULT None,
+                contract_date TIMESTAMP NOT NULL DEFAULT None,
+                expiration TIMESTAMP NOT NULL DEFAULT None,
+                order_id INTEGER NOT NULL DEFAULT None
+            )
+        """)
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'updown_orders' table: {e}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS futures_orders (
+                order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                order_type TEXT NOT NULL,  -- 'buy' or 'sell'
+                price REAL NOT NULL,
+                quantity INTEGER NOT NULL,
+                expiration TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (symbol) REFERENCES stocks(symbol)
+            )
+        """)
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the 'futures_orders' table: {e}")
+
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS market_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS reserve_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                qse TEXT NOT NULL,
+                stocks TEXT NOT NULL,
+                total TEXT NOT NULL
+
+            );
+        """)
+
+        print("Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS banks (
+                bank_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bank_name TEXT NOT NULL,
+                qse_stored REAL NOT NULL,
+                stock_value_stored REAL NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+        """)
+        cursor.execute("""CREATE INDEX IF NOT EXISTS idx_banks_bank_name ON banks (bank_name);""")
+        print("Banks created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_accounts (
+                account_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                bank_id INTEGER NOT NULL,
+                qse_balance REAL NOT NULL,
+                stock_assets TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (bank_id) REFERENCES banks(bank_id)
+            );
+
+
+        """)
+        cursor.execute("""CREATE INDEX IF NOT EXISTS idx_user_accounts_user_id ON user_accounts (user_id);""")
+        print("User Account Banks created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+
+    conn.commit()
+    return conn
+
+
+
+
+setup_database()
+setup_ledger()
+create_p3addr_table()
+create_vip_table()
+
+
+
+## Bank Engine
+
+
+
+async def create_bank(self, bank_name):
+    try:
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO banks (bank_name, qse_stored, stock_value_stored)
+            VALUES (?, 0.0, 0.0)
+        """, (bank_name,))
+        self.conn.commit()
+        return f"Bank '{bank_name}' created successfully."
+    except sqlite3.Error as e:
+        return f"Error creating bank: {e}"
+
+async def show_all_banks(self):
+    try:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT bank_id, bank_name FROM banks")
+        banks = cursor.fetchall()
+
+        if banks:
+            print("Banks:")
+            for bank_id, bank_name in banks:
+                print(f"Bank ID: {bank_id}, Bank Name: {bank_name}")
+        else:
+            print("No banks found.")
+    except sqlite3.Error as e:
+        print(f"An error occurred while retrieving banks: {str(e)}")
+
+async def create_user_account(self, ctx, bank_id):
+    try:
+        cursor = self.conn.cursor()
+        user_id = ctx.author.id
+
+        # Check if the user already has an account
+        cursor.execute("SELECT * FROM user_accounts WHERE user_id = ? AND bank_id = ?", (user_id, bank_id))
+        existing_account = cursor.fetchone()
+
+        if existing_account:
+            return "User already has an account."
+
+        # If no existing account, create a new one
+        cursor.execute("""
+            INSERT INTO user_accounts (user_id, bank_id, qse_balance, stock_assets)
+            VALUES (?, ?, 0.0, '')
+        """, (user_id, bank_id))
+
+        self.conn.commit()
+        return "User account created successfully."
+
+    except sqlite3.Error as e:
+        return f"Error creating user account: {e}"
+
+async def deposit_qse(self, ctx, bank_id, amount):
+    try:
+        cursor = self.conn.cursor()
+        user_id = ctx.author.id
+
+        # Check if the user already has an account
+        cursor.execute("SELECT * FROM user_accounts WHERE user_id = ? AND bank_id = ?", (user_id, bank_id))
+        existing_account = cursor.fetchone()
+
+        if existing_account:
+
+            cursor.execute("""
+                UPDATE user_accounts
+                SET qse_balance = qse_balance + ?
+                WHERE user_id = ? AND bank_id = ?
+            """, (amount, user_id, bank_id))
+            self.conn.commit()
+            return f"Deposited {amount:,.0f} QSE successfully."
+        else:
+            return f"No account found for this bank"
+    except sqlite3.Error as e:
+        return f"Error depositing QSE: {e}"
+
+async def deposit_stock_assets(self, ctx, bank_id, assets):
+    try:
+        cursor = self.conn.cursor()
+        user_id = ctx.author.id
+        cursor.execute("""
+            UPDATE user_accounts
+            SET stock_assets = ?
+            WHERE user_id = ? AND bank_id = ?
+        """, (assets, user_id, bank_id))
+        self.conn.commit()
+        return "Deposited stock assets successfully."
+    except sqlite3.Error as e:
+        return f"Error depositing stock assets: {e}"
+
+async def withdraw_qse(self, ctx, bank_id, amount):
+    try:
+        cursor = self.conn.cursor()
+        user_id = ctx.author.id
+        # Check if the user already has an account
+        cursor.execute("SELECT * FROM user_accounts WHERE user_id = ? AND bank_id = ?", (user_id, bank_id))
+        existing_account = cursor.fetchone()
+
+        if existing_account:
+            current_qse_balance = existing_account[3]
+
+            # Check if the withdrawal amount is greater than the current balance
+            if amount > current_qse_balance:
+                return "Withdrawal amount exceeds the current QSE balance. Cannot withdraw."
+
+            # Update the QSE balance
+            cursor.execute("""
+                UPDATE user_accounts
+                SET qse_balance = qse_balance - ?
+                WHERE user_id = ? AND bank_id = ?
+            """, (amount, user_id, bank_id))
+            self.conn.commit()
+            await self.send_from_reserve(ctx, ctx.author.id, amount)
+            return f"Withdrew {amount:,.0f} QSE successfully."
+        else:
+            return "No account found for this bank"
+    except sqlite3.Error as e:
+        return f"Error withdrawing QSE: {e}"
+
+async def withdraw_stock_assets(self, ctx, bank_id):
+    try:
+        cursor = self.conn.cursor()
+        user_id = ctx.author.id
+        cursor.execute("""
+            UPDATE user_accounts
+            SET stock_assets = ''
+            WHERE user_id = ? AND bank_id = ?
+        """, (user_id, bank_id))
+        self.conn.commit()
+        return "Withdrawn stock assets successfully."
+    except sqlite3.Error as e:
+        return f"Error withdrawing stock assets: {e}"
+
+async def view_account(self, ctx, bank_id):
+    try:
+        cursor = self.conn.cursor()
+        user_id = ctx.author.id
+        cursor.execute("""
+            SELECT * FROM user_accounts
+            WHERE user_id = ? AND bank_id = ?
+        """, (user_id, bank_id))
+        account_data = cursor.fetchone()
+        if account_data:
+            qse_balance = account_data[3]
+            formatted_qse_balance = f"{qse_balance:,.0f}"
+
+            embed = Embed(
+                title=f"Account Information for User {get_p3_address(self.P3addrConn, user_id)}",
+                description=f"Bank: P3:Bank",
+                color=0x00ff00
+            )
+            embed.add_field(name="QSE Balance", value=formatted_qse_balance)
+            embed.add_field(name="Stock Assets", value=account_data[4])
+            return embed
+        else:
+            return "User account not found."
+    except sqlite3.Error as e:
+        return f"Error viewing account: {e}"
+
+async def get_total_qse_deposited(self):
+    try:
+        cursor = self.conn.cursor()
+
+        # Summing up the QSE balance for all accounts
+        cursor.execute("""
+            SELECT SUM(qse_balance) FROM user_accounts
+        """)
+        total_qse_deposited = cursor.fetchone()[0]
+
+        if total_qse_deposited is not None:
+            return total_qse_deposited
+        else:
+            return 0  # Return 0 if there are no accounts with deposited QSE
+
+    except sqlite3.Error as e:
+        return f"Error getting total QSE deposited: {e}"
+
 
 # Set the locale to a valid one (e.g., 'en_US.UTF-8')
 locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
@@ -424,7 +1366,8 @@ def remove_order(conn: Connection, order_id: int):
 def update_order_quantity(conn: Connection, order_id: int, new_quantity: int):
     try:
         with conn:
-            conn.execute("UPDATE limit_orders SET quantity = ? WHERE order_id = ?", (new_quantity, order_id))
+            conn.execute("UPDATE limit_orders SET quantity = :new_quantity WHERE order_id = :order_id",
+                         {"new_quantity": new_quantity, "order_id": order_id})
         print(f"Order {order_id} quantity updated to {new_quantity} successfully.")
     except sqlite3.Error as e:
         print(f"An error occurred while updating quantity for order {order_id}: {e}")
@@ -557,67 +1500,17 @@ async def add_contract_pool(self, ctx, contract):
     if contract:
         a = 1
 
-async def add_limit_order(self, ctx, user_id, symbol, order_type, price, quantity, verbose: bool = True):
-    if order_type.lower() not in ["buy", "sell"]:
-        await ctx.send("Order type must be Buy or Sell")
-        return
+async def add_limit_order(self, ctx, symbol, price, quantity):
+    user_id = PBot
+    order_type = "sell"
+    cursor = self.conn.cursor()
+    cursor.execute("""
+        INSERT INTO limit_orders (user_id, symbol, order_type, price, quantity)
+        VALUES (?, ?, ?, ?, ?)
+    """, (user_id, symbol, order_type, price, quantity))
+    order_id = cursor.lastrowid
+    self.conn.commit()
 
-    try:
-        P3addrConn = sqlite3.connect("P3addr.db")
-        P3Addr = get_p3_address(P3addrConn, user_id)
-        PBotAddr = get_p3_address(P3addrConn, PBot)
-        if verbose:
-            if order_type.lower() == "sell" and user_id != PBot:
-                result = await send_stock(self, ctx, self.bot_address, P3Addr, symbol, quantity, False)
-                if not result:
-                    return
-            else:
-
-                tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
-                cost = price * quantity
-                fee = Decimal(cost) * Decimal(tax_percentage)
-                total = int(cost) + int(fee)
-                await self.give_addr(ctx, PBotAddr, int(total), False)
-
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            INSERT INTO limit_orders (user_id, symbol, order_type, price, quantity)
-            VALUES (?, ?, ?, ?, ?)
-        """, (user_id, symbol, order_type, price, quantity))
-        order_id = cursor.lastrowid
-        self.conn.commit()
-        embed = discord.Embed(description="Limit order added successfully.")
-        embed.add_field(name="Order ID:", value=f"{order_id}", inline=False)
-        embed.add_field(name="Address:", value=f"{P3Addr}", inline=False)
-        embed.add_field(name="Stock:", value=f"{symbol}", inline=False)
-        embed.add_field(name="Amount:", value=f"{quantity:,.2f}", inline=False)
-        embed.add_field(name="Order Type:", value=f"{order_type}", inline=False)
-        embed.add_field(name="Price:", value=f"{price:,.2f}", inline=False)
-        embed.add_field(name="Value:", value=f"{(price * quantity):,.2f}", inline=False)
-        print(f"""
-            Order ID: {order_id}
-            Address: {P3Addr}
-            Stock: {symbol}
-            Amount: {quantity:,.2f}
-            Type: {order_type}
-            Price: {price:,.2f}
-            Value: {(price * quantity):,.2f}
-        """)
-        await ctx.send(embed=embed)
-
-
-    except sqlite3.Error as e:
-        await ctx.send(f"An error occurred while adding a limit order: {e}")
-
-#async def unlock_share_limit(self, ctx, symbol, percentage, ceo_type):
-#    user_id = ctx.author.id
-
-#    for ceo_data in self.ceo_stocks:
-#        ceo_stock, ceo_id = ceo_data
-#        if user_id == ceo_id and ceo_stock == symbol.lower():
-#            total_supply, current_supply = await get_supply_info(self, ctx, symbol)
-#            amount = (Decimal(percentage) / 100) * Decimal(total_supply)
-#            await self.unlock_shares(ctx, symbol, int(amount), ceo_type)
 
 
 async def unlock_share_limit(self, ctx, symbol, percentage, type):
@@ -828,21 +1721,19 @@ async def add_reserve_metric(self, ctx):
 async def calculate_average_mv(self):
     try:
         cursor = self.conn.cursor()
-        cursor.execute("SELECT mv FROM market_value")
-        values = cursor.fetchall()
+        cursor.execute("SELECT SUM(mv), COUNT(mv) FROM market_value")
+        result = cursor.fetchone()
 
-        if not values:
-            return None  # Return None for an empty table
+        if not result or result[1] == 0:
+            return None  # Return None for an empty table or zero count
 
-        # Extract values from the result set
-        values = np.array(values, dtype=float)
-
-        # Calculate the average using NumPy
-        average = np.mean(values)
+        total_mv, count = result
+        average = total_mv / count
         return average
     except sqlite3.Error as e:
         print(f"An error occurred while calculating the average: {str(e)}")
         return None
+
 
 async def remove_zero_quantity_orders_from_db(self, ctx, symbol):
     cursor = self.conn.cursor()
@@ -865,9 +1756,20 @@ async def remove_limit_order(self, ctx, order_id):
         cursor = self.conn.cursor()
         cursor.execute("DELETE FROM limit_orders WHERE order_id=?", (order_id,))
         self.conn.commit()
-#        await ctx.send(f"Limit order with order_id {order_id} removed successfully.")
     except sqlite3.Error as e:
         await ctx.send(f"An error occurred while removing a limit order: {e}")
+
+async def remove_limit_orders(self, ctx, order_ids):
+    if not order_ids:
+        return  # No order IDs to remove
+
+    try:
+        cursor = self.conn.cursor()
+        placeholders = ', '.join(['?'] * len(order_ids))
+        cursor.execute(f"DELETE FROM limit_orders WHERE order_id IN ({placeholders})", order_ids)
+        self.conn.commit()
+    except sqlite3.Error as e:
+        await ctx.send(f"An error occurred while removing limit orders: {e}")
 
 
 def add_quantity_to_limit_order(self, order_id, amount):
@@ -1477,23 +2379,10 @@ async def update_user_balance(conn, user_id, new_balance):
     try:
         if not isinstance(user_id, int) or new_balance is None:
             raise ValueError(f"Invalid user_id or new_balance value. user_id: {user_id}, new_balance: {new_balance:,.2f}")
-
+        cursor = conn.cursor()
         # Ensure that new_balance is a Decimal
         new_balance = Decimal(new_balance)
 
-        # Calculate total stock value
-        cursor = conn.cursor()
-        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (PBot,))
-        Pbot_Balance = cursor.fetchone()[0]
-
-        cursor.execute("SELECT COALESCE(SUM(s.price * us.amount), 0) FROM user_stocks us JOIN stocks s ON us.symbol = s.symbol WHERE us.user_id=?", (PBot,))
-        total_stock_value = cursor.fetchone()[0]
-
-        MAX_BALANCE = (Pbot_Balance + total_stock_value)
-
-        # Check if new_balance exceeds the maximum allowed
-        if user_id != PBot and new_balance > MAX_BALANCE:
-            raise ValueError(f"User balance exceeds the maximum allowed balance of {MAX_BALANCE:,.2f} $QSE or 50% of the current balance of the Reserve.")
 
         # Use a single SQL statement for both table creation and insertion
         cursor.execute("""
@@ -2247,746 +3136,7 @@ def get_user_id_by_vanity(conn, vanity_address):
     return result[0] if result else None
 
 
-def setup_ledger():
-    try:
-        # Create a connection to the SQLite database with caching and paging
-        conn = sqlite3.connect("p3ledger.db", check_same_thread=False, isolation_level=None)
-        conn.execute("PRAGMA cache_size = 10000")  # Set cache size (adjust as needed)
-        conn.execute("PRAGMA page_size = 4096")   # Set page size (adjust as needed)
-        cursor = conn.cursor()
 
-        # Create a table for stock transactions
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS stock_transactions (
-                transaction_id INTEGER PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                action TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                quantity INTEGER NOT NULL,
-                pre_tax_amount REAL NOT NULL,
-                post_tax_amount REAL NOT NULL,
-                balance_before REAL NOT NULL,
-                balance_after REAL NOT NULL,
-                price NUMERIC(20, 10) NOT NULL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Add an index on user_id and symbol for faster retrieval
-        cursor.execute("""
-            CREATE INDEX idx_symbol_action_timestamp
-            ON stock_transactions (symbol, action, timestamp);
-        """)
-
-        # Create a table for transfer transactions
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS transfer_transactions (
-                transaction_id INTEGER PRIMARY KEY,
-                sender_id TEXT NOT NULL,
-                receiver_id TEXT NOT NULL,
-                amount REAL NOT NULL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Create a table for stock burning transactions
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS stock_burning_transactions (
-                transaction_id INTEGER PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                stock_name TEXT NOT NULL,
-                quantity INTEGER NOT NULL,
-                price_before REAL NOT NULL,
-                price_after REAL NOT NULL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-           )
-        """)
-
-        # Create a table for gambling transactions
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS gambling_transactions (
-                transaction_id INTEGER PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                game TEXT NOT NULL,
-                bet_amount REAL NOT NULL,
-                win_loss TEXT NOT NULL,
-                amount_after_tax REAL NOT NULL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Create a table for stock transfers
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS stock_transfer_transactions (
-                id INTEGER PRIMARY KEY,
-                sender_id INTEGER NOT NULL,
-                receiver_id INTEGER NOT NULL,
-                symbol TEXT NOT NULL,
-                amount INTEGER NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Commit the changes and close the connection
-        conn.commit()
-        conn.close()
-        print("Ledger created successfully")
-
-    except sqlite3.Error as e:
-        # Handle the database error
-        print(f"Database error: {e}")
-
-    except Exception as e:
-        # Handle unexpected errors
-        print(f"An unexpected error occurred: {e}")
-
-
-
-def create_vip_table():
-    conn = sqlite3.connect("VIP.db")
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS etf_transactions (
-                transaction_id INTEGER PRIMARY KEY,
-                user_id TEXT,
-                etf_id INTEGER,
-                transaction_type TEXT,
-                amount REAL,
-                tax_amount REAL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    except sqlite3.Error as e:
-        # Handle any errors, if necessary
-        print(f"Error creating etf_transactions table: {e}")
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS etf_percentages (
-                role_id INTEGER PRIMARY KEY,
-                role_name TEXT,
-                percentage REAL
-            )
-        """)
-    except sqlite3.Error as e:
-        # Handle any errors, if necessary
-        print(f"Error creating etf_percentages table: {e}")
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS treasure_percentages (
-                role_id INTEGER PRIMARY KEY,
-                role_name TEXT,
-                percentage REAL
-            )
-        """)
-    except sqlite3.Error as e:
-        # Handle any errors, if necessary
-        print(f"Error creating treasure_percentages table: {e}")
-
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS daily_stock_percentages (
-                role_id INTEGER PRIMARY KEY,
-                role_name TEXT,
-                percentage REAL
-            )
-        """)
-    except sqlite3.Error as e:
-        # Handle any errors, if necessary
-        print(f"Error creating daily_stock_percentages table: {e}")
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS weekly_tax_distribution (
-                distribution_id INTEGER PRIMARY KEY,
-                etf_id INTEGER,
-                role_id INTEGER,
-                total_tax REAL,
-                distributed_amount REAL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    except sqlite3.Error as e:
-        # Handle any errors, if necessary
-        print(f"Error creating weekly_tax_distribution table: {e}")
-    finally:
-        conn.commit()
-        conn.close()
-
-
-def create_p3addr_table():
-    # Connect to the database
-    conn = sqlite3.connect("P3addr.db")
-
-    # Create a cursor object to execute SQL commands
-    cursor = conn.cursor()
-
-    # Execute the SQL command to create the table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS user_addresses (
-            user_id TEXT PRIMARY KEY,
-            p3_address TEXT NOT NULL,
-            vanity_address TEXT NOT NULL DEFAULT ''
-        )
-    ''')
-
-    # Commit the changes and close the connection
-    print("P3 Address Database Created")
-    conn.commit()
-    conn.close()
-
-def setup_database():
-    conn = sqlite3.connect("currency_system.db")
-    conn.execute("PRAGMA cache_size = -2000;")
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    # Add available column to stocks table if not exists
-    cursor.execute("PRAGMA table_info(stocks)")
-    columns = cursor.fetchall()
-    if 'available' not in [column[1] for column in columns]:
-        cursor.execute("ALTER TABLE stocks ADD COLUMN available INT")
-
-    # Create 'users' table
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                balance BLOB NOT NULL
-            )
-        """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id);")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'users' table: {e}")
-
-    # Create 'raffle_tickets' table
-    try:
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS raffle_tickets (
-                user_id INTEGER PRIMARY KEY,
-                quantity INTEGER,
-                timestamp INTEGER
-            )
-        ''')
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_raffle_tickets_user_id ON raffle_tickets(user_id);")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'raffle_tickets' table: {e}")
-
-    # Create 'stocks' table
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS stocks (
-                symbol TEXT PRIMARY KEY,
-                available INTEGER64 NOT NULL,
-                price NUMERIC(20, 10) NOT NULL,
-                QSE_required INTEGER NOT NULL,
-                QSE_rewarded INTEGER NOT NULL
-            )
-        """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_stocks_symbol ON stocks(symbol);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_stocks_price ON stocks(price);")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'stocks' table: {e}")
-
-    # Create 'user_stocks' table
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_stocks (
-                user_id INTEGER NOT NULL,
-                symbol TEXT NOT NULL,
-                amount REAL NOT NULL,
-                action TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                FOREIGN KEY (symbol) REFERENCES stocks(symbol),
-                PRIMARY KEY (user_id, symbol)
-            )
-        """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_stocks_user_id ON user_stocks(user_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_stocks_symbol ON user_stocks(symbol);")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'user_stocks' table: {e}")
-
-
-
-
-
-    try:
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS etfs (
-                etf_id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                value REAL NOT NULL DEFAULT 0
-             )
-         ''')
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'etfs' table: {e}")
-
-    try:
-       cursor.execute('''
-           CREATE TABLE IF NOT EXISTS etf_stocks (
-                etf_id INTEGER NOT NULL,
-                symbol TEXT NOT NULL,
-                quantity INTEGER NOT NULL,
-                FOREIGN KEY (etf_id) REFERENCES etfs(etf_id),
-                FOREIGN KEY (symbol) REFERENCES stocks(symbol),
-                PRIMARY KEY (etf_id, symbol)
-            )
-        ''')
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'etf_stocks' table: {e}")
-
-    try:
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS user_etfs (
-                user_id INTEGER NOT NULL,
-                etf_id INTEGER NOT NULL,
-                symbol TEXT NOT NULL,
-                quantity INTEGER NOT NULL,
-                FOREIGN KEY (user_id) REFERENCES users(user_id),
-                FOREIGN KEY (etf_id) REFERENCES etfs(etf_id),
-                FOREIGN KEY (symbol) REFERENCES etf_stocks(symbol),
-                PRIMARY KEY (user_id, etf_id)
-            )
-        ''')
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'user_etfs' table: {e}")
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS metrics (
-                metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                metric_name TEXT NOT NULL,
-                metric_value INTEGER NOT NULL
-            )
-        """)
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'metrics' table: {e}")
-
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS tax_distribution (
-                id INTEGER PRIMARY KEY,
-                user_id INTEGER,
-                tax_amount DECIMAL(18, 2),
-                distribution_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        print("Table 'tax_distribution' created successfully.")
-    except sqlite3.Error as e:
-        print(f"Error creating table: {e}")
-
-
-    try:
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS limit_orders (
-                order_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                symbol TEXT NOT NULL,
-                order_type TEXT NOT NULL,
-                price REAL NOT NULL,
-                quantity INTEGER NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id),
-                FOREIGN KEY (symbol) REFERENCES stocks(symbol),
-                INDEX (user_id),
-                INDEX (symbol),
-                INDEX (created_at)
-            )
-        """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS symbol_index ON limit_orders(symbol);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS user_id_index ON limit_orders(user_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS created_at_index ON limit_orders(created_at);")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'limit_orders' table: {e}")
-
-
-
-    try:
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS items (
-                item_id INTEGER PRIMARY KEY,
-                item_name TEXT NOT NULL,
-                item_description TEXT,
-                price DECIMAL(18, 2) NOT NULL,
-                is_usable INTEGER NOT NULL DEFAULT 0
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS inventory (
-                user_id INTEGER NOT NULL,
-                item_id INTEGER NOT NULL,
-                quantity INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (user_id, item_id),
-                FOREIGN KEY (user_id) REFERENCES users(user_id),
-                FOREIGN KEY (item_id) REFERENCES items(item_id)
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS transactions (
-                transaction_id INTEGER PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                item_id INTEGER NOT NULL,
-                quantity INTEGER NOT NULL,
-                total_cost DECIMAL(18, 2) NOT NULL,
-                tax_amount DECIMAL(18, 2) NOT NULL,
-                transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id),
-                FOREIGN KEY (item_id) REFERENCES items(item_id)
-            )
-        ''')
-        print("Table 'Marketplace' created successfully.")
-    except sqlite3.Error as e:
-        print(f"Error executing SQL query: {e}")
-
-    try:
-        # Create stock_metrics table if not exists
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS stock_metrics (
-                metric_id INTEGER PRIMARY KEY,
-                stock_name TEXT NOT NULL,
-                date_recorded DATE NOT NULL,
-                open_price REAL NOT NULL,
-                close_price REAL NOT NULL,
-                high_price REAL NOT NULL,
-                low_price REAL NOT NULL,
-                volume INTEGER NOT NULL
-            )
-        ''')
-
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'stock_metrics' table: {e}")
-
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS trading_teams (
-                team_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                total_profit_loss DECIMAL DEFAULT 0
-            );
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS team_members (
-                user_id INTEGER,
-                team_id INTEGER,
-                FOREIGN KEY (team_id) REFERENCES trading_teams(team_id),
-                PRIMARY KEY (user_id, team_id)
-            );
-        """)
-        print("Tables created successfully")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the tables: {str(e)}")
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS team_transactions (
-                transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                team_id INTEGER,
-                symbol TEXT,
-                amount INTEGER,
-                price DECIMAL,
-                type TEXT, -- "buy" or "sell"
-                FOREIGN KEY (team_id) REFERENCES trading_teams(team_id)
-            );
-        """)
-        print("Tables created successfully")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the tables: {str(e)}")
-
-    try:
-        cursor.execute("""
-
-            CREATE TABLE IF NOT EXISTS user_daily_buys (
-                user_id INTEGER,
-                symbol TEXT,
-                amount INTEGER,
-                timestamp DATETIME
-            );
-        """)
-        print("Stock Limit created successfully")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the tables: {str(e)}")
-
-    try:
-        cursor.execute("""
-
-            CREATE TABLE IF NOT EXISTS user_daily_sells (
-                user_id INTEGER,
-                symbol TEXT,
-                amount INTEGER,
-                timestamp DATETIME
-            );
-        """)
-        print("Daily Sells Limit created successfully")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the tables: {str(e)}")
-
-
-    try:
-        cursor.execute("""
-
-            CREATE TABLE IF NOT EXISTS burn_history (
-                user_id TEXT NOT NULL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        print("Burn Limit created successfully")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the tables: {str(e)}")
-
-    try:
-        cursor.execute("""
-
-            CREATE TABLE IF NOT EXISTS item_usage (
-                user_id TEXT NOT NULL,
-                item_name TEXT NOT NULL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (user_id, item_name)
-            );
-        """)
-        print("Item limit created successfully")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the tables: {str(e)}")
-
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS swap_orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                stock1 TEXT,
-                amount1 INTEGER,
-                stock2 TEXT,
-                amount2 INTEGER,
-                status TEXT CHECK (status IN ('open', 'matched')),
-                FOREIGN KEY (stock1) REFERENCES stocks(symbol),
-                FOREIGN KEY (stock2) REFERENCES stocks(symbol)
-            )
-        """)
-        print("Swap Orders created successfully")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the tables: {str(e)}")
-
-    try:
-        # Create Users table if not exists
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_wallets (
-                user_id INTEGER PRIMARY KEY,
-                wallet_address TEXT NOT NULL,
-                p3_address TEXT NOT NULL
-            )
-        """)
-        print("WalletConnect created successfully")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the tables: {str(e)}")
-
-    try:
-        # Create user_stakes table if not exists
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_stakes (
-                user_id INTEGER,
-                nft TEXT NOT NULL,
-                tokenid TEXT NOT NULL,
-                stake_timestamp TEXT,
-                PRIMARY KEY (user_id, nft, tokenid),
-                FOREIGN KEY (user_id) REFERENCES user_wallets (user_id)
-            )
-        """)
-        print("user_stakes table created successfully")
-
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the user_stakes table: {e}")
-
-    try:
-
-        # Create a table to store user deposits
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS deposits (
-                user_id INTEGER,
-                lock_duration INTEGER,
-                amount REAL,
-                interest_rate REAL,
-                start_date TIMESTAMP,
-                PRIMARY KEY (user_id, lock_duration)
-            );
-        ''')
-
-    except sqlite3.Error as e:
-        print(f"An error occurred: {str(e)}")
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users_level (
-                user_id INTEGER PRIMARY KEY,
-                level INTEGER NOT NULL DEFAULT 1,
-                experience INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'user_level' table: {e}")
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users_rpg_stats (
-                user_id INTEGER PRIMARY KEY,
-                cur_hp INTEGER NOT NULL DEFAULT 10,
-                max_hp INTEGER NOT NULL DEFAULT 10,
-                atk INTEGER NOT NULL DEFAULT 1,
-                def INTEGER NOT NULL DEFAULT 1,
-                eva INTEGER NOT NULL DEFAULT 1,
-                luck INTEGER NOT NULL DEFAULT 1,
-                chr INTEGER NOT NULL DEFAULT 1,
-                spd INTEGER NOT NULL DEFAULT 1
-            )
-        """)
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'user_stats' table: {e}")
-
-
-
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users_rpg_metrics (
-                user_id INTEGER PRIMARY KEY,
-                kills INTEGER NOT NULL DEFAULT 0,
-                deaths INTEGER NOT NULL DEFAULT 0,
-                heals INTEGER NOT NULL DEFAULT 0,
-                healed INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'user_rpg_metrics' table: {e}")
-
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users_rpg_inventory (
-                user_id INTEGER PRIMARY KEY,
-                firearm TEXT NOT NULL DEFAULT None,
-                ammo TEXT NOT NULL DEFAULT None,
-                bodyarmor TEXT NOT NULL DEFAULT None,
-                medpack TEXT NOT NULL DEFAULT None
-            )
-        """)
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'user_rpg_inventory' table: {e}")
-
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users_rpg_cities (
-                user_id INTEGER PRIMARY KEY,
-                current_city TEXT NOT NULL DEFAULT 'StellarHub',
-                last_city TEXT NOT NULL DEFAULT None,
-                traveling TEXT NOT NULL DEFAULT 'No',
-                timestamp TIMESTAMP NOT NULL DEFAULT None
-            )
-        """)
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'user_rpg_cities' table: {e}")
-
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_city_stats (
-                city TEXT PRIMARY KEY,
-                QSE TEXT NOT NULL DEFAULT 0,
-                Resources INTEGER NOT NULL DEFAULT 0,
-                Stocks INTEGER NOT NULL DEFAULT 0,
-                ETPs INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'user_city_stats' table: {e}")
-
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS updown_orders (
-                user_id INTEGER NULL DEFAULT None,
-                asset TEXT NOT NULL DEFAULT None,
-                current_price INTEGER NOT NULL DEFAULT None,
-                lower_limit INTEGER NOT NULL DEFAULT None,
-                upper_limit INTEGER NOT NULL DEFAULT None,
-                contract_date TIMESTAMP NOT NULL DEFAULT None,
-                expiration TIMESTAMP NOT NULL DEFAULT None,
-                order_id INTEGER NOT NULL DEFAULT None
-            )
-        """)
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'updown_orders' table: {e}")
-
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS futures_orders (
-                order_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                symbol TEXT NOT NULL,
-                order_type TEXT NOT NULL,  -- 'buy' or 'sell'
-                price REAL NOT NULL,
-                quantity INTEGER NOT NULL,
-                expiration TIMESTAMP NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id),
-                FOREIGN KEY (symbol) REFERENCES stocks(symbol)
-            )
-        """)
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the 'futures_orders' table: {e}")
-
-
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS market_value (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                MV TEXT NOT NULL
-
-            );
-        """)
-
-        print("Tables created successfully")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the tables: {str(e)}")
-
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS reserve_value (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                qse TEXT NOT NULL,
-                stocks TEXT NOT NULL,
-                total TEXT NOT NULL
-
-            );
-        """)
-
-        print("Tables created successfully")
-    except sqlite3.Error as e:
-        print(f"An error occurred while creating the tables: {str(e)}")
-
-
-    conn.commit()
-    return conn
-
-
-
-
-setup_database()
-setup_ledger()
-create_p3addr_table()
-create_vip_table()
 
 
 
@@ -3332,43 +3482,26 @@ async def add_updown_order(self, user_id, asset, current_price, lower_limit, upp
         print(f"An error occurred while adding an UpDown order: {e}")
         return False
 
-
 async def add_multiple_updown_orders(self, orders):
-    """
-    Add multiple UpDown orders as a single transaction.
-
-    Args:
-    - orders (list): A list of dictionaries, each representing an order with the following keys:
-        - user_id
-        - asset
-        - current_price
-        - lower_limit
-        - upper_limit
-        - contract_date
-        - expiration
-
-    Returns:
-    - bool: True if all orders were successfully added, False otherwise.
-    """
     try:
-        order_ids = [str(uuid.uuid4()) for _ in range(len(orders))]  # Generate UUIDs for order_ids
+        order_ids = [str(uuid.uuid4()) for _ in range(len(orders))]
 
         cursor = self.conn.cursor()
 
-        # Using executemany to insert multiple rows in a single transaction
+        # Using executemany with parameter substitution and Decimal arithmetic
         cursor.executemany("""
             INSERT INTO updown_orders (user_id, asset, current_price, lower_limit, upper_limit, contract_date, expiration, order_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, [(order['user_id'], order['asset'], order['current_price'], order['lower_limit'],
-               order['upper_limit'], order['contract_date'], order['expiration'], order_id)
+        """, [(order['user_id'], order['asset'], Decimal(order['current_price']), Decimal(order['lower_limit']),
+               Decimal(order['upper_limit']), order['contract_date'], order['expiration'], order_id)
               for order, order_id in zip(orders, order_ids)])
 
         self.conn.commit()
         return True
     except sqlite3.Error as e:
         print(f"An error occurred while adding multiple UpDown orders: {e}")
+        # Add additional error handling or logging here
         return False
-
 
 
 def get_current_price(self, user_id):
@@ -4337,7 +4470,7 @@ class CurrencySystem(commands.Cog):
         if tax_rate == 0.0:
             tax_rate = 1.75 / 100
         else:
-            tax_rate /= 10  # Dividing by 10, assuming tax_rate is a percentage
+            tax_rate /= 50  # Dividing by 10, assuming tax_rate is a percentage
 
         # Ensure tax_rate doesn't exceed 30%
         tax_rate = min(tax_rate, 0.30)
@@ -5008,7 +5141,87 @@ class CurrencySystem(commands.Cog):
         await ctx.send(f'Announcement sent to {channel.mention}!')
 
 
-# Metrics
+
+# BANK
+
+
+    @commands.command(name="Open_Bank")
+    async def open_bank(self, ctx, bank_name: str):
+        await create_bank(self, bank_name)
+
+
+
+    @commands.command(name="debug_bank")
+    async def debug_bank(self, ctx):
+        await show_all_banks(self)
+
+
+    @commands.command(name="bank")
+    async def bank(self, ctx, command):
+        if command.lower() == "create":
+            user_balance = get_user_balance(self.conn, ctx.author.id)
+            if user_balance > 100_000:
+                result = await create_user_account(self, ctx, 1)
+                if result:
+                    await update_user_balance(self.conn, ctx.author.id, user_balance - 100000)
+                    await ctx.send(f"{result}")
+                    return
+                return
+            else:
+                await ctx.send("You need 100,000 QSE to open an account")
+                return
+        elif command.lower() == "account":
+            result = await view_account(self, ctx,  1)
+            if result:
+                await ctx.send(embed=result)
+        elif command.lower() == "deposit":
+            user_balance = get_user_balance(self.conn, ctx.author.id)
+            await ctx.send(f"Current Balance: {user_balance:,.0f}")
+            await ctx.send("How much QSE would you like to deposit?")
+
+            def check(msg):
+                return msg.author == ctx.author and msg.channel == ctx.channel
+
+            # Wait for user input
+            response = await self.bot.wait_for('message', check=check, timeout=60)  # Adjust timeout as needed
+
+            # Parse the user input
+            amount = float(response.content)
+            if amount < 100_000_000:
+                await ctx.send("Deposit must be greater than 100,000,000 QSE")
+                return
+            if user_balance < amount:
+                await ctx.send(f"{amount:,.0f} greater than current balance of {user_balance:,.0f}")
+                return
+            else:
+                PBotAddr = get_p3_address(self.P3addrConn, PBot)
+                await self.give_addr(ctx, PBotAddr, Decimal(amount), False)
+                result = await deposit_qse(self, ctx, 1, amount)
+                if result:
+                    await ctx.send(result)
+        elif command.lower() == "withdrawal":
+            result = await view_account(self, ctx,  1)
+            if result:
+                await ctx.send(embed=result)
+            await ctx.send("How much QSE would you like to withdrawal?")
+
+            def check(msg):
+                return msg.author == ctx.author and msg.channel == ctx.channel
+
+            # Wait for user input
+            response = await self.bot.wait_for('message', check=check, timeout=60)  # Adjust timeout as needed
+
+            # Parse the user input
+            amount = float(response.content)
+            if amount < 100_000_000:
+                await ctx.send("withdrawal must be greater than 100,000,000 QSE")
+                return
+            result = await withdraw_qse(self, ctx, 1, Decimal(amount))
+            if result:
+                await ctx.send(result)
+                return
+        else:
+            return
 
     @commands.command(name="top_wealth", help="Show the top 10 wealthiest users.")
     async def top_wealth(self, ctx):
@@ -5321,9 +5534,8 @@ class CurrencySystem(commands.Cog):
         # Apply tax for transfers
         transfer_amount = amount
 
-        if transfer_amount > 100_000_000_000_000_000_000:
-            max_sqlite_int = 9_223_372_036_854_775_807
-            chunks = (int(transfer_amount) + max_sqlite_int - 1) // max_sqlite_int
+        if transfer_amount > 9_000_000_000_000_000_000:
+            chunks = (int(transfer_amount) + 99_999_999_999_999_999_999) // 9_000_000_000_000_000_000
             chunk_amount = int(transfer_amount) // chunks
 
         else:
@@ -6884,8 +7096,8 @@ class CurrencySystem(commands.Cog):
 
     @commands.command(name="add_limit_order", aliases=["place_order"], help="Add a limit order.")
     async def add_limit_order_command(self, ctx, symbol: str, order_type: str, price: float, quantity: int):
-        max_share_limit = 5000000000000000000
-        max_value_limit = 50000000000000000000
+        max_share_limit = 500_000_000_000_000_000_000
+        max_value_limit = 500_000_000_000_000_000_000_000
 
         order_value = int(quantity) * int(price)
 
@@ -6938,56 +7150,12 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="add_limit_order_bot", aliases=["place_order_bot"], help="Add a limit order.")
-    async def add_limit_order_bot(self, ctx, symbol: str, order_type: str, price: float, quantity: int):
-        max_share_limit = 5000000000000000000
-        max_value_limit = 50000000000000000000
-
-        order_value = int(quantity) * int(price)
-
-        no_order = ["p3:stable", "roflstocks"]
-        if symbol.lower() in no_order:
-            await ctx.send(f"Orders not allowed for {symbol}")
-            return
-
-        if order_type.lower() == "buy":
-            lowest_sell = await lowest_price_order(self, ctx, "sell", symbol)
-            highest_buy = await highest_price_order(self, ctx, "buy", symbol)
-
-            if lowest_sell and int(price) > int(lowest_sell["price"]):
-                await ctx.send(f"Buy order must be lower than {lowest_sell['price']:,.0f} QSE per Share")
-                return
-
-            if highest_buy and int(price) > int(highest_buy["price"]):
-                await ctx.send(f"Buy order must be lower than {highest_buy['price']:,.0f} QSE per Share")
-                return
-
-        if order_type.lower() == "sell":
-            highest = await highest_price_order(self, ctx, "buy", symbol)
-            lowest = await lowest_price_order(self, ctx, "sell", symbol)
-            if highest and lowest:
-                if int(highest["price"]) > int(lowest["price"]):
-                    await ctx.send(f"Sell order must be higher than {highest['price']:,.0f} QSE per Share")
-                    return
-            if highest:
-                if int(price) < int(highest["price"]):
-                    await ctx.send(f"Sell order must be higher than {highest['price']:,.0f} QSE per Share")
-                    return
-
-
-        # Determine if the order needs to be broken into chunks
-        if int(quantity) > max_share_limit or order_value >= max_value_limit:
-            # Use larger chunks without exceeding the limits
-            max_chunk_size = min(max_share_limit, max_value_limit // price)
-            chunks = int((quantity + max_chunk_size - 1) / max_chunk_size)  # Fix: Convert to int
-            chunk_quantity = int(quantity) // chunks
-        else:
-            chunks = 1
-            chunk_quantity = int(quantity)
-
-        orders = []
-        for _ in range(chunks):
-            orders.append((self, ctx, PBot, symbol, order_type, int(price), chunk_quantity))
-        await add_limit_orders(self, ctx, orders, True)
+    async def add_limit_order_bot(self, ctx, symbol: str, price: float, quantity: int):
+        try:
+            await add_limit_order(self, ctx, symbol, price, quantity)
+            await ctx.send("Order listed")
+        except:
+            await ctx.send("Failed to list order")
 
 
 
@@ -6999,6 +7167,9 @@ class CurrencySystem(commands.Cog):
         old_balance = get_user_balance(self.conn, PBot)
         await mint_to_reserve(self, ctx, amount)
         new_balance = get_user_balance(self.conn, PBot)
+        mv = await get_etf_value(self.conn, 6)
+        await add_mv_metric(self, ctx, mv)
+        await add_reserve_metric(self, ctx)
         await ctx.send(f"Minted {amount:,.0f} QSE to the Reserve\n\nPrevious Funds: {old_balance:,.2f}\nNew Funds: {new_balance:,.2f}")
 
 
@@ -7053,8 +7224,18 @@ class CurrencySystem(commands.Cog):
                 await self.buy_option(ctx, symbol)
                 return
             else:
-                await self.buy_option(ctx, symbol, amount)
-                return
+                if amount > 100_000:
+                    chunks = (amount // 100_000)  # Use integer division to get whole chunks
+                    chunk_amount = amount // chunks  # Calculate the amount per chunk
+                    remaining_amount = amount % chunks  # Calculate the remaining amount
+                    for _ in range(chunks):
+                        await self.buy_option(ctx, symbol, chunk_amount)
+                        if remaining_amount > 0:
+                            await self.buy_option(ctx, symbol, remaining_amount)
+                else:
+                    await self.buy_option(ctx, symbol, amount)
+                    return
+
 
         if type.lower() == "order":
             if int(amount) > 500000000000000:
@@ -7090,15 +7271,13 @@ class CurrencySystem(commands.Cog):
                         await ctx.send(embed=embed)
                         return
 
-
-
-        if int(amount) > 500000000000000000:
-            embed = discord.Embed(description="Can only purchase 500,000,000,000,000,000 at a time", color=discord.Color.red())
-            await ctx.send(embed=embed)
-            return
-
         if type.lower() == "stock":
             current_price = await get_stock_price(self, ctx, symbol)
+            value = int(current_price) * int(amount)
+            if int(value) > 10_000_000_000_000_000_000_000:
+                embed = discord.Embed(description="Can only purchase 10,000,000,000,000,000,000,000 of value at a time", color=discord.Color.red())
+                await ctx.send(embed=embed)
+                return
             order_price = await lowest_price_order(self, ctx, "sell", symbol)
             total_supply, available = await get_supply_info(self, ctx, symbol)
             escrow_supply = await get_total_shares_in_orders(self, symbol)
@@ -7178,24 +7357,22 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="sell", help="Buy Stocks, ETFs, and Items")
     @is_allowed_server(1161678765894664323, 1087147399371292732)
     async def sell(self, ctx, type: str, symbol, amount):
+        current_price = await get_stock_price(self, ctx, symbol)
+        value = int(current_price) * int(amount)
+        if int(value) > 10_000_000_000_000_000_000_000:
+            embed = discord.Embed(description="Can only sell 10,000,000,000,000,000,000,000 of value at a time", color=discord.Color.red())
+            await ctx.send(embed=embed)
+            return
         if check_current_hp(ctx.author.id) == 0:
             embed = discord.Embed(description="Your HP is zero, Please Heal", color=discord.Color.red())
             await ctx.send(embed=embed)
             return
         if isinstance(amount, str):
             amount = int(amount.replace(",", ""))
-#        highest_order = await highest_price_order(self, ctx, "buy", symbol)
-        current_price = await get_stock_price(self, ctx, symbol)
-#        if highest_order:
-#            if current_price < highest_order['price']:
-#                print(highest_order)
+
         if len(self.transaction_pool) > 0:
             embed = discord.Embed(description=f"Transaction Pending, you have {len(self.transaction_pool)} ahead of you. ", color=discord.Color.yellow())
             await ctx.send(embed=embed)
-        if int(amount) > 500000000000000000:
-            embed = discord.Embed(description="Can only sell, 500,000,000,000,000,000 at a time", color=discord.Color.red())
-            await ctx.send(embed=embed)
-            return
         if await self.is_trading_halted() == True:
             await ctx.send("All Trading Temporarily Halted")
             return
@@ -7272,9 +7449,9 @@ class CurrencySystem(commands.Cog):
             total_values = [float(value[0]) for value in total_values]
 
             # Calculate percentage change
-            qse_percentage_change = np.array(qse_values) / qse_values[0] * 100
-            stocks_percentage_change = np.array(stocks_values) / stocks_values[0] * 100
-            total_percentage_change = np.array(total_values) / total_values[0] * 100
+            qse_percentage_change = np.array(qse_values) / qse_values[0] * 100 - 100
+            stocks_percentage_change = np.array(stocks_values) / stocks_values[0] * 100 - 100
+            total_percentage_change = np.array(total_values) / total_values[0] * 100 - 100
 
             # Create and save the chart with dark mode
             plt.style.use('dark_background')
@@ -7310,6 +7487,8 @@ class CurrencySystem(commands.Cog):
             plt.ticklabel_format(style='plain', useOffset=False, axis='y')
             plt.xticks(rotation=45, fontsize=12)
             plt.yticks(fontsize=12)
+            plt.ylim(min(qse_percentage_change.min(), stocks_percentage_change.min(), total_percentage_change.min()) - 100,
+                     max(qse_percentage_change.max(), stocks_percentage_change.max(), total_percentage_change.max()) + 100)
 
             plt.tight_layout()  # Ensure proper layout spacing
             plt.savefig('reserve_chart.png')
@@ -7471,7 +7650,7 @@ class CurrencySystem(commands.Cog):
             plt.figure(figsize=(20, 20))  # Adjust figure size for mobile
 
             # Plot market values
-            plt.subplot(6, 1, 1)  # Reduce the number of subplots
+            plt.subplot(4, 1, 1)  # Reduce the number of subplots
             plt.plot(values, label=f'Market Value ({cmv:,.2f})', color='cyan')
             plt.plot(sma_values, label=f'SMA ({ma_period})', color='yellow', alpha=0.5)  # Add SMA line
             plt.axhline(y=average_price, color='cyan', linestyle='--', label=f'Avg Value ({average_price:,.2f})')
@@ -7489,7 +7668,7 @@ class CurrencySystem(commands.Cog):
             plt.legend(fontsize=14, loc='best')
 
             # Plot RSI and ROC on the same subplot
-            plt.subplot(6, 1, 2)  # Reduce the number of subplots
+            plt.subplot(4, 1, 2)  # Reduce the number of subplots
             plt.plot(rsi_values, label='RSI', color='orange', alpha=0.5)
             plt.axhline(y=70, color='r', linestyle='--', label='Overbought (70)')
             plt.axhline(y=30, color='g', linestyle='--', label='Oversold (30)')
@@ -7502,7 +7681,7 @@ class CurrencySystem(commands.Cog):
             plt.legend(fontsize=14)
 
             # Plot Percentage Change from ATL and ATH
-            plt.subplot(6, 1, 3)  # Add a new subplot
+            plt.subplot(4, 1, 3)  # Add a new subplot
             plt.plot(atl_percentage, label='Percentage Change from ATL', color='red')
             plt.plot(ath_percentage, label='Percentage Change from ATH', color='green')
             plt.axhline(y=0, color='cyan', linestyle='--', label='Current Value')
@@ -7513,7 +7692,7 @@ class CurrencySystem(commands.Cog):
             plt.legend(fontsize=14, loc='best')
 
             # Plot ATR
-            plt.subplot(6, 1, 4)  # Add a new subplot
+            plt.subplot(4, 1, 4)  # Add a new subplot
             plt.plot(atr_values, label='ATR', color='yellow')
             plt.xlabel('Index', fontsize=14)
             plt.ylabel('ATR', fontsize=14)
@@ -7521,6 +7700,7 @@ class CurrencySystem(commands.Cog):
             plt.ticklabel_format(style='plain', useOffset=False, axis='y')
             plt.xticks(rotation=45)
             plt.legend(fontsize=14, loc='best')
+
 
             plt.tight_layout()  # Ensure proper layout spacing
             plt.savefig('market_chart.png')
@@ -7635,8 +7815,8 @@ class CurrencySystem(commands.Cog):
         else:
             print(f"Reserve {amount_percentage:,.2f}")
         # Check if the amount is over 100 trillion
-        if amount > 100_000_000_000_000_000_000:
-            chunks = (amount + 99_999_999_999_999_999_999) // 100_000_000_000_000  # Calculate the number of chunks
+        if amount > 9_000_000_000_000_000_000:
+            chunks = (amount + 99_999_999_999_999_999_999) // 9_000_000_000_000_000_000  # Calculate the number of chunks
             chunk_amount = amount // chunks  # Calculate the amount per chunk
         else:
             chunks = 1
@@ -7644,6 +7824,7 @@ class CurrencySystem(commands.Cog):
 
         for _ in range(chunks):
             current_balance = get_user_balance(self.conn, user_id)
+            print(f"{chunks:,.0f}:{chunk_amount:,.0f}")
             chunk_amount = Decimal(chunk_amount)
             new_balance = current_balance + chunk_amount
             await update_user_balance(self.conn, user_id, new_balance)
@@ -7651,6 +7832,7 @@ class CurrencySystem(commands.Cog):
             reserve_balance = get_user_balance(self.conn, PBot)
             updated_balance = reserve_balance - chunk_amount
             await update_user_balance(self.conn, PBot, updated_balance)
+            chunks -= 1
 
 
 
@@ -7760,6 +7942,65 @@ class CurrencySystem(commands.Cog):
             embed = discord.Embed(description=f"An error occurred while canceling orders: {e}")
             await ctx.send(embed=embed)
 
+    @commands.command(name="cancel_orders_for_symbol_price", help="Cancel orders for a specified symbol and price.")
+    # @is_allowed_user(930513222820331590, PBot)
+    async def cancel_orders_for_symbol_price(self, ctx, symbol: str, price: int = None):
+        try:
+            cursor = self.conn.cursor()
+
+            # Get all orders for the current user, specified symbol, and optional price
+            if price is not None:
+                cursor.execute("""
+                    SELECT * FROM limit_orders
+                    WHERE user_id = ? AND symbol = ? AND price = ?
+                """, (ctx.author.id, symbol, price))
+            else:
+                cursor.execute("""
+                    SELECT * FROM limit_orders
+                    WHERE user_id = ? AND symbol = ?
+                """, (ctx.author.id, symbol))
+
+            orders = cursor.fetchall()
+
+            if orders:
+                for order in orders:
+                    target = get_p3_address(self.P3addrConn, order["user_id"])
+                    if order["order_type"].lower() == "buy":
+                        tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
+                        cost = order["quantity"] * order["price"]
+                        fee = Decimal(cost) * Decimal(tax_percentage)
+                        await self.send_from_reserve(ctx, ctx.author.id, (int(cost) - int(fee)))
+                        print(f"""
+                            Address: {target}
+                            Refund: {cost:,}
+                            Gas: {fee:,}
+                        """)
+                    else:
+                        sender_addr = get_p3_address(self.P3addrConn, PBot)
+                        await send_stock(self, ctx, target, sender_addr, order["symbol"], order["quantity"], False)
+                        print(f"""
+                            Address: {target}
+                            Refund Stock: {order["symbol"]}
+                            Amount: {order["quantity"]:,}
+                        """)
+
+                    # Perform the cancellation by deleting the order
+                    cursor.execute("""
+                        DELETE FROM limit_orders
+                        WHERE order_id = ?
+                    """, (order["order_id"],))
+
+                self.conn.commit()
+
+                embed = discord.Embed(description=f"All orders for symbol {symbol} and price {price} successfully canceled.")
+                await ctx.send(embed=embed)
+            else:
+                embed = discord.Embed(description=f"No orders found for symbol {symbol}, price {price}, and the current user.")
+                await ctx.send(embed=embed)
+
+        except sqlite3.Error as e:
+            embed = discord.Embed(description=f"An error occurred while canceling orders: {e}")
+            await ctx.send(embed=embed)
 
 
     @commands.command(name="my_orders", help="Show your placed orders.")
@@ -7849,8 +8090,8 @@ class CurrencySystem(commands.Cog):
 
     @commands.command(name="simulate_fill_orders")
     async def transact_order2(self, ctx, symbol, quantity_to_buy: int):
-        if quantity_to_buy > 5_000_000_000_000_000:
-            await ctx.send(f"Purchase quantity can't be over 5,000,000,000,000,000")
+        if quantity_to_buy > 500_000_000_000_000_000_000_000:
+            await ctx.send(f"Purchase quantity can't be over 500.000.000,000,000,000,000,000")
             return
         buyer_id = ctx.author.id
         buyer_addr = get_p3_address(self.P3addrConn, buyer_id)
@@ -7905,7 +8146,7 @@ class CurrencySystem(commands.Cog):
         # Filter out orders owned by the buyer
         filtered_sell_orders = [order for order in sell_orders if order['user_id'] != buyer_id]
 
-        # Check if there are no eligible sell orders
+        # Early exit if no eligible sell orders
         if not filtered_sell_orders:
             embed = discord.Embed(
                 title="No Available Sell Orders",
@@ -7919,13 +8160,10 @@ class CurrencySystem(commands.Cog):
         orders_purchased = 0
         orders_removed = 0
         order_prices = []
-        for order in sell_orders:
+        for order in filtered_sell_orders:  # Use the filtered list
             self.buy_timer_start = timeit.default_timer()
             order_id = order['order_id']
             seller_id = order['user_id']
-            if seller_id == buyer_id:
-                continue
-
 
             price = order['price']
             order_prices.append(price)
@@ -7935,10 +8173,6 @@ class CurrencySystem(commands.Cog):
 
             # Simulate buying logic (adjust according to your requirements)
             quantity_to_fill = min(quantity_to_buy, available_quantity)
-            if quantity_to_buy > available_quantity:
-                a = 1
-#                self.is_long_order = True
-#                await check_smart_contract(self, ctx)
             total_cost = price * quantity_to_fill
             tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
             fee = total_cost * tax_percentage
@@ -7957,21 +8191,23 @@ class CurrencySystem(commands.Cog):
                 add_city_tax(buyer_id, (fee / 2))
                 add_city_tax(seller_id, (fee / 2))
                 await send_stock(self, ctx, buyer_addr, escrow_addr, symbol, quantity_to_fill, False)
+                seller_new = get_user_balance(self.conn, seller_id)
+                new_balance = get_user_balance(self.conn, buyer_id)
+                await log_transaction(ledger_conn, ctx, "Buy Stock", symbol, quantity_to_fill, total_cost, total_cost_tax, current_balance, new_balance, price, "False")
+                await log_order_transaction(ledger_conn, ctx, "Sell Stock", symbol, quantity_to_fill, total_cost, (total_cost - fee), seller_old, seller_new, price, "False", seller_id)
                 mv = await get_etf_value(self.conn, 6)
                 await add_mv_metric(self, ctx, mv)
                 await add_reserve_metric(self, ctx)
                 mv_avg = await calculate_average_mv(self)
                 print(f"MV Avg: {mv_avg:,.2f}")
+ #       	result = await get_supply_stats(self, ctx, stock_name)
+#        	reserve, total, locked, escrow, market, circulating = result
                 avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, symbol)
                 avg_price = (avg_buy + avg_sell) / 2
+                avg_price = ((avg_price * 0.05) * (1 - (available / total_supply)) * (1 - (quantity_to_fill / total_supply))) + avg_buy
                 await self.change_stock_price(ctx, symbol, avg_price)
 
 
-
-                seller_new = get_user_balance(self.conn, seller_id)
-                new_balance = get_user_balance(self.conn, buyer_id)
-                await log_transaction(ledger_conn, ctx, "Buy Stock", symbol, quantity_to_fill, total_cost, total_cost_tax, current_balance, new_balance, price, "False")
-                await log_order_transaction(ledger_conn, ctx, "Sell Stock", symbol, quantity_to_fill, total_cost, (total_cost - fee), seller_old, seller_new, price, "False", seller_id)
                 await add_experience(self, self.conn, buyer_id, 1.5, ctx)
                 await add_experience(self, self.conn, seller_id, 5, ctx)
                 await autoliquidate(self, ctx)
@@ -7992,17 +8228,16 @@ class CurrencySystem(commands.Cog):
 
             # Check if all required quantity has been bought
             if quantity_to_buy <= 0:
-                market_price = await get_stock_price(self, ctx, symbol)
+                new_price = await get_stock_price(self, ctx, symbol)
                 current_timestamp = datetime.utcnow()
                 color = discord.Color.green()
                 embed = discord.Embed(title=f"Stock Transaction Completed", color=color)
                 embed.add_field(name="Address:", value=f"{buyer_addr}", inline=False)
                 embed.add_field(name="Stock:", value=f"{symbol}", inline=False)
-#                embed.add_field(name="Amount:", value=f"{quantity_to_buy:,.2f}", inline=False)
                 total = sum(order_prices)
                 average = total / len(order_prices)
                 embed.add_field(name="Average Buy Price:", value=f"{average:,.2f}", inline=False)
-                embed.add_field(name="Market Price:", value=f"{market_price:,.2f}", inline=False)
+                embed.add_field(name="Market Price:", value=f"{new_price:,.2f}({(((new_price - market_price) / market_price) * 100):,.5f}%)", inline=False)
                 new_balance = get_user_balance(self.conn, buyer_id)
                 embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
                 embed.add_field(name="Orders Filled:", value=f"{orders_removed:,.0f}", inline=False)
@@ -8039,9 +8274,6 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="buy_stock", help="Buy stocks. Provide the stock name and amount.")
     @is_allowed_user(930513222820331590, PBot)
     async def buy_stock(self, ctx, stock_name: str, amount: int, stable_option: str = "False"):
-        if amount > 5_000_000_000_000_000:
-            await ctx.send(f"Purchase quantity can't be over 5,000,000,000,000,000")
-            return
         if amount == 0:
             await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
             return
@@ -8050,7 +8282,9 @@ class CurrencySystem(commands.Cog):
             return
 
         price = await get_stock_price(self, ctx, stock_name)
-        price = (price * 0.05) + price
+        result = await get_supply_stats(self, ctx, stock_name)
+        reserve, total, locked, escrow, market, circulating = result
+        price = ((price * 0.05) * (1 - (market / total)) * (1 - (amount / total)) * (1 - (escrow / total))) + price
         cost = Decimal(price) * Decimal(amount)
         tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
         fee = cost * Decimal(tax_percentage)
@@ -8061,6 +8295,8 @@ class CurrencySystem(commands.Cog):
         user_id = ctx.author.id
         P3addrConn = sqlite3.connect("P3addr.db")
         P3addr = get_p3_address(P3addrConn, user_id)
+        sender_addr = get_p3_address(self.P3addrConn, PBot)
+        seller_old = get_user_balance(self.conn, PBot)
         is_staking_qse_genesis = self.is_staking_qse_genesis(user_id)
         color = discord.Color.green()
         embed = discord.Embed(title=f"Stock Transaction Processing", color=color)
@@ -8096,48 +8332,6 @@ class CurrencySystem(commands.Cog):
             return
 
 
-
-        # Get the total amount bought last hour by the user for this stock
-        cursor.execute("""
-            SELECT SUM(amount), MAX(timestamp)
-            FROM user_daily_buys
-            WHERE user_id=? AND symbol=? AND DATE(timestamp)=DATE('now')
-        """, (buyer_id, stock_name))
-
-        hourly_bought_record = cursor.fetchone()
-        hourly_bought = hourly_bought_record[0] if hourly_bought_record and hourly_bought_record[0] is not None else 0
-        last_purchase_time = hourly_bought_record[1] if hourly_bought_record and hourly_bought_record[1] is not None else None
-
-
-        stock_limit = 225000000
-        if user_id == jacob:
-            stock_limit = float('inf')
-
-
-
-        if is_staking_qse_genesis:
-            stock_limit = float('inf')
-
-        if hourly_bought + amount > stock_limit:
-            remaining_amount = stock_limit - hourly_bought
-
-            # Calculate the time remaining until they can buy again
-            if last_purchase_time:
-                last_purchase_datetime = datetime.strptime(last_purchase_time, '%Y-%m-%d %H:%M:%S')
-                last_purchase_datetime_utc = last_purchase_datetime.replace(tzinfo=timezone.utc)
-                current_time_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
-
-                time_until_reset = (last_purchase_datetime_utc + timedelta(hours=1)) - current_time_utc
-                hours, remainder = divmod(time_until_reset.seconds, 3600)
-                minutes, _ = divmod(remainder, 60)
-                time_remaining_str = f"{hours} hours and {minutes} minutes"
-            else:
-                time_remaining_str = "1 hour"
-
-
-            await ctx.send(f"{ctx.author.mention}, you have reached your daily buy limit for {stock_name} stocks. "
-                           f"You can buy {remaining_amount} more after {time_remaining_str}.")
-            return
         cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
         stock = cursor.fetchone()
 
@@ -8188,19 +8382,27 @@ class CurrencySystem(commands.Cog):
         user_id = ctx.author.id
         add_city_tax(user_id, fee)
         P3addrConn = sqlite3.connect("P3addr.db")
-        sender_addr = get_p3_address(self.P3addrConn, PBot)
         await send_stock(self, ctx, P3addr, sender_addr, stock_name, amount, False)
 
         await record_user_daily_buy(cursor, ctx.author.id, stock_name, amount)
-
-        cursor.execute("SELECT team_id FROM team_members WHERE user_id=?", (ctx.author.id,))
-        team_record = cursor.fetchone()
-        if team_record:
-            team_id = team_record[0]
-            record_team_transaction(self.conn, team_id, stock_name, amount, price, "buy")
-            calculate_team_profit_loss(self.conn, team_id)
-
         decay_other_stocks(self.conn, stock_name)
+
+
+        reserve_per = (locked / total) * 100
+        print(f"""\n\n
+            Stock: {stock_name}
+            Locked: {locked:,}({reserve_per:,.10f}%)
+            Market: {market:,}
+            Reserve: {reserve:,}
+            Escrow: {escrow:,}\n\n
+        """)
+        if reserve_per < Decimal(10) and market < amount:
+            await self.unlock_shares(ctx, stock_name, amount, "lock")
+            print(f"Locked {amount:,.0f} shares for {stock_name}")
+        if reserve_per > Decimal(50):
+            unlock_amount = (Decimal(0.01) / 100) * Decimal(total)
+            await self.unlock_shares(ctx, stock_name, int(unlock_amount), "unlock")
+            print(f"Unlocked {unlock_amount:,.0f} shares for {stock_name}")
 
         if stock_name == 'P3:Stable':
             await self.stableManager(ctx, 'BUY', amount)
@@ -8213,7 +8415,9 @@ class CurrencySystem(commands.Cog):
         if amount == 0:
             print(f'Fix for 0 amount buy after order book')
         else:
+            seller_new = get_user_balance(self.conn, PBot)
             await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, price, "False")
+            await log_order_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, total_cost, (cost), seller_old, seller_new, price, "False", PBot)
             await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), fee)
         avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, stock_name)
         avg_price = (avg_buy + avg_sell) / 2
@@ -8224,7 +8428,9 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
         embed.add_field(name="Quantity Purchased:", value=f"{amount:,.0f}", inline=False)
-        embed.add_field(name="New Price:", value=f"{avg_price:,.2f}", inline=False)
+        new_price = await get_stock_price(self, ctx, stock_name)
+        new_price = (new_price * 0.05) + new_price
+        embed.add_field(name="New Price:", value=f"{new_price:,.2f}({(((int(new_price) - int(price)) / int(price)) * 100):,.5f}%)", inline=False)
         embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
         embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
         tax_rate = tax_percentage * 100
@@ -8254,13 +8460,17 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="sell_stock", help="Sell stocks. Provide the stock name and amount.")
     @is_allowed_user(930513222820331590, PBot)
     async def sell_stock(self, ctx, stock_name: str, amount: int):
+        result = await get_supply_stats(self, ctx, stock_name)
+        reserve, total, locked, escrow, market, circulating = result
         price = await get_stock_price(self, ctx, stock_name)
         current_timestamp = datetime.utcnow()
         self.last_sellers = [entry for entry in self.last_sellers if (current_timestamp - entry[1]).total_seconds() <= self.calculate_average_time_type("sell_stock")]
         user_id = ctx.author.id
+        sender_addr = get_p3_address(self.P3addrConn, ctx.author.id)
+        seller_old = get_user_balance(self.conn, PBot)
         P3addrConn = sqlite3.connect("P3addr.db")
         P3addr = get_p3_address(P3addrConn, user_id)
-        price = price - (price * 0.03)
+        price = price - ((price * 0.03) * (1 - (market / total)) * (1 - (amount / total) * (1 - (escrow / total))))
         earnings = Decimal(price) * Decimal(amount)
         tax_percentage = self.calculate_tax_percentage(ctx, "sell_stock")  # Custom function to determine the tax percentage based on quantity and earnings
         fee = earnings * Decimal(tax_percentage)
@@ -8278,20 +8488,16 @@ class CurrencySystem(commands.Cog):
 
         await ctx.send(embed=embed)
 
-#        await wait_for_unlocked(self.conn)
-
         stock_price = await get_stock_price(self, ctx, stock_name)
-        if (stock_price < 1) and (stock_name.lower() != "roflstocks" and stock_name.lower() != "p3:stable"):
-            await ctx.send(f"Cannot sell {stock_name} until the price is $1,000 or higher.")
-            return
+
         member = ctx.guild.get_member(user_id)
         # Check if the user is already in a transaction
         # Call the check_impact function to handle impact calculation and confirmation
         cursor = self.conn.cursor()
-#        result = await check_impact(cursor, ctx, stock_name, amount, is_buy=False)
+
 
         if self.check_last_action(self.last_sellers, user_id, current_timestamp):
-#            await ctx.send(f"You can't make another sell within {self.calculate_average_time_type("sell_stock")} seconds of your last action.")
+
             return
             # Add the current action to the list
         self.last_sellers.append((user_id, current_timestamp))
@@ -8350,8 +8556,7 @@ class CurrencySystem(commands.Cog):
             add_city_tax(user_id, fee)
 
             try:
-                await self.send_from_reserve(ctx, user_id, total_earnings)
-#                await update_user_balance(self.conn, user_id, new_balance)
+                await self.send_from_reserve(ctx, user_id, int(total_earnings))
             except ValueError as e:
                 await ctx.send(f"{ctx.author.mention}, an error occurred while updating the user balance. Error: {str(e)}")
                 return
@@ -8360,28 +8565,11 @@ class CurrencySystem(commands.Cog):
 
             # Proceed with the sell order if there's still remaining amount to sell
             if amount > 0:
-#                await send_stock(self, ctx, self.bot_address, stock_name, amount, False)
-                cursor.execute("""
-                    UPDATE user_stocks
-                    SET amount = amount - ?
-                    WHERE user_id = ? AND symbol = ?
-                """, (amount, user_id, stock_name))
 
+                PBotAddr = get_p3_address(self.P3addrConn, PBot)
+                await send_stock(self, ctx, PBotAddr, sender_addr, stock_name, int(amount), False)
 
-                cursor.execute("""
-                    UPDATE user_stocks
-                    SET amount = amount + ?
-                    WHERE user_id = ? AND symbol = ?
-                """, (amount, PBot, stock_name))
-
-#                cursor.execute("""
-#                    UPDATE stocks
-#                    SET available = available + ?
-#                    WHERE symbol = ?
-#                """, (amount, stock_name))
                 decay_other_stocks(self.conn, stock_name)
-                result = await get_supply_stats(self, ctx, stock_name)
-                reserve, total, locked, escrow, market, circulating = result
                 reserve_per = (locked / total) * 100
                 print(f"""\n\n
                     Stock: {stock_name}
@@ -8390,34 +8578,14 @@ class CurrencySystem(commands.Cog):
                     Reserve: {reserve:,}
                     Escrow: {escrow:,}\n\n
                 """)
-                if reserve_per < Decimal(10):
+
+                if reserve_per < Decimal(10) and locked < amount:
                     await self.unlock_shares(ctx, stock_name, amount, "lock")
                     print(f"Locked {amount:,.0f} shares for {stock_name}")
-                if reserve_per > Decimal(50):
+                if reserve_per > Decimal(50) and market < amount:
                     unlock_amount = (Decimal(0.01) / 100) * Decimal(total)
                     await self.unlock_shares(ctx, stock_name, int(unlock_amount), "unlock")
                     print(f"Unlocked {unlock_amount:,.0f} shares for {stock_name}")
-
-
-                # Check if the user is part of a trading team
-                cursor.execute("SELECT team_id FROM team_members WHERE user_id=?", (user_id,))
-                team_record = cursor.fetchone()
-                if team_record:
-                    team_id = team_record[0]
-                    # Record the team's transaction
-                    record_team_transaction(self.conn, team_id, stock_name, amount, price, "sell")
-                    # Calculate and update the team's profit/loss
-                    calculate_team_profit_loss(self.conn, team_id)
-
-                # Record this transaction in the user_daily_buys table
-                try:
-                    cursor.execute("""
-                        INSERT INTO user_daily_sells (user_id, symbol, amount, timestamp)
-                        VALUES (?, ?, ?, datetime('now'))
-                    """, (user_id, stock_name, amount))
-                except sqlite3.Error as e:
-                    await ctx.send(f"{ctx.author.mention}, an error occurred while updating daily stock limit. Error: {str(e)}")
-                    return
 
                 if stock_name == ('P3:Stable'):
                     await self.stableManager(ctx, 'sell', amount)
@@ -8426,8 +8594,9 @@ class CurrencySystem(commands.Cog):
                     await self.memeManager(ctx, 'sell', amount)
                 else:
                     a = 1
-#                    await self.decrease_price(ctx, stock_name, amount)
+                seller_new = get_user_balance(self.conn, PBot)
                 await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price, "False")
+                await log_order_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, total_earnings, (earnings), seller_old, seller_new, price, "False", PBot)
                 await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), fee)
                 self.conn.commit()
                 user_id = ctx.author.id
@@ -8442,7 +8611,9 @@ class CurrencySystem(commands.Cog):
                 embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
                 embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
                 embed.add_field(name="Quantity Sold:", value=f"{amount:,.0f}", inline=False)
-                embed.add_field(name="New Price:", value=f"{avg_price:,.2f}", inline=False)
+                new_price = await get_stock_price(self, ctx, stock_name)
+                new_price = new_price - (new_price * 0.03)
+                embed.add_field(name="New Price:", value=f"{new_price:,.2f}({(((int(new_price) - int(price)) / int(price)) * 100):,.5f}%)", inline=False)
                 embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
                 embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
                 tax_rate = tax_percentage * 100
@@ -8454,7 +8625,6 @@ class CurrencySystem(commands.Cog):
                 await ctx.send(embed=embed)
                 await add_experience(self, self.conn, ctx.author.id, 5, ctx)
 
-#                await self.blueChipBooster(ctx, "SELL")
                 self.sell_stock_avg.append(elapsed_time)
                 avg_time = sum(self.sell_stock_avg) / len(self.sell_stock_avg)
                 print(f"""
@@ -10142,6 +10312,9 @@ class CurrencySystem(commands.Cog):
         self.tax_command_timer_start = timeit.default_timer()
         async with self.db_semaphore:
             async with self.transaction_lock:
+                mv = await get_etf_value(self.conn, 6)
+                await add_mv_metric(self, ctx, mv)
+                await add_reserve_metric(self, ctx)
                 cursor = self.conn.cursor()
                 cursor.execute("SELECT etf_id, name FROM etfs")
                 etfs = cursor.fetchall()
@@ -10292,22 +10465,6 @@ class CurrencySystem(commands.Cog):
 
         await ctx.send("Prices of stocks in the ETF have been updated successfully.")
 
-    @commands.command(name="set_etf_prices", help="Set prices of stocks in an ETF to a specified price.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def set_etf_prices(self, ctx, etf_id: int, price: float):
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            UPDATE stocks
-            SET price = ?
-            WHERE symbol IN (
-                SELECT symbol FROM etf_stocks WHERE etf_id = ?
-            )
-        """, (price, etf_id))
-
-        self.conn.commit()
-
-        await ctx.send("Prices of stocks in the ETF have been updated successfully.")
-
 
     async def get_etf_info(self, ctx, etf_id):
         cursor = self.conn.cursor()
@@ -10363,8 +10520,8 @@ class CurrencySystem(commands.Cog):
                 total_shares_in_escrow = stock['total_shares_in_escrow']
                 lowest_sell_price = stock['lowest_sell_price']
 
-                if available != 0:
-                    embed.add_field(name=symbol, value=f"{price:,.2f} $QSE\n{int(available):,.0f} shares\n{total_shares_in_escrow:,.0f} shares\n{lowest_sell_price:,.2f} $QSE" if lowest_sell_price else f"{price:,.2f} $QSE\n{int(available):,.0f} shares\n{total_shares_in_escrow:,.0f} shares", inline=False)
+
+                embed.add_field(name=symbol, value=f"{price:,.2f} $QSE\n{int(available):,.0f} shares\n{total_shares_in_escrow:,.0f} shares\n{lowest_sell_price:,.2f} $QSE" if lowest_sell_price else f"{price:,.2f} $QSE\n{int(available):,.0f} shares\n{total_shares_in_escrow:,.0f} shares", inline=False)
 
             if len(stock_chunks) > 1:
                 embed.set_footer(text=f"Page {i}/{len(stock_chunks)}")
@@ -10577,9 +10734,9 @@ class CurrencySystem(commands.Cog):
 
 
 
-        if int(current_holding) + int(quantity) >= int(dETFLimit):
-            await ctx.send("Reached Max ETP Limit")
-            return
+#        if int(current_holding) + int(quantity) >= int(dETFLimit + 1):
+#            await ctx.send("Reached Max ETP Limit")
+#            return
 
         # Fetch the ETF's value and calculate the total cost
         etf_value = await get_etf_value(self.conn, etf_id)
@@ -10733,7 +10890,7 @@ class CurrencySystem(commands.Cog):
         new_balance = current_balance + total_sale_amount_with_tax
 
         try:
-            await self.send_from_reserve(ctx, user_id, total_sale_amount_with_tax)
+            await self.send_from_reserve(ctx, user_id, int(total_sale_amount_with_tax))
             user_id = ctx.author.id
             add_city_tax(user_id, fee)
 #            update_user_balance(self.conn, user_id, new_balance)
@@ -11693,6 +11850,48 @@ class CurrencySystem(commands.Cog):
         except sqlite3.Error as e:
             await ctx.send(f"{ctx.author.mention}, an error occurred while clearing trading team data. Error: {str(e)}")
             self.conn.rollback()
+
+
+
+
+
+    @commands.command(name="mint_stock", help="Set the total and available supply for a specific stock.")
+    @is_allowed_user(930513222820331590, PBot)
+    async def mint_stock_supply(self, ctx, stock_name: str, mint: int, verbose: bool = True):
+        cursor = self.conn.cursor()
+
+        try:
+            # Check if the stock exists
+            cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+            stock = cursor.fetchone()
+            if stock is None:
+                await ctx.send(f"This stock '{stock_name}' does not exist.")
+                return
+
+            result = await get_supply_stats(self, ctx, stock_name)
+            reserve, total, locked, escrow, market, circulating = result
+            new_reserve = reserve + mint
+            new_total = total + mint
+
+            if total is not None:
+                if total < 0:
+                    await ctx.send("Invalid total supply value. The total supply must be non-negative.")
+                    return
+                cursor.execute("UPDATE stocks SET total_supply = ? WHERE symbol = ?", (new_total, stock_name))
+
+            if reserve is not None:
+                if reserve < 0:
+                    await ctx.send("Invalid available supply value. The available supply must be non-negative.")
+                    return
+                cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (new_reserve, stock_name))
+
+            self.conn.commit()
+            if verbose:
+            	await ctx.send(f"Minted {mint:,.0f} to {stock_name}\n\n{reserve:,.0f}->{new_reserve:,.0f}\n{total:,.0f}->{new_total:,.0f}")
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred while updating the stock supply. Error: {str(e)}")
+
 
     @commands.command(name="set_stock_supply", help="Set the total and available supply for a specific stock.")
     @is_allowed_user(930513222820331590, PBot)
@@ -12664,7 +12863,7 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"UpDown Options not available for {asset}")
             return
 
-        max_contracts_limit = 100000000000000
+        max_contracts_limit = 100_000_000_000_000
 
         user_id = ctx.author.id
 
@@ -12680,7 +12879,7 @@ class CurrencySystem(commands.Cog):
 
         if asset in self.etfs:
             current_price = await get_etf_value(self.conn, int(asset))
-            exp_day = 7
+            exp_day = 1
         else:
             current_price = await get_stock_price(self, ctx, asset)
             exp_day = 1
@@ -12826,6 +13025,9 @@ class CurrencySystem(commands.Cog):
         self.tax_command_timer_start = timeit.default_timer()
         async with self.db_semaphore:
             async with self.transaction_lock:
+                mv = await get_etf_value(self.conn, 6)
+                await add_mv_metric(self, ctx, mv)
+                await add_reserve_metric(self, ctx)
                 if address is None:
                     user_id = ctx.author.id
                     P3Addr = generate_crypto_address(user_id)
@@ -13088,6 +13290,8 @@ class CurrencySystem(commands.Cog):
                         stable_stock_price = await get_stock_price(self, ctx, stable_stock) or 0
                         user_owned_stable = self.get_user_stock_amount(user_id, stable_stock) or 0
                         total_stable_value += stable_stock_price * user_owned_stable
+                        bank_qse = await get_total_qse_deposited(self)
+                        Pbot_Balance = Pbot_Balance - bank_qse
 
                         # Calculate total funds value for each user
                         user_balance = user_qse + total_stock_value + total_etf_value + total_escrow_value + total_updown_value + total_metal_value - Pbot_Balance - reserve_stock_value
@@ -13108,6 +13312,7 @@ class CurrencySystem(commands.Cog):
                 embed.add_field(name="Community Asset Value:", value=f"{user_balance:,.0f} $QSE\n({((user_balance / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="", value="---------------------------------------------", inline=False)
                 embed.add_field(name="Reserve QSE:", value=f"{Pbot_Balance:,.0f} $QSE\n({((Pbot_Balance / total_balance) * 100):,.4f}%)", inline=False)
+                embed.add_field(name="Reserve Bank QSE:", value=f"{bank_qse:,.0f} $QSE\n({((bank_qse / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Reserve Stock Value:", value=f"{reserve_stock_value:,.0f} $QSE\nMarket: ({((reserve_stock_value / total_balance) * 100):,.4f}%)\nTotal Stock Supply: ({((reserve_stock_value / market_stock_value) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Reserve Funds:", value=f"{MAX_BALANCE:,.0f} $QSE\n({((MAX_BALANCE / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="", value="---------------------------------------------", inline=False)
