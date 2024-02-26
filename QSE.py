@@ -58,15 +58,7 @@ baseMinPrice = 1
 stockMax = 10000000
 dStockLimit = 150000000 #2000000 standard
 dETFLimit = 5000000000000
-treasureMin = 10000000
-treasureMax = 50000000
 MAX_BALANCE = Decimal('5000000000000000000')
-sellPressureMin = 0.000045
-sellPressureMax = 0.000095
-buyPressureMin = 0.0000155
-buyPressureMax = 0.0001475
-stockDecayValue = 0.0000125
-decayMin = 0.01
 resetQSE = 100
 dailyMin = 100000
 dailyMax = 500000
@@ -850,7 +842,7 @@ def setup_database():
             );
         """)
 
-        print("Tables created successfully")
+        print("MV Tables created successfully")
     except sqlite3.Error as e:
         print(f"An error occurred while creating the tables: {str(e)}")
 
@@ -905,6 +897,155 @@ def setup_database():
     except sqlite3.Error as e:
         print(f"An error occurred while creating the tables: {str(e)}")
 
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_1_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("ETF 1 Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_2_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("ETF 2 Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_3_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("ETF 3 Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_4_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("ETF 4 Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_7_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("ETF 7 Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_8_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("ETF 8 Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_9_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("ETF 9 Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_10_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("ETF 10 Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_11_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("ETF 11 Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_12_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("ETF 12 Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_13_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("ETF 13 Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
 
     conn.commit()
     return conn
@@ -1033,7 +1174,7 @@ async def withdraw_qse(self, ctx, bank_id, amount):
                 WHERE user_id = ? AND bank_id = ?
             """, (amount, user_id, bank_id))
             self.conn.commit()
-            await self.send_from_reserve(ctx, ctx.author.id, amount)
+            await self.send_from_reserve(ctx, ctx.author.id, int(amount))
             return f"Withdrew {amount:,.0f} QSE successfully."
         else:
             return "No account found for this bank"
@@ -1248,10 +1389,21 @@ async def check_and_notify_address(ctx):
     conn.close()
 
 async def get_stock_price(self, ctx, stock_name):
-    avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, stock_name)
-    avg_price = (avg_buy + avg_sell) / 2
+    cursor_currency = self.conn.cursor()
+    cursor_currency.execute("SELECT price FROM stocks WHERE symbol = ?", (stock_name,))
+    result = cursor_currency.fetchone()
+    initial_price = result[0] if result else 0
 
-    return avg_price
+    result = await get_supply_stats(self, ctx, stock_name)
+    reserve, total, locked, escrow, market, circulating = result
+
+    iMC = total * initial_price
+    avbl = market + locked + escrow
+    avbl = avbl if avbl != 0 else 1
+    stockprice = iMC / avbl
+
+
+    return stockprice
 
 
 async def reset_daily_stock_limits(ctx, user_id):
@@ -1690,6 +1842,22 @@ async def add_mv_metric(self, ctx, mv):
     self.conn.commit()
 
 
+
+
+
+async def add_etf_metric(self, ctx):
+    cursor = self.conn.cursor()
+
+    for i in self.etfs:
+        if i != "6":
+            mv = await get_etf_value(self, ctx, i)
+            cursor.execute(f"""
+                INSERT INTO etf_{i}_value (mv)
+                VALUES (?)
+            """, (mv,))
+
+            self.conn.commit()
+
 async def add_reserve_metric(self, ctx):
     cursor = self.conn.cursor()
 
@@ -2115,35 +2283,36 @@ async def convert_to_float(value):
 
 async def get_stock_price_interval(self, ctx, stock_symbol, interval='daily'):
     try:
-        # Create a connection to the SQLite database using a context manager
         async with aiosqlite.connect("p3ledger.db") as conn:
             cursor = await conn.cursor()
 
             # Get the current date
             today = datetime.now().date()
 
-            # Calculate the start and end timestamps based on the specified interval
+            # Calculate the start timestamp based on the specified interval
             if interval == 'daily':
                 start_timestamp = today
             elif interval == 'weekly':
-                # Calculate the start of the week (Monday)
                 start_timestamp = today - timedelta(days=today.weekday())
             elif interval == 'monthly':
-                # Calculate the start of the month
                 start_timestamp = today.replace(day=1)
             else:
                 raise ValueError("Invalid interval. Supported intervals: 'daily', 'weekly', 'monthly'")
 
             # Fetch the opening price and the current price for the specified stock within the specified interval
-            await cursor.execute("""
+            query = """
                 SELECT
-                    COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp <= ? AND action='Buy Stock' ORDER BY timestamp DESC LIMIT 1), 0.0),
-                    COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1), 0.0)
-            """, (stock_symbol, start_timestamp, stock_symbol, today))
+                    COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp <= ? AND action='Buy Stock' ORDER BY timestamp DESC LIMIT 1), 0.0) as opening_price,
+                    COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1), 0.0) as current_price
+            """
+            await cursor.execute(query, (stock_symbol, start_timestamp, stock_symbol, today))
+            result = await cursor.fetchone()
 
-            opening_price, current_price = await cursor.fetchone()
+            opening_price, current_price = await asyncio.gather(
+                convert_to_float(result[0]),
+                convert_to_float(result[1])
+            )
 
-            opening_price = await convert_to_float(opening_price)
             current_price = await get_stock_price(self, ctx, stock_symbol)
             current_price = await convert_to_float(current_price)
 
@@ -2154,6 +2323,7 @@ async def get_stock_price_interval(self, ctx, stock_symbol, interval='daily'):
     except aiosqlite.Error as e:
         print(f"An error occurred: {str(e)}")
         return 0, 0, 0
+
 
 
 async def wait_for_unlocked(conn: aiosqlite.Connection):
@@ -2304,77 +2474,6 @@ async def calculate_volume(stock_symbol, interval='daily'):
 
 
 
-
-
-async def update_stock_price(self, ctx, stock_name: str, amount: float, buy: bool, verbose: bool = True, burn: bool = False):
-    cursor = self.conn.cursor()
-    cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-    stock = cursor.fetchone()
-
-    if stock is None:
-        await ctx.send(f"This stock does not exist.")
-        return
-
-
-    # Determine whether it's a buy or sell
-    is_buy = buy
-
-
-    if is_buy:
-        # Buy logic
-        avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, stock_name)
-        new_price = (avg_buy + avg_sell) / 2
-
-    else:
-        # Sell logic
-
-        avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, stock_name)
-        new_price = (avg_buy + avg_sell) / 2
-
-    cursor.execute("""
-        UPDATE stocks
-        SET price = ?
-        WHERE symbol = ?
-    """, (new_price, stock_name))
-
-
-    self.conn.commit()
-
-
-
-
-
-def get_global_economy_data(conn):
-    cursor = conn.cursor()
-
-    # Fetch data from stocks table
-    cursor.execute("SELECT * FROM stocks")
-    stocks_data = cursor.fetchall()
-
-    # Fetch data from commodities table
-    cursor.execute("SELECT * FROM commodities")
-    commodities_data = cursor.fetchall()
-
-    # Fetch data from etfs table
-    cursor.execute("SELECT * FROM etfs")
-    etfs_data = cursor.fetchall()
-
-    return stocks_data, commodities_data, etfs_data
-
-async def send_stocks_embed(ctx, stocks_data):
-    embed = discord.Embed(title="Stocks Information", color=discord.Color.blue())
-    for stock in stocks_data:
-        embed.add_field(name=stock["symbol"], value=f"Price: {stock['price']}\nAvailable: {stock['available']}", inline=False)
-    await ctx.send(embed=embed)
-
-
-async def send_etfs_embed(ctx, etfs_data):
-    embed = discord.Embed(title="ETFs Information", color=discord.Color.gold())
-    for etf in etfs_data:
-        embed.add_field(name=etf["etf_id"], value=f"Name: {etf['name']}\nValue: {etf['value']}", inline=False)
-    await ctx.send(embed=embed)
-
-
 async def update_user_balance(conn, user_id, new_balance):
     try:
         if not isinstance(user_id, int) or new_balance is None:
@@ -2395,28 +2494,7 @@ async def update_user_balance(conn, user_id, new_balance):
         print(f"Error in update_user_balance: {e}")
         raise e
 
-def decay_other_stocks(conn, stock_name_excluded, decay_percentage=stockDecayValue, decay_min=decayMin):
-    """
-    Reduces the value of all stocks other than the one specified by the given percentage.
 
-    :param conn: Database connection
-    :param stock_name_excluded: Stock symbol that should be excluded from the decay
-    :param decay_percentage: The percentage by which the stocks should be decayed
-    :param decay_min: The minimum value for the decayed price
-    """
-    cursor = conn.cursor()
-
-    # Update all stocks with decay, excluding the specified stock
-    cursor.execute("""
-        UPDATE stocks
-        SET price = CASE
-            WHEN price * (1 - ?) > ? THEN price * (1 - ?)
-            ELSE ?
-        END
-        WHERE symbol != ?
-    """, (decay_percentage, decay_min, decay_percentage, decay_min, stock_name_excluded))
-
-    conn.commit()
 
 
 
@@ -2618,31 +2696,22 @@ async def update_market_etf_price(bot, conn):
     channel = get(guild.voice_channels, id=channel_id)
 
     if channel:
-        etf_value = await get_etf_value(conn, 6)  # Replace 6 with the ID of the "Market ETF"
+        etf_value = await get_etf_value(self, ctx, 6)  # Replace 6 with the ID of the "Market ETF"
         if etf_value is not None:
             await channel.edit(name=f"Market ETF: {etf_value:,.2f} ")
 
-async def get_etf_value(conn, etf_id):
-    cursor = conn.cursor()
+async def get_etf_value(self, ctx, etf_id):
 
-    # Use JOIN to fetch all relevant data in a single query
-    cursor.execute("""
-        SELECT s.price, es.quantity
-        FROM stocks s
-        JOIN etf_stocks es ON s.symbol = es.symbol
-        WHERE es.etf_id = ?
-    """, (etf_id,))
-
-    stocks_data = cursor.fetchall()
-
-    # Calculate the value of the ETF
-    etf_value = sum(price * quantity for price, quantity in stocks_data)
+    etf_value = 0
+    stocks = await get_etf_stocks(self, etf_id)
+    for stock in stocks:
+        etf_value += await get_stock_price(self, ctx, stock)
 
     return etf_value
 
 
-async def get_etf_stocks(conn, etf_id):
-    cursor = conn.cursor()
+async def get_etf_stocks(self, etf_id):
+    cursor = self.conn.cursor()
     cursor.execute("SELECT symbol FROM etf_stocks WHERE etf_id=?", (etf_id,))
 
     # Fetch all rows and extract symbols
@@ -3268,8 +3337,6 @@ def generate_experience_table(levels):
 
 
 
-# UpDown Options
-
 
 async def send_dm_user(self, user_id, message):
     try:
@@ -3284,6 +3351,15 @@ async def send_dm_user(self, user_id, message):
         print(f"Failed to send DM to {user_id}: Forbidden (user has DMs disabled)")
         return False
 
+#async def check_alert(self):
+
+
+
+# UpDown Options
+
+
+
+
 
 async def autoliquidate(self, ctx):
     updown_assets = ["BlueChipOG"]
@@ -3294,7 +3370,7 @@ async def autoliquidate(self, ctx):
 
         for check_asset in updown_assets:
             if check_asset in self.etfs:
-                asset_price = await get_etf_value(self.conn, int(check_asset))
+                asset_price = await get_etf_value(self, ctx, int(check_asset))
             else:
                 asset_price = await get_stock_price(self, ctx, check_asset)
 
@@ -3484,20 +3560,20 @@ async def add_updown_order(self, user_id, asset, current_price, lower_limit, upp
 
 async def add_multiple_updown_orders(self, orders):
     try:
-        order_ids = [str(uuid.uuid4()) for _ in range(len(orders))]
+        async with aiosqlite.connect('currency_system.db') as db:
+            async with db.cursor() as cursor:
+                order_ids = [str(uuid.uuid4()) for _ in range(len(orders))]
 
-        cursor = self.conn.cursor()
+                # Using executemany with parameter substitution and Decimal arithmetic
+                await cursor.executemany("""
+                    INSERT INTO updown_orders (user_id, asset, current_price, lower_limit, upper_limit, contract_date, expiration, order_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, [(order['user_id'], order['asset'], Decimal(order['current_price']), Decimal(order['lower_limit']),
+                       Decimal(order['upper_limit']), order['contract_date'], order['expiration'], order_id)
+                      for order, order_id in zip(orders, order_ids)])
 
-        # Using executemany with parameter substitution and Decimal arithmetic
-        cursor.executemany("""
-            INSERT INTO updown_orders (user_id, asset, current_price, lower_limit, upper_limit, contract_date, expiration, order_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, [(order['user_id'], order['asset'], Decimal(order['current_price']), Decimal(order['lower_limit']),
-               Decimal(order['upper_limit']), order['contract_date'], order['expiration'], order_id)
-              for order, order_id in zip(orders, order_ids)])
-
-        self.conn.commit()
-        return True
+            await db.commit()
+            return True
     except sqlite3.Error as e:
         print(f"An error occurred while adding multiple UpDown orders: {e}")
         # Add additional error handling or logging here
@@ -3564,18 +3640,20 @@ async def calculate_average_prices_by_symbol(self, symbol):
         async with aiosqlite.connect("p3ledger.db") as ledger_conn:
             ledger_conn.row_factory = aiosqlite.Row
 
-            async with ledger_conn.execute("""
-                SELECT timestamp, action, price
+            query = """
+                SELECT
+                    AVG(CASE WHEN action='Buy Stock' THEN price END) as average_buy_price,
+                    AVG(CASE WHEN action='Sell Stock' THEN price END) as average_sell_price
                 FROM stock_transactions
                 WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock')
                 ORDER BY timestamp
-            """, (symbol,)) as result:
-                transactions = await result.fetchall()
+            """
+            async with ledger_conn.execute(query, (symbol,)) as result:
+                row = await result.fetchone()
 
-            if transactions:
-                average_buy_price, average_sell_price = await calculate_average_prices(transactions, None)
-                avg_price = (average_buy_price or 0) + (average_sell_price or 0)
-                avg_price /= 2
+            if row:
+                average_buy_price = row["average_buy_price"] or 0
+                average_sell_price = row["average_sell_price"] or 0
                 return average_buy_price, average_sell_price
             else:
                 return 0, 0
@@ -3587,35 +3665,12 @@ async def calculate_average_prices_by_symbol(self, symbol):
 
 
 
+
+
 def calculate_option_range(self, current_price):
     lower_limit = current_price * (1 - self.UpDownPerRange)
     upper_limit = current_price * (1 + self.UpDownPerRange)
     return lower_limit, upper_limit
-
-async def calculate_average_prices(transactions, time_limit=None):
-    buy_prices = []
-    sell_prices = []
-
-    for timestamp_str, action, price_str in transactions:
-        formatted_price = str(price_str).replace(",", "") if isinstance(price_str, str) else price_str
-        price = float(formatted_price)
-        datetime_obj = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # Parse timestamp string
-
-        if action == 'Buy Stock':
-            buy_prices.append((datetime_obj, price))
-        elif action == 'Sell Stock':
-            sell_prices.append((datetime_obj, price))
-
-    # If there's a time limit, filter transactions accordingly
-    if time_limit:
-        buy_prices = [(timestamp, price) for timestamp, price in buy_prices if timestamp >= time_limit]
-        sell_prices = [(timestamp, price) for timestamp, price in sell_prices if timestamp >= time_limit]
-
-    # Calculate average buy and sell prices
-    average_buy_price = np.mean([price for _, price in buy_prices]) if buy_prices else 0
-    average_sell_price = np.mean([price for _, price in sell_prices]) if sell_prices else 0
-
-    return average_buy_price, average_sell_price
 
 
 ## End UpDown
@@ -3662,6 +3717,41 @@ def check_futures_orders(self, current_price, symbol):
     except sqlite3.Error as e:
         print(f"Error checking futures orders: {e}")
         return []
+
+async def calculate_buy_price(self, ctx, stock_name, amount):
+    try:
+        cursor = self.conn.cursor()
+        # Retrieve stock information
+        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+        stock = cursor.fetchone()
+#        price = Decimal(stock[2])
+#        price = int(price)
+        price = await get_stock_price(self, ctx, stock_name)
+        supply_stats = await get_supply_stats(self, ctx, stock_name)
+
+        reserve, total, locked, escrow, market, circulating = supply_stats
+        supply_a = market if market != 0 else escrow
+
+        if total == 0:
+            # Handle the case where total is zero to avoid division by zero
+            return None
+
+        # Calculate the buy price
+        calculated_buy_price = abs(price * 0.05 * (1 - supply_a / total) * (1 - amount / total) + price)
+
+        # Ensure that the buy price increases by at least 0.01%
+        min_increase_percentage = 0.01
+        min_increase_amount = price * min_increase_percentage / 100
+
+        final_buy_price = max(calculated_buy_price, price + min_increase_amount)
+
+        return final_buy_price
+
+    except Exception as e:
+        # Handle exceptions (e.g., network errors, API issues)
+        print(f"Error calculating buy price: {e}")
+        return None
+
 
 def liquidate_futures_order(self, user_id, order_type, quantity, profit_loss):
     try:
@@ -3721,7 +3811,7 @@ async def level_up(self, ctx, user_id, levels):
     try:
         cursor = level_conn.cursor()
 
-        # Create an embed to display the old stats
+#        # Create an embed to display the old stats
         old_stats_embed = discord.Embed(title=f"Old RPG Stats for User {p3addr}", color=discord.Colour.orange())
 
         for stat in stat_roll_ranges.keys():
@@ -3729,7 +3819,7 @@ async def level_up(self, ctx, user_id, levels):
             old_stats_embed.add_field(name=stat, value=current_value, inline=True)
 
         # Send the embed with old stats
-        await ctx.send(embed=old_stats_embed)
+#        await ctx.send(embed=old_stats_embed)
 
         total_change = {stat: 0 for stat in stat_roll_ranges}
 
@@ -3753,17 +3843,17 @@ async def level_up(self, ctx, user_id, levels):
             change_stats_embed.add_field(name=stat, value=f"+{change}", inline=True)
 
         # Send the embed with total change in stats
-        await ctx.send(embed=change_stats_embed)
+#        await ctx.send(embed=change_stats_embed)
 
-        # Create an embed to display the new stats
+#        # Create an embed to display the new stats
         new_stats_embed = discord.Embed(title=f"New RPG Stats for User {p3addr}", color=discord.Colour.green())
 
         for stat in stat_roll_ranges.keys():
             new_value = cursor.execute(f"SELECT {stat} FROM users_rpg_stats WHERE user_id=?", (user_id,)).fetchone()[0]
             new_stats_embed.add_field(name=stat, value=new_value, inline=True)
 
-        # Send the embed with new stats
-        await ctx.send(embed=new_stats_embed)
+#        # Send the embed with new stats
+#        await ctx.send(embed=new_stats_embed)
 
     except sqlite3.Error as e:
         print(f"Error updating RPG stats for user {user_id}: {e}")
@@ -3836,7 +3926,7 @@ experience_table = generate_experience_table(max_level)
 
 async def updown_limits(self, ctx, asset):
     if asset in self.etfs:
-        current_price = await get_etf_value(self.conn, int(asset))
+        current_price = await get_etf_value(self, ctx, int(asset))
     else:
         current_price = await get_stock_price(self, ctx, asset)
 
@@ -4316,7 +4406,7 @@ class CurrencySystem(commands.Cog):
 
         # Circuit Breaker Config
         self.is_halted = False
-        self.is_halted_order = False
+        self.is_halted_order = True
         self.is_paused = False
         self.is_long_order = False
         self.contract_pool = []
@@ -4325,7 +4415,7 @@ class CurrencySystem(commands.Cog):
         self.stock_circuit_breaker = False
 
         self.not_trading = []
-        self.maintenance = ['secureharbor', 'p3:stable', 'roflstocks', 'GoldToken']
+        self.maintenance = ['secureharbor', 'p3:stable', 'GoldToken']
         self.stock_monitor = defaultdict(list)
 #        self.ceo_stocks = [("partyscene", 607050637292601354), ("p3:bank", 930513222820331590), ("savage", 1147507029494202461)]
         self.ceo_stocks = {
@@ -4470,7 +4560,7 @@ class CurrencySystem(commands.Cog):
         if tax_rate == 0.0:
             tax_rate = 1.75 / 100
         else:
-            tax_rate /= 50  # Dividing by 10, assuming tax_rate is a percentage
+            tax_rate /= 10  # Dividing by 10, assuming tax_rate is a percentage
 
         # Ensure tax_rate doesn't exceed 30%
         tax_rate = min(tax_rate, 0.30)
@@ -5388,7 +5478,7 @@ class CurrencySystem(commands.Cog):
             cursor = self.conn.cursor()
 
             # Get the current value of the ETF
-            result = await get_etf_value(self.conn, etf_id)
+            result = await get_etf_value(self, ctx, etf_id)
             if result:
                 etf_value = result
 
@@ -5724,6 +5814,8 @@ class CurrencySystem(commands.Cog):
 
         transactions = cursor.fetchall()
 
+        avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, symbol)
+        avg_price = (avg_buy + avg_sell) / 2
         # Initialize variables to calculate statistics
         total_buys = 0
         total_sells = 0
@@ -5820,14 +5912,9 @@ class CurrencySystem(commands.Cog):
         )
         circulatingValue = circulating_supply * current_price
         formatet_circulating_value = '{:,}'.format(int(circulatingValue))
-#        embed.add_field(name="Current Price", value=f"{formatted_current_price} $QSE", inline=False)
-        avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, symbol)
-        avg_price = (avg_buy + avg_sell) / 2
-        buy_price = (avg_price * 0.05) + avg_price
-        sell_price = avg_price - (avg_price * 0.03)
+        embed.add_field(name="Current Price", value=f"{formatted_current_price} $QSE", inline=False)
         embed.add_field(name="Average Price", value=f"{avg_price:,.11f} $QSE🔁", inline=False)
-        embed.add_field(name="Buy Price", value=f"{buy_price:,.11f} $QSE🔁", inline=False)
-        embed.add_field(name="Sell Price", value=f"{sell_price:,.11f} $QSE🔁", inline=False)
+        embed.add_field(name="Initial Price", value=f"{result[1]:,.11f} $QSE🔁", inline=False)
         embed.add_field(name="Daily Volume:", value=f"{daily_volume:,} shares", inline=False)
         embed.add_field(name="Daily Volume Value:", value=f"{daily_volume_value:,.2f} $QSE", inline=False)
         embed.add_field(name="Daily Buy Volume:", value=f"{daily_buy_volume:,.0f} shares 📈", inline=False)
@@ -5959,342 +6046,336 @@ class CurrencySystem(commands.Cog):
 
     @commands.command(name="stock_chart", aliases=["chart"], help="Display a price history chart with technical indicators for a stock.")
     async def stock_chart(self, ctx, stock_symbol, time_period=None, rsi_period=None, sma_period=None, ema_period=None, price_debug: bool = False):
-        if self.is_long_order:
-            self.contract_pool.append(("chart", self, ctx, stock_symbol, time_period, rsi_period, sma_period, ema_period, price_debug))
-            return
-        if stock_symbol.lower() in self.ipo_stocks:
-            embed = discord.Embed(description="Chart unavailable while stock in IPO", color=discord.Color.red())
-            await ctx.send(embed=embed)
-            return
         self.tax_command_timer_start = timeit.default_timer()
-        async with self.db_semaphore:
-            async with self.transaction_lock:
-                try:
-                    avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, stock_symbol)
-                    avg_price = (avg_buy + avg_sell) / 2
-                    await self.change_stock_price(ctx, stock_symbol, avg_price)
-                    # Connect to the currency_system database
-                    currency_conn = sqlite3.connect("currency_system.db")
-                    currency_cursor = currency_conn.cursor()
+        try:
+            avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, stock_symbol)
+            current_price = await get_stock_price(self, ctx, stock_symbol)
+            avg_price = (avg_buy + avg_sell) / 2
+#            await self.change_stock_price(ctx, stock_symbol, avg_price)
+            # Connect to the currency_system database
+            currency_conn = sqlite3.connect("currency_system.db")
+            currency_cursor = currency_conn.cursor()
 
-                    # Check if the given stock symbol exists
-                    currency_cursor.execute("SELECT symbol, price FROM stocks WHERE symbol=?", (stock_symbol,))
-                    stock = currency_cursor.fetchone()
+            # Check if the given stock symbol exists
+            currency_cursor.execute("SELECT symbol, price FROM stocks WHERE symbol=?", (stock_symbol,))
+            stock = currency_cursor.fetchone()
 
-                    if stock:
-                        stock_symbol, current_price = stock
+            if stock:
+                stock_symbol, current_price = stock
 
-                        # Connect to the ledger database
-                        with sqlite3.connect("p3ledger.db") as ledger_conn:
-                            ledger_cursor = ledger_conn.cursor()
-                            # Retrieve buy/sell transactions for the stock from the ledger
-                            transactions = ledger_cursor.execute("""
-                                SELECT timestamp, action, price
-                                FROM stock_transactions
-                                WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock')
-                                ORDER BY timestamp
-                            """, (stock_symbol,))
+                # Connect to the ledger database
+                with sqlite3.connect("p3ledger.db") as ledger_conn:
+                    ledger_cursor = ledger_conn.cursor()
+                    # Retrieve buy/sell transactions for the stock from the ledger
+                    transactions = ledger_cursor.execute("""
+                        SELECT timestamp, action, price
+                        FROM stock_transactions
+                        WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock')
+                        ORDER BY timestamp
+                    """, (stock_symbol,))
 
-                        if transactions:
-                            # Separate buy and sell transactions
-                            buy_prices = []
-                            sell_prices = []
-                            all_prices = []
+                if transactions:
+                    # Separate buy and sell transactions
+                    buy_prices = []
+                    sell_prices = []
+                    all_prices = []
 
-                            for timestamp_str, action, price_str in transactions:
-                                if stock_symbol.lower() == "roflstocks":
-                                    formatted_price = str(price_str).replace(",", "") if isinstance(price_str, str) else price_str
-                                    price = float(formatted_price)
-                                else:
-                                    formatted_price = str(price_str).replace(",", "")
-                                    price = float(formatted_price)
-                                datetime_obj = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # Parse timestamp string
-                                all_prices.append((datetime_obj, price, action))
+                    for timestamp_str, action, price_str in transactions:
+                        if stock_symbol.lower() == "roflstocks":
+                            formatted_price = str(price_str).replace(",", "") if isinstance(price_str, str) else price_str
+                            price = float(formatted_price)
+                        else:
+                            formatted_price = str(price_str).replace(",", "")
+                            price = float(formatted_price)
+                        datetime_obj = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # Parse timestamp string
+                        all_prices.append((datetime_obj, price, action))
 
-                                if action == 'Buy Stock':
-                                    buy_prices.append((datetime_obj, price))
-                                elif action == 'Sell Stock':
-                                    sell_prices.append((datetime_obj, price))
+                        if action == 'Buy Stock':
+                            buy_prices.append((datetime_obj, price))
+                        elif action == 'Sell Stock':
+                            sell_prices.append((datetime_obj, price))
 
-                            # Sort all prices by timestamp
-                            all_prices.sort(key=lambda x: x[0])
+                    # Sort all prices by timestamp
+                    all_prices.sort(key=lambda x: x[0])
+
+                    # Extract datetime objects and prices for buy and sell transactions
+                    all_prices_np = np.array(all_prices)
+                    timestamps, prices, actions = all_prices_np[:, 0], all_prices_np[:, 1], all_prices_np[:, 2]
 
                             # Extract datetime objects and prices for buy and sell transactions
-                            all_prices_np = np.array(all_prices)
-                            timestamps, prices, actions = all_prices_np[:, 0], all_prices_np[:, 1], all_prices_np[:, 2]
+                    buy_prices_np = np.array(buy_prices)
+                    buy_timestamps, buy_prices = buy_prices_np[:, 0], buy_prices_np[:, 1]
 
-                            # Extract datetime objects and prices for buy and sell transactions
-                            buy_prices_np = np.array(buy_prices)
-                            buy_timestamps, buy_prices = buy_prices_np[:, 0], buy_prices_np[:, 1]
+                    sell_prices_np = np.array(sell_prices)
+                    sell_timestamps, sell_prices = sell_prices_np[:, 0], sell_prices_np[:, 1]
 
-                            sell_prices_np = np.array(sell_prices)
-                            sell_timestamps, sell_prices = sell_prices_np[:, 0], sell_prices_np[:, 1]
-
-                            # Define a dictionary for time periods
-                            time_periods = {
-                                "1h": timedelta(hours=1),
-                                "4h": timedelta(hours=4),
-                                "1d": timedelta(days=1),
-                                "2d": timedelta(days=2),
-                                "3d": timedelta(days=3),
-                                "4d": timedelta(days=4),
-                                "5d": timedelta(days=5),
-                                "1w": timedelta(weeks=1),
-                                "2w": timedelta(weeks=2),
-                                "3w": timedelta(weeks=3),
-                                "4w": timedelta(weeks=4),
-                                "1m": timedelta(weeks=4),
-                                "2m": timedelta(weeks=8),
-                                "6m": timedelta(weeks=24),
+                    # Define a dictionary for time periods
+                    time_periods = {
+                        "1h": timedelta(hours=1),
+                        "4h": timedelta(hours=4),
+                        "1d": timedelta(days=1),
+                        "2d": timedelta(days=2),
+                        "3d": timedelta(days=3),
+                        "4d": timedelta(days=4),
+                        "5d": timedelta(days=5),
+                        "1w": timedelta(weeks=1),
+                        "2w": timedelta(weeks=2),
+                        "3w": timedelta(weeks=3),
+                        "4w": timedelta(weeks=4),
+                        "1m": timedelta(weeks=4),
+                        "2m": timedelta(weeks=8),
+                        "6m": timedelta(weeks=24),
                                 # Add more as needed
-                            }
+                    }
 
-                            # Calculate the time period dynamically
-                            if not time_period or time_period.lower() == "none":
-                                time_period = "6m"
+                    # Calculate the time period dynamically
+                    if not time_period or time_period.lower() == "none":
+                        time_period = "6m"
 
-                            if not rsi_period or rsi_period.lower() == "none":
-                                rsi_period = 14
+                    if not rsi_period or rsi_period.lower() == "none":
+                        rsi_period = 14
 
-                            if not sma_period or sma_period.lower() == "none":
-                                sma_period = 50
+                    if not sma_period or sma_period.lower() == "none":
+                        sma_period = 50
 
-                            if not ema_period or ema_period.lower() == "none":
-                                ema_period = 50
+                    if not ema_period or ema_period.lower() == "none":
+                        ema_period = 50
 
-                            # Filter transactions based on the specified time period
-                            start_date = datetime.now() - time_periods.get(time_period, timedelta(hours=1))
+                    # Filter transactions based on the specified time period
+                    start_date = datetime.now() - time_periods.get(time_period, timedelta(hours=1))
 
-                            buy_mask = buy_timestamps >= start_date
-                            sell_mask = sell_timestamps >= start_date
+                    buy_mask = buy_timestamps >= start_date
+                    sell_mask = sell_timestamps >= start_date
 
-                            buy_prices, buy_timestamps = buy_prices[buy_mask], buy_timestamps[buy_mask]
-                            sell_prices, sell_timestamps = sell_prices[sell_mask], sell_timestamps[sell_mask]
+                    buy_prices, buy_timestamps = buy_prices[buy_mask], buy_timestamps[buy_mask]
+                    sell_prices, sell_timestamps = sell_prices[sell_mask], sell_timestamps[sell_mask]
 
-                            # Calculate average buy and sell prices
-                            average_buy_price = np.mean(buy_prices) if buy_prices.size else 0
-                            average_sell_price = np.mean(sell_prices) if sell_prices.size else 0
+                    # Calculate average buy and sell prices
+                    average_buy_price = np.mean(buy_prices) if buy_prices.size else 0
+                    average_buy_price = (average_buy_price + current_price) / 2
+                    average_sell_price = np.mean(sell_prices) if sell_prices.size else 0
+                    average_sell_price = (average_sell_price + current_price) / 2
 
-                            # Determine if the stock is overvalued, undervalued, or fair-valued
-                            if average_sell_price > 0:
-                                price_ratio = average_buy_price / average_sell_price
-                                if price_ratio > 1:
-                                    valuation = "Overvalued"
-                                elif price_ratio < 1:
-                                    valuation = "Undervalued"
-                                else:
-                                    valuation = "Fair-Valued"
-                            else:
-                                valuation = "Fair-Valued"
+                    # Determine if the stock is overvalued, undervalued, or fair-valued
+                    if average_sell_price > 0:
+                        price_ratio = average_buy_price / average_sell_price
+                        if price_ratio > 1:
+                            valuation = "Overvalued"
+                        elif price_ratio < 1:
+                            valuation = "Undervalued"
+                        else:
+                            valuation = "Fair-Valued"
+                    else:
+                        valuation = "Fair-Valued"
 
-                            # Calculate RSI
-                            if buy_prices.size >= int(rsi_period):
-                                buy_prices = buy_prices.astype('double')  # Convert to double type
-                                rsi = talib.RSI(buy_prices, timeperiod=int(rsi_period))
-                                rsi_timestamps = buy_timestamps[-len(rsi):]  # Match RSI timestamps
-                            else:
-                                rsi = None  # Insufficient data for RSI
-                                rsi_timestamps = []
+                    # Calculate RSI
+                    if buy_prices.size >= int(rsi_period):
+                        buy_prices = buy_prices.astype('double')  # Convert to double type
+                        rsi = talib.RSI(buy_prices, timeperiod=int(rsi_period))
+                        rsi_timestamps = buy_timestamps[-len(rsi):]  # Match RSI timestamps
+                    else:
+                        rsi = None  # Insufficient data for RSI
+                        rsi_timestamps = []
 
-                            # Calculate Simple Moving Average (SMA)
-                            if buy_prices.size >= int(sma_period):
-                                sma = talib.SMA(buy_prices, timeperiod=int(sma_period))
-                                sma_timestamps = buy_timestamps[-len(sma):]  # Match SMA timestamps
-                            else:
-                                sma = None  # Insufficient data for SMA
-                                sma_timestamps = []
+                    # Calculate Simple Moving Average (SMA)
+                    if buy_prices.size >= int(sma_period):
+                        sma = talib.SMA(buy_prices, timeperiod=int(sma_period))
+                        sma_timestamps = buy_timestamps[-len(sma):]  # Match SMA timestamps
+                    else:
+                        sma = None  # Insufficient data for SMA
+                        sma_timestamps = []
 
-                            # Calculate Exponential Moving Average (EMA)
-                            if buy_prices.size >= int(ema_period):
-                                ema = talib.EMA(buy_prices, timeperiod=int(ema_period))
-                                ema_timestamps = buy_timestamps[-len(ema):]  # Match EMA timestamps
-                            else:
-                                ema = None  # Insufficient data for EMA
-                                ema_timestamps = []
+                    # Calculate Exponential Moving Average (EMA)
+                    if buy_prices.size >= int(ema_period):
+                        ema = talib.EMA(buy_prices, timeperiod=int(ema_period))
+                        ema_timestamps = buy_timestamps[-len(ema):]  # Match EMA timestamps
+                    else:
+                        ema = None  # Insufficient data for EMA
+                        ema_timestamps = []
 
-                            # Calculate Bollinger Bands
-                            bb_period = min(20, buy_prices.size)  # Adjust the period as needed
-                            buy_prices = buy_prices.astype('double')
-                            if buy_prices.size >= bb_period:
-                                upper, middle, lower = talib.BBANDS(buy_prices, timeperiod=bb_period)
-                                bb_timestamps = buy_timestamps[-len(upper):]  # Match Bollinger Bands timestamps
-                            else:
-                                upper, middle, lower = None, None, None  # Insufficient data for Bollinger Bands
-                                bb_timestamps = []
+                    # Calculate Bollinger Bands
+                    bb_period = min(20, buy_prices.size)  # Adjust the period as needed
+                    buy_prices = buy_prices.astype('double')
+                    if buy_prices.size >= bb_period:
+                        upper, middle, lower = talib.BBANDS(buy_prices, timeperiod=bb_period)
+                        bb_timestamps = buy_timestamps[-len(upper):]  # Match Bollinger Bands timestamps
+                    else:
+                        upper, middle, lower = None, None, None  # Insufficient data for Bollinger Bands
+                        bb_timestamps = []
 
-                            # Calculate MACD
-                            if buy_prices.size >= 26:
-                                macd, signal, _ = talib.MACD(buy_prices, fastperiod=12, slowperiod=26, signalperiod=9)
-                                macd_timestamps = buy_timestamps[-len(macd):]  # Match MACD timestamps
-                            else:
-                                macd = None  # Insufficient data for MACD
-                                signal = None
-                                macd_timestamps = []
+                    # Calculate MACD
+                    if buy_prices.size >= 26:
+                        macd, signal, _ = talib.MACD(buy_prices, fastperiod=12, slowperiod=26, signalperiod=9)
+                        macd_timestamps = buy_timestamps[-len(macd):]  # Match MACD timestamps
+                    else:
+                        macd = None  # Insufficient data for MACD
+                        signal = None
+                        macd_timestamps = []
 
-                            # Create a price history chart with all indicators
-                            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(20, 15), gridspec_kw={'height_ratios': [3, 1, 1]})
+                    # Create a price history chart with all indicators
+                    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(20, 15), gridspec_kw={'height_ratios': [3, 1, 1]})
 
 
-                            # Plot the indicators on the price history chart
-                            if sma is not None and len(sma) == len(sma_timestamps):
-                                ax1.plot(sma_timestamps, sma, color='green', label=f'SMA ({sma_period}-period)')
-                            if ema is not None and len(ema) == len(ema_timestamps):
-                                ax1.plot(ema_timestamps, ema, color='yellow', label=f'EMA ({ema_period}-period)')
-                            if upper is not None and lower is not None:
-                                ax1.fill_between(bb_timestamps, upper, lower, color='brown', alpha=0.5, label='Bollinger Bands')
+                    # Plot the indicators on the price history chart
+                    if sma is not None and len(sma) == len(sma_timestamps):
+                        ax1.plot(sma_timestamps, sma, color='green', label=f'SMA ({sma_period}-period)')
+                    if ema is not None and len(ema) == len(ema_timestamps):
+                        ax1.plot(ema_timestamps, ema, color='yellow', label=f'EMA ({ema_period}-period)')
+                    if upper is not None and lower is not None:
+                        ax1.fill_between(bb_timestamps, upper, lower, color='brown', alpha=0.5, label='Bollinger Bands')
 
-                            # Set the title and labels for the price history chart
-                            ax1.set_title(f"Stock Chart for {stock_symbol}")
-                            ax1.set_ylabel("Price")
-                            ax1.grid(True)
-                            ax1.legend()
-                            ax1.tick_params(axis='x', rotation=45)
-                            ax1.yaxis.set_major_formatter(ticker.FuncFormatter(price_formatter))
+                    # Set the title and labels for the price history chart
+                    ax1.set_title(f"Stock Chart for {stock_symbol}")
+                    ax1.set_ylabel("Price")
+                    ax1.grid(True)
+                    ax1.legend()
+                    ax1.tick_params(axis='x', rotation=45)
+                    ax1.yaxis.set_major_formatter(ticker.FuncFormatter(price_formatter))
 
-                            # Set y-axis limits on the price history chart
-                            min_price = min(buy_prices.min(), sell_prices.min())
-                            max_price = max(buy_prices.max(), sell_prices.max())
-                            price_range = max_price - min_price
-                            y_axis_margin = 0.001  # Add a margin to the y-axis limits
-                            ax1.set_ylim(min_price - y_axis_margin * price_range, max_price + y_axis_margin * price_range)
+                    # Set y-axis limits on the price history chart
+                    min_price = min(buy_prices.min(), sell_prices.min())
+                    max_price = max(buy_prices.max(), sell_prices.max())
+                    price_range = max_price - min_price
+                    y_axis_margin = 0.001  # Add a margin to the y-axis limits
+                    ax1.set_ylim(min_price - y_axis_margin * price_range, max_price + y_axis_margin * price_range)
 
-                            # Set x-axis major locator and formatter based on time period
-                            if "h" in time_period or "d" in time_period:
-                                ax1.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-                            else:
-                                ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
-                            ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
+                    # Set x-axis major locator and formatter based on time period
+                    if "h" in time_period or "d" in time_period:
+                        ax1.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                    else:
+                        ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+                    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
 
-                            # Plot the buy and sell transactions on the same price history chart
-                            if price_debug:
-                                ax1.plot(timestamps, prices, linestyle='-', color='green', label='Price')
-                                ax1.scatter(buy_timestamps, buy_prices, marker='o', color='blue', label='Buy')
-                                ax1.scatter(sell_timestamps, sell_prices, marker='o', color='red', label='Sell')
+                    # Plot the buy and sell transactions on the same price history chart
+                    if price_debug:
+                        ax1.plot(timestamps, prices, linestyle='-', color='green', label='Price')
+                        ax1.scatter(buy_timestamps, buy_prices, marker='o', color='blue', label='Buy')
+                        ax1.scatter(sell_timestamps, sell_prices, marker='o', color='red', label='Sell')
 
-                            # Plot RSI on the separate RSI chart
-                            if rsi is not None and len(rsi) == len(rsi_timestamps):
-                                ax2.plot(rsi_timestamps, rsi, color='blue', label=f'RSI ({rsi_period}-period)')
-                                ax2.set_title(f"RSI Chart for {stock_symbol}")
-                                ax2.set_ylabel("RSI")
-                                ax2.grid(True)
-                                ax2.legend()
+                    # Plot RSI on the separate RSI chart
+                    if rsi is not None and len(rsi) == len(rsi_timestamps):
+                        ax2.plot(rsi_timestamps, rsi, color='blue', label=f'RSI ({rsi_period}-period)')
+                        ax2.set_title(f"RSI Chart for {stock_symbol}")
+                        ax2.set_ylabel("RSI")
+                        ax2.grid(True)
+                        ax2.legend()
 
-                                # Set x-axis limits to show only the beginning date and the end date
-                                ax2.set_xlim(rsi_timestamps[0], rsi_timestamps[-1])
+                        # Set x-axis limits to show only the beginning date and the end date
+                        ax2.set_xlim(rsi_timestamps[0], rsi_timestamps[-1])
 
-                                if "h" in time_period:
-                                    ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-                                elif "d" in time_period:
-                                    ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-                                else:
-                                    ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+                        if "h" in time_period:
+                            ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                        elif "d" in time_period:
+                            ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                        else:
+                            ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
 
-                                ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
-                                ax2.tick_params(axis='x', rotation=45)
+                        ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
+                        ax2.tick_params(axis='x', rotation=45)
 
-                            # Plot MACD on the separate MACD chart
-                            if macd is not None and len(macd) == len(macd_timestamps):
-                                ax3.plot(macd_timestamps, macd, color='orange', label='MACD')
-                                ax3.plot(macd_timestamps, signal, color='purple', label='Signal Line')
-                                ax3.axhline(0, color='gray', linestyle='--', linewidth=0.8, label='Zero Line')
-                                ax3.set_title(f"MACD Chart for {stock_symbol}")
-                                ax3.set_ylabel("MACD")
-                                ax3.grid(True)
-                                ax3.legend()
+                    # Plot MACD on the separate MACD chart
+                    if macd is not None and len(macd) == len(macd_timestamps):
+                        ax3.plot(macd_timestamps, macd, color='orange', label='MACD')
+                        ax3.plot(macd_timestamps, signal, color='purple', label='Signal Line')
+                        ax3.axhline(0, color='gray', linestyle='--', linewidth=0.8, label='Zero Line')
+                        ax3.set_title(f"MACD Chart for {stock_symbol}")
+                        ax3.set_ylabel("MACD")
+                        ax3.grid(True)
+                        ax3.legend()
 
-                                # Set x-axis limits to show only the beginning date and the end date
-                                ax3.set_xlim(macd_timestamps[0], macd_timestamps[-1])
+                        # Set x-axis limits to show only the beginning date and the end date
+                        ax3.set_xlim(macd_timestamps[0], macd_timestamps[-1])
 
-                                if "h" in time_period:
-                                    ax3.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-                                elif "d" in time_period:
-                                    ax3.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-                                else:
-                                    ax3.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+                        if "h" in time_period:
+                            ax3.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                        elif "d" in time_period:
+                            ax3.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                        else:
+                            ax3.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
 
-                                ax3.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
-                                ax3.tick_params(axis='x', rotation=45)
+                        ax3.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
+                        ax3.tick_params(axis='x', rotation=45)
 
-                            # Set the background color of the entire chart to black
-                            ax1.set_facecolor('black')
-                            ax2.set_facecolor('black')
-                            ax3.set_facecolor('black')
+                    # Set the background color of the entire chart to black
+                    ax1.set_facecolor('black')
+                    ax2.set_facecolor('black')
+                    ax3.set_facecolor('black')
 
-                            # Set text color to white
-                            for ax in [ax1, ax2]:
-                                ax.xaxis.label.set_color('lightgray')
-                                ax.yaxis.label.set_color('lightgray')
-                                ax.title.set_color('lightgray')
-                                ax.tick_params(axis='x', colors='lightgray')
-                                ax.tick_params(axis='y', colors='lightgray')
+                    # Set text color to white
+                    for ax in [ax1, ax2]:
+                        ax.xaxis.label.set_color('lightgray')
+                        ax.yaxis.label.set_color('lightgray')
+                        ax.title.set_color('lightgray')
+                        ax.tick_params(axis='x', colors='lightgray')
+                        ax.tick_params(axis='y', colors='lightgray')
 
-                            # Save the chart to a BytesIO object
-                            buffer = io.BytesIO()
-                            plt.savefig(buffer, format='png', facecolor='black')
-                            buffer.seek(0)
+                    # Save the chart to a BytesIO object
+                    buffer = io.BytesIO()
+                    plt.savefig(buffer, format='png', facecolor='black')
+                    buffer.seek(0)
 
                             # Send the chart as a Discord message
-                            file = discord.File(buffer, filename='chart.png')
-                            await ctx.send(file=file)
+                    file = discord.File(buffer, filename='chart.png')
+                    await ctx.send(file=file)
 
-                            result = await lowest_price_order(self, ctx, "sell", stock_symbol)
-                            if result:
-                                order_price = result["price"]
-                            else:
-                                order_price = 0
+                    result = await lowest_price_order(self, ctx, "sell", stock_symbol)
+                    if result:
+                        order_price = result["price"]
+                    else:
+                        order_price = 0
 
-                            current_price = await get_stock_price(self, ctx, stock_symbol)
+                    current_price = await get_stock_price(self, ctx, stock_symbol)
 
-                            # Create an embed with information
-                            embed = discord.Embed(title=f"Stock Information for {stock_symbol}")
-                            if stock_symbol.lower() == "roflstocks":
-                                embed.add_field(name="Current Price", value=f"{current_price:,.11f}")
-                                embed.add_field(name="Escrow Price", value=f"{order_price:,.11f}")
-                                embed.add_field(name="Average Buy Price", value=f"{average_buy_price:,.11f}")
-                                embed.add_field(name="Average Sell Price", value=f"{average_sell_price:,.11f}")
-                            else:
-                                embed.add_field(name="Current Price", value=f"{current_price:,.2f}")
-                                embed.add_field(name="Escrow Price", value=f"{order_price:,.2f}")
-                                embed.add_field(name="Average Buy Price", value=f"{average_buy_price:,.2f}")
-                                embed.add_field(name="Average Sell Price", value=f"{average_sell_price:,.2f}")
-                            embed.add_field(name="Valuation", value=valuation)
-                            if rsi is not None:
-                                embed.add_field(name="RSI", value=f"{rsi[-1]:,.2f}")
-                            if sma is not None:
-                                embed.add_field(name="SMA", value=f"{sma[-1]:,.2f}")
-                            if ema is not None:
-                                embed.add_field(name="EMA", value=f"{ema[-1]:,.2f}")
-                            embed.set_footer(text="Data may not be real-time")
+                    # Create an embed with information
+                    embed = discord.Embed(title=f"Stock Information for {stock_symbol}")
+                    if stock_symbol.lower() == "roflstocks":
+                        embed.add_field(name="Current Price", value=f"{current_price:,.11f}")
+                        embed.add_field(name="Escrow Price", value=f"{order_price:,.11f}")
+                        embed.add_field(name="Average Buy Price", value=f"{average_buy_price:,.11f}")
+                        embed.add_field(name="Average Sell Price", value=f"{average_sell_price:,.11f}")
+                    else:
+                        embed.add_field(name="Current Price", value=f"{current_price:,.2f}")
+                        embed.add_field(name="Escrow Price", value=f"{order_price:,.2f}")
+                        embed.add_field(name="Average Buy Price", value=f"{average_buy_price:,.2f}")
+                        embed.add_field(name="Average Sell Price", value=f"{average_sell_price:,.2f}")
+                    embed.add_field(name="Valuation", value=valuation)
+                    if rsi is not None:
+                        embed.add_field(name="RSI", value=f"{rsi[-1]:,.2f}")
+                    if sma is not None:
+                        embed.add_field(name="SMA", value=f"{sma[-1]:,.2f}")
+                    if ema is not None:
+                        embed.add_field(name="EMA", value=f"{ema[-1]:,.2f}")
+                    embed.set_footer(text="Data may not be real-time")
 
-                            # Send the embed as a Discord message
-                            await ctx.send(embed=embed)
-                            await self.stock_info(ctx, stock_symbol)
-                            await self.stock_stats(ctx, stock_symbol)
+                    # Send the embed as a Discord message
+                    await ctx.send(embed=embed)
+                    await self.stock_info(ctx, stock_symbol)
+                    await self.stock_stats(ctx, stock_symbol)
 
-                            # Set data structures to None to release memory
-                            transactions = None
-                            buy_prices = None
-                            sell_prices = None
-                            all_prices = None
-                            timestamps = None
-                            prices = None
-                            actions = None
-                            buy_timestamps = None
-                            plt.close(fig)
-                            plt.close('all')
-                            fig.clf()
+                    # Set data structures to None to release memory
+                    transactions = None
+                    buy_prices = None
+                    sell_prices = None
+                    all_prices = None
+                    timestamps = None
+                    prices = None
+                    actions = None
+                    buy_timestamps = None
+                    plt.close(fig)
+                    plt.close('all')
+                    fig.clf()
 
-                            # Close the ledger database connection
-                            ledger_conn.close()
-                            await tax_command(self, ctx)
-                            elapsed_time = timeit.default_timer() - self.tax_command_timer_start
-                            self.tax_command_avg.append(elapsed_time)
-                            avg_time = sum(self.tax_command_avg) / len(self.tax_command_avg)
+                    # Close the ledger database connection
+                    ledger_conn.close()
+                    await tax_command(self, ctx)
+                    elapsed_time = timeit.default_timer() - self.tax_command_timer_start
+                    self.tax_command_avg.append(elapsed_time)
+                    avg_time = sum(self.tax_command_avg) / len(self.tax_command_avg)
 
 
 
-                except sqlite3.Error as e:
-                    await ctx.send(f"An error occurred: {str(e)}")
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
 
 
 
@@ -6531,8 +6612,119 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @commands.command(name="etf_chart")
-    async def etf_chart(self, ctx, etf_symbol, time_period=None, rsi_period=None, sma_period=None, ema_period=None):
+    @commands.command(name='etf_chart')
+    async def etf_chart(self, ctx, etf_id):
+        if etf_id == "6":
+            await self.market_chart(ctx)
+            return
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(f"SELECT mv FROM etf_{etf_id}_value")
+            values = cursor.fetchall()
+
+            if not values:
+                await ctx.send("The market_value table is empty.")
+                self.conn.close()
+                return
+
+            # Extract values from the result set
+            values = [float(value[0]) for value in values]
+
+            # Calculate RSI, Average Price, and Bollinger Bands
+            rsi_period = 14  # Adjust as needed
+            rsi_values = talib.RSI(np.array(values), timeperiod=rsi_period)
+            average_price = np.mean(values)
+            ath = np.max(values)
+            atl = np.min(values)
+            cmv = values[-1]  # Current Market Value
+
+            # Calculate Moving Average (MA), Exponential Moving Average (EMA), and Simple Moving Average (SMA)
+            ma_period = 20  # Adjust as needed
+            ema_period = 20  # Adjust as needed
+            ma_values = talib.MA(np.array(values), timeperiod=ma_period)
+            ema_values = talib.EMA(np.array(values), timeperiod=ema_period)
+            sma_values = talib.SMA(np.array(values), timeperiod=ma_period)
+
+            # Calculate Rolling High and Low
+            rolling_period = 14  # Adjust as needed
+            rolling_high = np.maximum.accumulate(values)
+            rolling_low = np.minimum.accumulate(values)
+
+            # Calculate ROC and ATR
+            roc_values = talib.ROC(np.array(values), timeperiod=1)  # Adjust as needed
+            atr_values = talib.ATR(rolling_high, rolling_low, np.array(values), timeperiod=14)  # Adjust as needed
+
+            # Calculate percentage change from ATL and ATH
+            atl_percentage = ((np.array(values) - atl) / atl) * 100
+            ath_percentage = ((np.array(values) - ath) / ath) * 100
+
+            # Create and save the main chart with dark mode
+            plt.style.use('dark_background')
+            fig, axes = plt.subplots(nrows=5, ncols=1, figsize=(20, 20), sharex=True)
+
+            # Plot market values
+            axes[0].plot(values, label=f'ETF {etf_id} Chart ({cmv:,.2f})', color='cyan')
+            axes[0].plot(sma_values, label=f'SMA ({ma_period})', color='yellow', alpha=0.5)  # Add SMA line
+            axes[0].axhline(y=average_price, color='cyan', linestyle='--', label=f'Avg Value ({average_price:,.2f})')
+            axes[0].axhline(y=ath, color='green', linestyle=':', label=f'ATH ({ath:,.2f})')
+            axes[0].axhline(y=atl, color='red', linestyle=':', label=f'ATL ({atl:,.2f})')
+            axes[0].set_ylabel(f'ETF {etf_id} Value', fontsize=14)
+            axes[0].set_title(f'ETF {etf_id} Value Chart', fontsize=16)
+            axes[0].ticklabel_format(style='plain', useOffset=False, axis='y')  # Disable scientific notation
+            # Format y-axis labels with commas and two decimals
+            axes[0].yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "{:,.2f}".format(x)))
+            axes[0].legend(fontsize=14, loc='best')
+
+            # Plot RSI and ROC on the same subplot
+            axes[1].plot(rsi_values, label='RSI', color='orange', alpha=0.5)
+            axes[1].axhline(y=70, color='r', linestyle='--', label='Overbought (70)')
+            axes[1].axhline(y=30, color='g', linestyle='--', label='Oversold (30)')
+            axes[1].set_ylabel('RSI', fontsize=14)
+            axes[1].set_title('RSI', fontsize=14)
+            axes[1].ticklabel_format(style='plain', useOffset=False, axis='y')
+            axes[1].legend(fontsize=14)
+
+            # Plot Percentage Change from ATL and ATH
+            axes[2].plot(atl_percentage, label='Percentage Change from ATL', color='red')
+            axes[2].plot(ath_percentage, label='Percentage Change from ATH', color='green')
+            axes[2].axhline(y=0, color='cyan', linestyle='--', label='Current Value')
+            axes[2].set_ylabel('Percentage Change (%)', fontsize=14)
+            axes[2].set_title('Percentage Change from ATL and ATH', fontsize=14)
+            axes[2].ticklabel_format(style='plain', useOffset=False, axis='y')
+            axes[2].legend(fontsize=14, loc='best')
+
+            # Plot ATR
+            axes[3].plot(atr_values, label='ATR', color='yellow')
+            axes[3].set_xlabel('Index', fontsize=14)
+            axes[3].set_ylabel('ATR', fontsize=14)
+            axes[3].set_title('ATR', fontsize=14)
+            axes[3].ticklabel_format(style='plain', useOffset=False, axis='y')
+            axes[3].legend(fontsize=14, loc='best')
+
+
+            # Plot RSI and ROC on the same subplot
+            axes[4].plot(roc_values, label='ROC', color='cyan')  # Combine with RSI
+            axes[4].set_ylabel('ROC', fontsize=14)
+            axes[4].set_title('ROC', fontsize=14)
+            axes[4].ticklabel_format(style='plain', useOffset=False, axis='y')
+            axes[4].legend(fontsize=14)
+
+            plt.tight_layout()  # Ensure proper layout spacing
+            plt.savefig('etf_chart.png')
+            plt.close()
+
+            # Send the chart to the Discord channel
+            with open('etf_chart.png', 'rb') as file:
+                chart_file = discord.File(file)
+                await ctx.send(file=chart_file)
+
+        except sqlite3.Error as e:
+            print(f"An error occurred: {str(e)}")
+            await ctx.send("An error occurred while processing the chart.")
+
+
+    @commands.command(name="etf_chart2")
+    async def etf_chart2(self, ctx, etf_symbol, time_period=None, rsi_period=None, sma_period=None, ema_period=None):
         self.tax_command_timer_start = timeit.default_timer()
         try:
             locale.setlocale(locale.LC_ALL, '')
@@ -6540,7 +6732,7 @@ class CurrencySystem(commands.Cog):
             currency_conn = sqlite3.connect("currency_system.db")
             currency_cursor = currency_conn.cursor()
 
-            current_price = await get_etf_value(currency_conn, etf_symbol)
+            current_price = await get_etf_value(self, ctx, etf_symbol)
 
             etf = etf_symbol, current_price
 
@@ -6795,7 +6987,7 @@ class CurrencySystem(commands.Cog):
 #        if self.market_breaker != True:
 #            return
         etf_id = 6
-        etf_value = await get_etf_value(self.conn, etf_id)
+        etf_value = await get_etf_value(self, ctx, etf_id)
 
         if self.last_market_value != 0:
             percentage_change = ((etf_value - self.last_market_value) / self.last_market_value) * 100
@@ -6966,8 +7158,6 @@ class CurrencySystem(commands.Cog):
                             self.buy_timer_start = timeit.default_timer()
                             await self.buy_stock(ctx, symbol, amount)
                         elif type.lower() == "item":
-                            await ctx.send("Item purchases are disabled ahead of P3 resource update")
-                            return
                             self.buy_item_timer_start = timeit.default_timer()
                             await self.buy_item(ctx, symbol, amount)
                         elif type.lower() == "etf":
@@ -7051,8 +7241,9 @@ class CurrencySystem(commands.Cog):
     async def place_order(self, ctx, order_type: str, symbol: str, price: str, quantity: str):
         price = int(price.replace(",", ""))
         quantity = int(quantity.replace(",", ""))
-        mv = await get_etf_value(self.conn, 6)
+        mv = await get_etf_value(self, ctx, 6)
         await add_mv_metric(self, ctx, mv)
+        await add_etf_metric(self, ctx)
         await add_reserve_metric(self, ctx)
         mv_avg = await calculate_average_mv(self)
         print(f"MV Avg: {mv_avg:,.2f}")
@@ -7167,8 +7358,9 @@ class CurrencySystem(commands.Cog):
         old_balance = get_user_balance(self.conn, PBot)
         await mint_to_reserve(self, ctx, amount)
         new_balance = get_user_balance(self.conn, PBot)
-        mv = await get_etf_value(self.conn, 6)
+        mv = await get_etf_value(self, ctx, 6)
         await add_mv_metric(self, ctx, mv)
+        await add_etf_metric(self, ctx)
         await add_reserve_metric(self, ctx)
         await ctx.send(f"Minted {amount:,.0f} QSE to the Reserve\n\nPrevious Funds: {old_balance:,.2f}\nNew Funds: {new_balance:,.2f}")
 
@@ -7206,7 +7398,7 @@ class CurrencySystem(commands.Cog):
             print(f"No {order_type} order for {symbol}")
 
     @commands.command(name="buy", help="Buy Stocks, ETFs, and Items")
-    @is_allowed_server(1161678765894664323, 1087147399371292732)
+#    @is_allowed_server(1161678765894664323, 1087147399371292732)
     async def buy(self, ctx, type: str, symbol = None, amount = None):
         if amount != None:
             if isinstance(amount, str):
@@ -7221,6 +7413,8 @@ class CurrencySystem(commands.Cog):
 
         if type.lower() == "option":
             if amount == "None":
+                await ctx.send("UpDown Derivatives are Temporarily turned off")
+                return
                 await self.buy_option(ctx, symbol)
                 return
             else:
@@ -7346,8 +7540,9 @@ class CurrencySystem(commands.Cog):
                 print("Processing Transactions")
                 await self.process_transactions(ctx)
                 await autoliquidate(self, ctx)
-                mv = await get_etf_value(self.conn, 6)
+                mv = await get_etf_value(self, ctx, 6)
                 await add_mv_metric(self, ctx, mv)
+                await add_etf_metric(self, ctx)
                 await add_reserve_metric(self, ctx)
                 mv_avg = await calculate_average_mv(self)
                 print(f"MV Avg: {mv_avg:,.2f}")
@@ -7355,7 +7550,7 @@ class CurrencySystem(commands.Cog):
             await ctx.send("Invalid amount. Please provide a valid integer.")
 
     @commands.command(name="sell", help="Buy Stocks, ETFs, and Items")
-    @is_allowed_server(1161678765894664323, 1087147399371292732)
+#    @is_allowed_server(1161678765894664323, 1087147399371292732)
     async def sell(self, ctx, type: str, symbol, amount):
         current_price = await get_stock_price(self, ctx, symbol)
         value = int(current_price) * int(amount)
@@ -7397,8 +7592,9 @@ class CurrencySystem(commands.Cog):
                 print("Processing Transactions")
                 await self.process_transactions(ctx)
                 await autoliquidate(self, ctx)
-                mv = await get_etf_value(self.conn, 6)
+                mv = await get_etf_value(self, ctx, 6)
                 await add_mv_metric(self, ctx, mv)
+                await add_etf_metric(self, ctx)
                 await add_reserve_metric(self, ctx)
                 mv_avg = await calculate_average_mv(self)
             print(f"MV Avg: {mv_avg:,.2f}")
@@ -7647,60 +7843,54 @@ class CurrencySystem(commands.Cog):
 
             # Create and save the main chart with dark mode
             plt.style.use('dark_background')
-            plt.figure(figsize=(20, 20))  # Adjust figure size for mobile
+            fig, axes = plt.subplots(nrows=5, ncols=1, figsize=(20, 20), sharex=True)
 
             # Plot market values
-            plt.subplot(4, 1, 1)  # Reduce the number of subplots
-            plt.plot(values, label=f'Market Value ({cmv:,.2f})', color='cyan')
-            plt.plot(sma_values, label=f'SMA ({ma_period})', color='yellow', alpha=0.5)  # Add SMA line
-            plt.axhline(y=average_price, color='cyan', linestyle='--', label=f'Avg Value ({average_price:,.2f})')
-            plt.axhline(y=ath, color='green', linestyle=':', label=f'ATH ({ath:,.2f})')
-            plt.axhline(y=atl, color='red', linestyle=':', label=f'ATL ({atl:,.2f})')
-            plt.xlabel('Index', fontsize=14)
-            plt.ylabel('Market Value', fontsize=14)
-            plt.title('Market Value Chart', fontsize=16)
-            plt.ticklabel_format(style='plain', useOffset=False, axis='y')  # Disable scientific notation
+            axes[0].plot(values, label=f'Market Value ({cmv:,.2f})', color='cyan')
+            axes[0].plot(sma_values, label=f'SMA ({ma_period})', color='yellow', alpha=0.5)  # Add SMA line
+            axes[0].axhline(y=average_price, color='cyan', linestyle='--', label=f'Avg Value ({average_price:,.2f})')
+            axes[0].axhline(y=ath, color='green', linestyle=':', label=f'ATH ({ath:,.2f})')
+            axes[0].axhline(y=atl, color='red', linestyle=':', label=f'ATL ({atl:,.2f})')
+            axes[0].set_ylabel('Market Value', fontsize=14)
+            axes[0].set_title('Market Value Chart', fontsize=16)
+            axes[0].ticklabel_format(style='plain', useOffset=False, axis='y')  # Disable scientific notation
             # Format y-axis labels with commas and two decimals
-            plt.gca().yaxis.set_major_formatter(
-                ticker.FuncFormatter(lambda x, _: "{:,.2f}".format(x))
-            )
-            plt.xticks(rotation=45)
-            plt.legend(fontsize=14, loc='best')
+            axes[0].yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "{:,.2f}".format(x)))
+            axes[0].legend(fontsize=14, loc='best')
 
             # Plot RSI and ROC on the same subplot
-            plt.subplot(4, 1, 2)  # Reduce the number of subplots
-            plt.plot(rsi_values, label='RSI', color='orange', alpha=0.5)
-            plt.axhline(y=70, color='r', linestyle='--', label='Overbought (70)')
-            plt.axhline(y=30, color='g', linestyle='--', label='Oversold (30)')
-            plt.plot(roc_values, label='ROC', color='cyan')  # Combine with RSI
-            plt.xlabel('Index', fontsize=14)
-            plt.ylabel('RSI / ROC', fontsize=14)
-            plt.title('RSI and ROC', fontsize=14)
-            plt.ticklabel_format(style='plain', useOffset=False, axis='y')
-            plt.xticks(rotation=45)
-            plt.legend(fontsize=14)
+            axes[1].plot(rsi_values, label='RSI', color='orange', alpha=0.5)
+            axes[1].axhline(y=70, color='r', linestyle='--', label='Overbought (70)')
+            axes[1].axhline(y=30, color='g', linestyle='--', label='Oversold (30)')
+            axes[1].set_ylabel('RSI', fontsize=14)
+            axes[1].set_title('RSI', fontsize=14)
+            axes[1].ticklabel_format(style='plain', useOffset=False, axis='y')
+            axes[1].legend(fontsize=14)
 
             # Plot Percentage Change from ATL and ATH
-            plt.subplot(4, 1, 3)  # Add a new subplot
-            plt.plot(atl_percentage, label='Percentage Change from ATL', color='red')
-            plt.plot(ath_percentage, label='Percentage Change from ATH', color='green')
-            plt.axhline(y=0, color='cyan', linestyle='--', label='Current Value')
-            plt.ylabel('Percentage Change (%)', fontsize=14)
-            plt.title('Percentage Change from ATL and ATH', fontsize=14)
-            plt.ticklabel_format(style='plain', useOffset=False, axis='y')
-            plt.xticks(rotation=45)
-            plt.legend(fontsize=14, loc='best')
+            axes[2].plot(atl_percentage, label='Percentage Change from ATL', color='red')
+            axes[2].plot(ath_percentage, label='Percentage Change from ATH', color='green')
+            axes[2].axhline(y=0, color='cyan', linestyle='--', label='Current Value')
+            axes[2].set_ylabel('Percentage Change (%)', fontsize=14)
+            axes[2].set_title('Percentage Change from ATL and ATH', fontsize=14)
+            axes[2].ticklabel_format(style='plain', useOffset=False, axis='y')
+            axes[2].legend(fontsize=14, loc='best')
 
             # Plot ATR
-            plt.subplot(4, 1, 4)  # Add a new subplot
-            plt.plot(atr_values, label='ATR', color='yellow')
-            plt.xlabel('Index', fontsize=14)
-            plt.ylabel('ATR', fontsize=14)
-            plt.title('ATR', fontsize=14)
-            plt.ticklabel_format(style='plain', useOffset=False, axis='y')
-            plt.xticks(rotation=45)
-            plt.legend(fontsize=14, loc='best')
+            axes[3].plot(atr_values, label='ATR', color='yellow')
+            axes[3].set_xlabel('Index', fontsize=14)
+            axes[3].set_ylabel('ATR', fontsize=14)
+            axes[3].set_title('ATR', fontsize=14)
+            axes[3].ticklabel_format(style='plain', useOffset=False, axis='y')
+            axes[3].legend(fontsize=14, loc='best')
 
+
+            # Plot RSI and ROC on the same subplot
+            axes[4].plot(roc_values, label='ROC', color='cyan')  # Combine with RSI
+            axes[4].set_ylabel('ROC', fontsize=14)
+            axes[4].set_title('ROC', fontsize=14)
+            axes[4].ticklabel_format(style='plain', useOffset=False, axis='y')
+            axes[4].legend(fontsize=14)
 
             plt.tight_layout()  # Ensure proper layout spacing
             plt.savefig('market_chart.png')
@@ -8165,15 +8355,22 @@ class CurrencySystem(commands.Cog):
             order_id = order['order_id']
             seller_id = order['user_id']
 
+            result = await get_supply_stats(self, ctx, symbol)
+            reserve, total, locked, escrow, market, circulating = result
             price = order['price']
-            order_prices.append(price)
+            supply_a = market
+            if market == 0:
+                supply_a = escrow
+
+            buy_price = await calculate_buy_price(self, ctx, symbol, quantity_to_buy) + price
+            order_prices.append(buy_price)
             available_quantity = order['quantity']
 
 
 
             # Simulate buying logic (adjust according to your requirements)
             quantity_to_fill = min(quantity_to_buy, available_quantity)
-            total_cost = price * quantity_to_fill
+            total_cost = buy_price * quantity_to_fill
             tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
             fee = total_cost * tax_percentage
             total_cost_tax = total_cost + fee
@@ -8193,18 +8390,22 @@ class CurrencySystem(commands.Cog):
                 await send_stock(self, ctx, buyer_addr, escrow_addr, symbol, quantity_to_fill, False)
                 seller_new = get_user_balance(self.conn, seller_id)
                 new_balance = get_user_balance(self.conn, buyer_id)
-                await log_transaction(ledger_conn, ctx, "Buy Stock", symbol, quantity_to_fill, total_cost, total_cost_tax, current_balance, new_balance, price, "False")
+                await log_transaction(ledger_conn, ctx, "Buy Stock", symbol, quantity_to_fill, total_cost, total_cost_tax, current_balance, new_balance, buy_price, "False")
                 await log_order_transaction(ledger_conn, ctx, "Sell Stock", symbol, quantity_to_fill, total_cost, (total_cost - fee), seller_old, seller_new, price, "False", seller_id)
-                mv = await get_etf_value(self.conn, 6)
+                mv = await get_etf_value(self, ctx, 6)
                 await add_mv_metric(self, ctx, mv)
+                await add_etf_metric(self, ctx)
                 await add_reserve_metric(self, ctx)
                 mv_avg = await calculate_average_mv(self)
                 print(f"MV Avg: {mv_avg:,.2f}")
- #       	result = await get_supply_stats(self, ctx, stock_name)
-#        	reserve, total, locked, escrow, market, circulating = result
-                avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, symbol)
-                avg_price = (avg_buy + avg_sell) / 2
-                avg_price = ((avg_price * 0.05) * (1 - (available / total_supply)) * (1 - (quantity_to_fill / total_supply))) + avg_buy
+                total = sum(order_prices)
+                average = total / len(order_prices)
+                avg_price  = await get_stock_price(self, ctx, symbol)
+                avg_price = (avg_price + average) / 2
+                supply_a = market
+                if market == 0:
+                    supply_a = escrow
+                    avg_price = ((avg_price * 0.05) * ((1 - supply_a / total)) * ((1 - quantity_to_buy / total))) +  avg_price
                 await self.change_stock_price(ctx, symbol, avg_price)
 
 
@@ -8284,7 +8485,9 @@ class CurrencySystem(commands.Cog):
         price = await get_stock_price(self, ctx, stock_name)
         result = await get_supply_stats(self, ctx, stock_name)
         reserve, total, locked, escrow, market, circulating = result
-        price = ((price * 0.05) * (1 - (market / total)) * (1 - (amount / total)) * (1 - (escrow / total))) + price
+
+        supply_a = market if market > 0 else escrow
+        buy_price = price
         cost = Decimal(price) * Decimal(amount)
         tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
         fee = cost * Decimal(tax_percentage)
@@ -8299,12 +8502,15 @@ class CurrencySystem(commands.Cog):
         seller_old = get_user_balance(self.conn, PBot)
         is_staking_qse_genesis = self.is_staking_qse_genesis(user_id)
         color = discord.Color.green()
+        dPlace = "2"
+        if stock_name.lower() == "roflstocks":
+            dPlace = "8"
         embed = discord.Embed(title=f"Stock Transaction Processing", color=color)
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
         embed.add_field(name="Quantity to Purchase:", value=f"{amount:,.0f}", inline=False)
-        embed.add_field(name="Price:", value=f"{price:,.2f}", inline=False)
-        embed.add_field(name="QSE to Pay:", value=f"{(Decimal(amount) * Decimal(price)):,.2f}", inline=False)
+        embed.add_field(name="Price:", value=f"{buy_price:,.{dPlace}f}", inline=False)
+        embed.add_field(name="QSE to Pay:", value=f"{(Decimal(amount) * Decimal(buy_price)):,.2f}", inline=False)
         embed.add_field(name="Gas to Pay:", value=f"{(fee):,.2f}", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
@@ -8326,16 +8532,12 @@ class CurrencySystem(commands.Cog):
         # Retrieve stock information
         cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
         stock = cursor.fetchone()
+        available, price, total_supply = int(stock[4]), Decimal(stock[2]), int(stock[3])
 
         if stock is None:
             await ctx.send(f"{ctx.author.mention}, this stock does not exist.")
             return
 
-
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-        stock = cursor.fetchone()
-
-        available, price, total_supply = int(stock[4]), Decimal(stock[2]), int(stock[3])
         escrow_supply = await get_total_shares_in_orders(self, stock_name)
         reserve_supply = self.get_user_stock_amount(PBot, stock_name)
         reserve_supply = reserve_supply - escrow_supply
@@ -8384,8 +8586,7 @@ class CurrencySystem(commands.Cog):
         P3addrConn = sqlite3.connect("P3addr.db")
         await send_stock(self, ctx, P3addr, sender_addr, stock_name, amount, False)
 
-        await record_user_daily_buy(cursor, ctx.author.id, stock_name, amount)
-        decay_other_stocks(self.conn, stock_name)
+
 
 
         reserve_per = (locked / total) * 100
@@ -8396,41 +8597,34 @@ class CurrencySystem(commands.Cog):
             Reserve: {reserve:,}
             Escrow: {escrow:,}\n\n
         """)
-        if reserve_per < Decimal(10) and market < amount:
-            await self.unlock_shares(ctx, stock_name, amount, "lock")
-            print(f"Locked {amount:,.0f} shares for {stock_name}")
-        if reserve_per > Decimal(50):
-            unlock_amount = (Decimal(0.01) / 100) * Decimal(total)
-            await self.unlock_shares(ctx, stock_name, int(unlock_amount), "unlock")
-            print(f"Unlocked {unlock_amount:,.0f} shares for {stock_name}")
 
-        if stock_name == 'P3:Stable':
-            await self.stableManager(ctx, 'BUY', amount)
-        elif stock_name == 'ROFLStocks':
-            await self.memeManager(ctx, 'BUY', amount)
-        else:
-            a = 1
-#            await self.increase_price(ctx, stock_name, amount)
+
 
         if amount == 0:
             print(f'Fix for 0 amount buy after order book')
         else:
             seller_new = get_user_balance(self.conn, PBot)
-            await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, price, "False")
-            await log_order_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, total_cost, (cost), seller_old, seller_new, price, "False", PBot)
+
+
+            new_price = await get_stock_price(self, ctx, stock_name)
+#            await self.change_stock_price(ctx, stock_name, new_price)
+            await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, buy_price, "False")
+            await log_order_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, total_cost, (cost), seller_old, seller_new, buy_price, "False", PBot)
             await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), fee)
-        avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, stock_name)
-        avg_price = (avg_buy + avg_sell) / 2
-        await self.change_stock_price(ctx, stock_name, avg_price)
+
+
         current_timestamp = datetime.utcnow()
         color = discord.Color.green()
         embed = discord.Embed(title=f"Stock Transaction Completed", color=color)
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
         embed.add_field(name="Quantity Purchased:", value=f"{amount:,.0f}", inline=False)
-        new_price = await get_stock_price(self, ctx, stock_name)
-        new_price = (new_price * 0.05) + new_price
-        embed.add_field(name="New Price:", value=f"{new_price:,.2f}({(((int(new_price) - int(price)) / int(price)) * 100):,.5f}%)", inline=False)
+
+        embed.add_field(
+            name="New Price:",
+            value=f"{new_price:,.{dPlace}f} ({(((new_price - buy_price) / buy_price) * 100):,.5f}%)",
+            inline=False
+        )
         embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
         embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
         tax_rate = tax_percentage * 100
@@ -8441,6 +8635,7 @@ class CurrencySystem(commands.Cog):
 
         await ctx.send(embed=embed)
         await add_experience(self, self.conn, ctx.author.id, 1, ctx)
+
         self.conn.commit()
 
         try:
@@ -8463,6 +8658,8 @@ class CurrencySystem(commands.Cog):
         result = await get_supply_stats(self, ctx, stock_name)
         reserve, total, locked, escrow, market, circulating = result
         price = await get_stock_price(self, ctx, stock_name)
+
+#        price = (avg_sell + avg_buy + price) / 2
         current_timestamp = datetime.utcnow()
         self.last_sellers = [entry for entry in self.last_sellers if (current_timestamp - entry[1]).total_seconds() <= self.calculate_average_time_type("sell_stock")]
         user_id = ctx.author.id
@@ -8470,7 +8667,9 @@ class CurrencySystem(commands.Cog):
         seller_old = get_user_balance(self.conn, PBot)
         P3addrConn = sqlite3.connect("P3addr.db")
         P3addr = get_p3_address(P3addrConn, user_id)
-        price = price - ((price * 0.03) * (1 - (market / total)) * (1 - (amount / total) * (1 - (escrow / total))))
+        supply_a = market if market > 0 else escrow
+        sell_price = price
+
         earnings = Decimal(price) * Decimal(amount)
         tax_percentage = self.calculate_tax_percentage(ctx, "sell_stock")  # Custom function to determine the tax percentage based on quantity and earnings
         fee = earnings * Decimal(tax_percentage)
@@ -8480,8 +8679,8 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
         embed.add_field(name="Quantity to Sell:", value=f"{amount:,.0f}", inline=False)
-        embed.add_field(name="Price:", value=f"{price:,.2f}", inline=False)
-        embed.add_field(name="QSE to recieve:", value=f"{(Decimal(amount) * Decimal(price)):,.2f}", inline=False)
+        embed.add_field(name="Price:", value=f"{sell_price:,.2f}", inline=False)
+        embed.add_field(name="QSE to recieve:", value=f"{(Decimal(amount) * Decimal(sell_price)):,.2f}", inline=False)
         embed.add_field(name="Gas to Pay:", value=f"{fee:,.2f}", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
@@ -8569,7 +8768,6 @@ class CurrencySystem(commands.Cog):
                 PBotAddr = get_p3_address(self.P3addrConn, PBot)
                 await send_stock(self, ctx, PBotAddr, sender_addr, stock_name, int(amount), False)
 
-                decay_other_stocks(self.conn, stock_name)
                 reserve_per = (locked / total) * 100
                 print(f"""\n\n
                     Stock: {stock_name}
@@ -8579,41 +8777,40 @@ class CurrencySystem(commands.Cog):
                     Escrow: {escrow:,}\n\n
                 """)
 
-                if reserve_per < Decimal(10) and locked < amount:
-                    await self.unlock_shares(ctx, stock_name, amount, "lock")
-                    print(f"Locked {amount:,.0f} shares for {stock_name}")
-                if reserve_per > Decimal(50) and market < amount:
-                    unlock_amount = (Decimal(0.01) / 100) * Decimal(total)
-                    await self.unlock_shares(ctx, stock_name, int(unlock_amount), "unlock")
-                    print(f"Unlocked {unlock_amount:,.0f} shares for {stock_name}")
+#                if reserve_per < Decimal(10) and locked < amount:
+#                    await self.unlock_shares(ctx, stock_name, amount, "lock")
+#                    print(f"Locked {amount:,.0f} shares for {stock_name}")
+#                if reserve_per > Decimal(50) and market < amount:
+#                    unlock_amount = (Decimal(0.01) / 100) * Decimal(total)
+#                    await self.unlock_shares(ctx, stock_name, int(unlock_amount), "unlock")
+#                    print(f"Unlocked {unlock_amount:,.0f} shares for {stock_name}")
 
-                if stock_name == ('P3:Stable'):
-                    await self.stableManager(ctx, 'sell', amount)
 
-                elif stock_name == ('ROFLStocks'):
-                    await self.memeManager(ctx, 'sell', amount)
-                else:
-                    a = 1
+
+                new_price = await get_stock_price(self, ctx, stock_name)
+
                 seller_new = get_user_balance(self.conn, PBot)
-                await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, price, "False")
-                await log_order_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, total_earnings, (earnings), seller_old, seller_new, price, "False", PBot)
+                await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, sell_price, "False")
+                await log_order_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, total_earnings, (earnings), seller_old, seller_new, sell_price, "False", PBot)
                 await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), fee)
                 self.conn.commit()
                 user_id = ctx.author.id
                 P3addrConn = sqlite3.connect("P3addr.db")
                 P3addr = get_p3_address(P3addrConn, user_id)
                 current_timestamp = datetime.utcnow()
-                avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, stock_name)
-                avg_price = (avg_buy + avg_sell) / 2
-                await self.change_stock_price(ctx, stock_name, avg_price)
+#                new_price = await get_stock_price(self, ctx, stock_name)
+#                new_price = new_price - (new_price * 0.05)
+#                await self.change_stock_price(ctx, stock_name, new_price)
                 color = discord.Color.red()
                 embed = discord.Embed(title=f"Stock Transaction Completed", color=color)
                 embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
                 embed.add_field(name="Stock:", value=f"{stock_name}", inline=False)
                 embed.add_field(name="Quantity Sold:", value=f"{amount:,.0f}", inline=False)
-                new_price = await get_stock_price(self, ctx, stock_name)
-                new_price = new_price - (new_price * 0.03)
-                embed.add_field(name="New Price:", value=f"{new_price:,.2f}({(((int(new_price) - int(price)) / int(price)) * 100):,.5f}%)", inline=False)
+                embed.add_field(
+                    name="New Price:",
+                    value=f"{new_price:,.2f} ({(((new_price - sell_price) / sell_price) * 100):,.5f}%)",
+                    inline=False
+                )
                 embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
                 embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
                 tax_rate = tax_percentage * 100
@@ -8688,11 +8885,12 @@ class CurrencySystem(commands.Cog):
                     await ctx.send(f"{ctx.author.mention}, you do not own any stocks.")
                     return
 
-                latest_price = await get_stock_price(self, ctx, stock_name)
+
 
 
 
                 if stock_name:
+                    latest_price = await get_stock_price(self, ctx, stock_name)
                     # Display daily, weekly, and monthly average buy and sell prices for a specific stock
                     opening_price, current_price, interval_change = await get_stock_price_interval(self, ctx, stock_name, interval='daily')
                     weekly_opening_price, weekly_current_price, weekly_interval_change = await get_stock_price_interval(self, ctx, stock_name, interval='weekly')
@@ -8814,15 +9012,19 @@ class CurrencySystem(commands.Cog):
         escrow_supply = await get_total_shares_in_orders(self, stock[0])
         reserve_supply = self.get_user_stock_amount(PBot, stock[0])
         reserve_supply = reserve_supply - escrow_supply
+        result = await get_supply_stats(self, ctx, stock[0])
+        current_price = await get_stock_price(self, ctx, stock[0])
+        reserve, total, locked, escrow, market, circulating = result
+
 
         lowest_sell_price_formatted = f"{lowest_sell_price:,.2f}" if lowest_sell_price is not None else "N/A"
 
         stock_info = (
             f"{stock[0]}\n"
-            f"Available: {reserve_supply:,.0f}\n"
-            f"Circulating: {int(stock[2] - reserve_supply):,.0f}\n"
-            f"Total Shares in Escrow: {escrow_supply:,.0f}\n"
-            f"Market Price: {stock[3]:,.2f}\n"
+            f"Available: {market:,.0f}\n"
+            f"Circulating: {circulating:,.0f}\n"
+            f"Total Shares in Escrow: {escrow:,.0f}\n"
+            f"Market Price: {current_price:,.2f}\n"
             f"Order Price: {lowest_sell_price_formatted} QSE"
         )
         return stock_info
@@ -8847,6 +9049,13 @@ class CurrencySystem(commands.Cog):
         end_index = start_index + items_per_page
 
         for stock in stocks[start_index:end_index]:
+
+            avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, stock[0])
+            avg_price = (avg_buy + avg_sell) / 2
+            current_price = await get_stock_price(self, ctx, stock[0])
+#            await self.change_stock_price(ctx, stock[0], current_price)
+            print(f"{stock[0]}: {current_price:,.2f}")
+
             stock_info = await self.get_stock_info(ctx, stock)
             embed.add_field(name="Stock:", value=stock_info, inline=False)
 
@@ -8878,6 +9087,11 @@ class CurrencySystem(commands.Cog):
                 embed.clear_fields()
 
                 for stock in stocks[start_index:end_index]:
+                    avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, stock[0])
+                    avg_price = (avg_buy + avg_sell) / 2
+                    current_price = await get_stock_price(self, ctx, stock[0])
+#                    await self.change_stock_price(ctx, stock[0], current_price)
+                    print(f"{stock[0]}: {current_price:,.2f}")
                     stock_info = await self.get_stock_info(ctx, stock)
                     embed.add_field(name="Stock:", value=stock_info, inline=False)
 
@@ -8921,10 +9135,12 @@ class CurrencySystem(commands.Cog):
 
             # Add fields for the top stocks
             for i, (symbol, price, available) in enumerate(top_stocks, start=1):
+                result = await get_supply_stats(self, ctx, symbol)
+                reserve, total, locked, escrow, market, circulating = result
                 decimal_places = 8 if price < 0.01 else 2
                 embed.add_field(
                     name=f"#{i}: {symbol}",
-                    value=f"Price: {price:,.{decimal_places}f} $QSE\nAvailable: {available:,}",
+                    value=f"Price: {price:,.{decimal_places}f} $QSE\nAvailable: {market:,.0f}\nEscrow: {escrow:,.0f}",
                     inline=False
                 )
 
@@ -9548,6 +9764,9 @@ class CurrencySystem(commands.Cog):
             await self.buy_stock_for_bot(ctx, symbol, amount)
 
 
+
+
+
     @commands.command(name="unlock")
     async def unlock_at_metric(self, ctx, symbol, metric):
         result = await get_supply_stats(self, ctx, stock_name)
@@ -9576,12 +9795,22 @@ class CurrencySystem(commands.Cog):
         await ctx.send(f"Added new stock: {symbol} ({name}), price: {price}, total supply: {total_supply}, available: {available}")
 
 
+    @commands.command(name="true_price")
+    async def truePrice(self, ctx, symbol: str):
+        result = await get_supply_stats(self, ctx, symbol)
+        reserve, total, locked, escrow, market, circulating = result
+
+        iMC = total * 1000
+        true_price = iMC / (market + locked + escrow)
+        await ctx.send(f"True Price for {symbol}: {(true_price):,.2f}")
 
     @commands.command(name='stock_info', aliases=['stock_metric'], help='Show the current price, available supply, and top holders of a stock.')
     async def stock_info(self, ctx, symbol: str):
         try:
             result = await get_supply_stats(self, ctx, symbol)
             reserve, total, locked, escrow, market, circulating = result
+
+
 
             price = await get_stock_price(self, ctx, symbol)
 
@@ -9692,9 +9921,7 @@ class CurrencySystem(commands.Cog):
         # Update bot's balance
         await update_user_balance(self.conn, PBot, get_user_balance(self.conn, PBot) - total_cost)
 
-        # Decay other stocks and increase price
-        decay_other_stocks(self.conn, stock_name)
-#        await self.increase_price_non_verbose(ctx, stock_name, float(amount))
+
 
         # Log the transaction
         await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, total_cost, total_cost, 0, 0, price, "Fail")
@@ -9753,9 +9980,7 @@ class CurrencySystem(commands.Cog):
         # Update bot's balance
         await update_user_balance(self.conn, PBot, get_user_balance(self.conn, PBot) + total_earnings)
 
-        # Decay other stocks and decrease price
-        decay_other_stocks(self.conn, stock_name)
-#        await self.decrease_price_non_verbose(ctx, stock_name, float(amount))
+
 
         # Log the transaction
         await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, total_earnings, total_earnings, 0, 0, price, "Fail")
@@ -9976,178 +10201,6 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @commands.command(name="blueChipBooster")
-    @is_allowed_user(930513222820331590, PBot)
-    async def blueChipBooster(self, ctx, type: str):
-        return
-        if type == "BUY":
-            boosterAmount = 75000000
-        elif type == "SELL":
-            boosterAmount = 150000000
-        else:
-            return
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", ("BlueChipOG",))
-        stock = cursor.fetchone()
-        if stock is None:
-            await ctx.send(f"This stock does not exist.")
-            return
-
-        price_increase = random.uniform(buyPressureMin * boosterAmount, min(buyPressureMax * boosterAmount, stockMax - float(stock[2])))
-        current_price = await get_stock_price(self, ctx, "BlueChipOG")
-        new_price = min(current_price + price_increase, stockMax)
-
-#        # Update the stock price
-#        cursor.execute("""
-#            UPDATE stocks
-#            SET price = ?
-#            WHERE symbol = ?
-#        """, (new_price, 'BlueChipOG'))
-
-        self.conn.commit()
-        cost = boosterAmount * current_price
-        metalLimSmall = 1000000000
-        metalLimMedium = 10000000000
-        metalLimLarge = 100000000000
-
-
-#        await self.buy_stock_for_bot(ctx, "BlueChipOG", boosterAmount)
-        metal_names = ["Gold", "Silver", "Copper", "Platinum"]
-
-        for metal in metal_names:
-            metal_reserve_price = await get_stock_price(self, ctx, f"P3:{metal}-Reserve")
-            if metal_reserve_price >= 5000000:
-                await self.sell_stock_for_bot(ctx, f"P3:{metal}-Reserve", metalLimSmall)
-                pass
-            elif metal_reserve_price >= 7500000:
-                pass
-                await self.sell_stock_for_bot(ctx, f"P3:{metal}-Reserve", metalLimMedium)
-            elif metal_reserve_price >= 10000000:
-                pass
-                await self.sell_stock_for_bot(ctx, f"P3:{metal}-Reserve", metalLimLarge)
-        if current_price >= 3500000:
-            pass
-#            await self.sell_stock_for_bot(ctx, "BlueChipOG", 1000000000000)
-
-    @commands.command(name="inverseStock")
-    @is_allowed_user(930513222820331590, PBot)
-    async def inverseStock(self, ctx, type: str):
-        return
-#        for symbol in inverseStocks:
-#            if type.lower() == "buy":
-#                boosterAmount = 75000000
-#                await self.sell_stock_for_bot(ctx, symbol, boosterAmount)
-#            elif type.lower() == "sell":
-#                boosterAmount = 150000000
-#                await self.buy_stock_for_bot(ctx, symbol, boosterAmount)
-#            else:
-#                return
-
-
-
-    @commands.command(name="P3LQDYBooster")
-    @is_allowed_user(930513222820331590, PBot)
-    async def P3LQDYBooster(self, ctx):
-        stock_name = "P3:LQDY"
-        etf_id = "6"
-        try:
-            booster_amount = 45000000
-            cursor = conn.cursor()
-
-            # Get the current stock information
-            cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_symbol,))
-            stock = cursor.fetchone()
-
-            if stock is None:
-                return f"This stock ({stock_symbol}) does not exist."
-
-            # Get the ETF value
-            etf_value = await get_etf_value(conn, etf_id)
-
-            # Calculate the new stock price based on inverse correlation
-            current_price = float(stock[2])
-            inverse_price = current_price + booster_amount * (1 - etf_value / (current_price * booster_amount))
-
-            # Update the stock price
-            cursor.execute("""
-                UPDATE stocks
-                SET price = ?
-                WHERE symbol = ?
-            """, (inverse_price, stock_symbol))
-
-            self.conn.commit()
-
-            print(f"{booster_amount} shares for {stock_symbol} updated based on inverse correlation with ETF.")
-
-        except sqlite3.Error as e:
-            return f"An error occurred: {str(e)}"
-
-        except Exception as e:
-            return f"An unexpected error occurred: {str(e)}"
-
-
-
-    @commands.command(name="metalReserveBooster")
-    @is_allowed_user(930513222820331590, PBot)
-    async def metalReserveBooster(self, ctx, metal: str, boosterAmount: float):
-        if boosterAmount >= 500000000:
-            boosterAmount = (boosterAmount * 0.5 * 0.25 * 0.26 * 0.5)
-        else:
-            boosterAmount = 25000000
-        stock_name = metal
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-        stock = cursor.fetchone()
-        if stock is None:
-            await ctx.send(f"This stock does not exist.")
-            return
-
-        current_price = float(stock[2])
-
-
-        cost = boosterAmount * current_price
-        await self.buy_stock_for_bot(ctx, stock_name, boosterAmount)
-        self.conn.commit()
-
-
-    @commands.command(name="treasureBooster")
-    @is_allowed_user(930513222820331590, PBot)
-    async def treasureBooster(self, ctx):
-        boosterAmount = 75000000
-        stock_name = "P3:Treasure_Chest"
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-        stock = cursor.fetchone()
-        if stock is None:
-            await ctx.send(f"This stock does not exist.")
-            return
-
-        current_price = float(stock[2])
-
-
-        cost = boosterAmount * current_price
-        self.conn.commit()
-        await self.buy_stock_for_bot(ctx, stock_name, boosterAmount)
-
-
-    @commands.command(name="whaleBooster")
-    @is_allowed_user(930513222820331590, PBot)
-    async def whaleBooster(self, ctx):
-        boosterAmount = 75000000
-        stock_name = "🐳"
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
-        stock = cursor.fetchone()
-        if stock is None:
-            await ctx.send(f"This stock does not exist.")
-            return
-
-        current_price = float(stock[2])
-
-        cost = boosterAmount * current_price
-        self.conn.commit()
-        await self.buy_stock_for_bot(ctx, stock_name, boosterAmount)
-
     @commands.command(name="casinoTool")
     @is_allowed_user(930513222820331590, PBot)
     async def casinoTool(self, ctx, resultWin: bool):
@@ -10255,30 +10308,6 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @commands.command(name="increase_price")
-    @is_allowed_user(930513222820331590, PBot)
-    async def increase_price(self, ctx, stock_name: str, amount: float, burn: bool = False):
-        if burn:
-            await update_stock_price(self, ctx, stock_name, amount, True, True, True)
-        else:
-            await update_stock_price(self, ctx, stock_name, amount, True)
-
-    @commands.command(name="increase_price_non_verbose")
-    @is_allowed_user(930513222820331590, PBot)
-    async def increase_price_non_verbose(self, ctx, stock_name: str, amount: float):
-        await update_stock_price(self, ctx, stock_name, amount, True, False)
-
-    @commands.command(name="decrease_price")
-    @is_allowed_user(930513222820331590, PBot)
-    async def decrease_price(self, ctx, stock_name: str, amount: float):
-        await update_stock_price(self, ctx, stock_name, amount, False)
-
-
-
-    @commands.command(name="decrease_price_non_verbose")
-    @is_allowed_user(930513222820331590, PBot)
-    async def decrease_price_non_verbose(self, ctx, stock_name: str, amount: float):
-        await update_stock_price(self, ctx, stock_name, amount, False, False)
 
 
 #ETF Tools and Engine
@@ -10312,8 +10341,9 @@ class CurrencySystem(commands.Cog):
         self.tax_command_timer_start = timeit.default_timer()
         async with self.db_semaphore:
             async with self.transaction_lock:
-                mv = await get_etf_value(self.conn, 6)
+                mv = await get_etf_value(self, ctx, 6)
                 await add_mv_metric(self, ctx, mv)
+                await add_etf_metric(self, ctx)
                 await add_reserve_metric(self, ctx)
                 cursor = self.conn.cursor()
                 cursor.execute("SELECT etf_id, name FROM etfs")
@@ -10340,8 +10370,9 @@ class CurrencySystem(commands.Cog):
                         quantity = stock[1]
                         cursor.execute("SELECT price FROM stocks WHERE symbol=?", (symbol,))
                         stock_price = cursor.fetchone()
+                        stock_price = await get_stock_price(self, ctx, symbol)
                         if stock_price:
-                            etf_value += stock_price[0] * quantity
+                            etf_value += stock_price * quantity
 
                     embed.add_field(name=f"Index ID: {etf_id}", value=f"Name: {etf_name}\nValue: {etf_value:,.2f} $QSE", inline=False)
 
@@ -10379,7 +10410,7 @@ class CurrencySystem(commands.Cog):
                     cursor.execute("SELECT name FROM etfs WHERE etf_id=?", (etf_id,))
                     etf_name = cursor.fetchone()[0]
 
-                    etf_value = await get_etf_value(self.conn, etf_id)
+                    etf_value = await get_etf_value(self, ctx, etf_id)
 
                     total_value += (etf_value or 0) * quantity
                     if quantity != 0.0:
@@ -10428,6 +10459,41 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"An error occurred while removing the stock from user's holdings: {str(e)}")
 
 
+    @commands.command(name="remove_user_stock")
+    @is_allowed_user(930513222820331590, PBot)
+    async def remove_user_stock(self, ctx):
+        cursor = self.conn.cursor()
+
+        # Execute the SQL command to set stock amount to 0 for all users
+        try:
+            cursor.execute("UPDATE user_stocks SET amount = 0")
+            self.conn.commit()
+            await ctx.send("Stock amounts set to 0 for all users.")
+        except sqlite3.Error as e:
+            print(f"An error occurred while updating user stocks: {e}")
+
+
+    @commands.command(name="remove_chart_data")
+    @is_allowed_user(930513222820331590, PBot)
+    async def remove_chart_data(self, ctx):
+        cursor = self.conn.cursor()
+        etf_charts = ["1", "2", "3", "4", "7", "8", "9", "10", "11", "13"]
+        try:
+            cursor.execute("SELECT symbol, available, total_supply, price FROM stocks")
+            stocks = cursor.fetchall()
+            await ctx.send("Clearing ETF chart data")
+            for i in etf_charts:
+                cursor.execute(f"DELETE FROM etf_{i}_value")
+            await ctx.send("Removing Market chart data")
+            cursor.execute(f"DELETE FROM market_value")
+            await ctx.send("Removing Reserve chart data")
+            cursor.execute(f"DELETE FROM reserve_value")
+            self.conn.commit()
+
+            await ctx.send(f"ETF, Market, and Reserve chart blocks removed successful")
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
 
     @commands.command(name="update_etf_prices", help="Update prices of stocks in an ETF by a specified percentage.")
     @is_allowed_user(930513222820331590, PBot)
@@ -10463,7 +10529,7 @@ class CurrencySystem(commands.Cog):
 
         self.conn.commit()
 
-        await ctx.send("Prices of stocks in the ETF have been updated successfully.")
+
 
 
     async def get_etf_info(self, ctx, etf_id):
@@ -10481,17 +10547,21 @@ class CurrencySystem(commands.Cog):
 
         stocks_info = []
         for stock in stock_data:
+
             result = await lowest_price_order(self, ctx, "sell", stock[0])
             lowest_sell_price = result["price"] if result else None
             escrow_supply = await get_total_shares_in_orders(self, stock[0])
             reserve_supply = self.get_user_stock_amount(PBot, stock[0])
             reserve_supply = reserve_supply - escrow_supply
+            result = await get_supply_stats(self, ctx, stock[0])
+            reserve, total, locked, escrow, market, circulating = result
+            current_price = await get_stock_price(self, ctx, stock[0])
             stocks_info.append({
                 'symbol': stock[0],
-                'price': stock[1],
-                'available': reserve_supply,
+                'price': current_price,
+                'available': market,
                 'lowest_sell_price': lowest_sell_price,
-                'total_shares_in_escrow': escrow_supply
+                'total_shares_in_escrow': escrow
             })
 
         return stocks_info
@@ -10582,14 +10652,15 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="market_polling", help="Update the name of the ETF 6 voice channel with its value.")
     async def update_etf_value(self, ctx):
         locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
-        mv = await get_etf_value(self.conn, 6)
+        mv = await get_etf_value(self, ctx, 6)
         await add_mv_metric(self, ctx, mv)
+        await add_etf_metric(self, ctx)
         await add_reserve_metric(self, ctx)
         mv_avg = await calculate_average_mv(self)
         print(f"\n\n\nMV Avg: {mv_avg:,.2f}\nCMV: {mv:,.2f}\n\n\n")
         while True:
 
-            etf_6_value = await get_etf_value(self.conn, 6)
+            etf_6_value = await get_etf_value(self, ctx, 6)
             etf_6_value_formatted = locale.format_string("%0.2f", etf_6_value, grouping=True)
 
             voice_channel_id = 1161706930981589094  # Replace with the actual ID
@@ -10667,7 +10738,7 @@ class CurrencySystem(commands.Cog):
                         value=f"{new_gas_fee}% {direction_arrow}",
                         inline=False
                     )
-                    color = f"🟡 →" if abs(percentage_change) < 0.000001 else f"📈 ↗" if percentage_change > 0 else f"📉 ↘"
+                    color = f"🟡 →" if abs(percentage_change) < 0.00000000000000001 else f"📈 ↗" if percentage_change > 0 else f"📉 ↘"
                     new_name = f"MV: {etf_6_value_formatted} {color}"
                     await voice_channel.edit(name=new_name)
                     await ctx.send(embed=embed)
@@ -10697,12 +10768,14 @@ class CurrencySystem(commands.Cog):
     @is_allowed_user(930513222820331590, PBot)
     async def buy_etf(self, ctx, etf_id: int, quantity: int):
         await ctx.message.delete()
+        await ctx.send("ETF Purchases are temporaily blocked, ETF sells allowed")
+        return
         current_timestamp = datetime.utcnow()
         user_id = ctx.author.id
         P3addrConn = sqlite3.connect("P3addr.db")
         P3addr = get_p3_address(P3addrConn, user_id)
         # Fetch the ETF's value and calculate the total cost
-        etf_value = await get_etf_value(self.conn, etf_id)
+        etf_value = await get_etf_value(self, ctx, etf_id)
 
         color = discord.Color.green()
         embed = discord.Embed(title=f"ETP Transaction Processing", color=color)
@@ -10739,7 +10812,7 @@ class CurrencySystem(commands.Cog):
 #            return
 
         # Fetch the ETF's value and calculate the total cost
-        etf_value = await get_etf_value(self.conn, etf_id)
+        etf_value = await get_etf_value(self, ctx, etf_id)
 
         total_cost = Decimal(etf_value) * Decimal(quantity)
 
@@ -10781,21 +10854,17 @@ class CurrencySystem(commands.Cog):
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred while updating user ETF holdings. Error: {str(e)}")
             return
-        # Transfer the tax amount to the bot's address P3:03da907038
-#        update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + fee)
+
         await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), fee)
-        decay_other_stocks(self.conn, "P3:BANK")
         await log_transaction(ledger_conn, ctx, "Buy ETP", str(etf_id), quantity, total_cost, total_cost_with_tax, current_balance, new_balance, etf_value, "True")
-#        await self.blueChipBooster(ctx, "BUY")
-        await self.inverseStock(ctx, "buy")
+
         self.conn.commit()
-        if etf_id == 10:
-            await self.whaleBooster(ctx)
-        if etf_id == 3:
-            await self.sludgeBoost(ctx, quantity)
+
         elapsed_time = timeit.default_timer() - self.buy_etf_timer_start
         self.buy_etf_avg.append(elapsed_time)
         avg_time = sum(self.buy_etf_avg) / len(self.buy_etf_avg)
+#        await self.update_etf_prices(ctx, etf_id, (((int(amount) - int(etf_value)) / int(etf_value)) * 100) * 0.1)
+        print(f"Updated Stocks in ETF {etf_id} by {((((int(quantity) - int(etf_value)) / int(etf_value)) * 100) * 0.1):,.5f}%")
         user_id = ctx.author.id
         P3addrConn = sqlite3.connect("P3addr.db")
         P3addr = get_p3_address(P3addrConn, user_id)
@@ -10843,7 +10912,7 @@ class CurrencySystem(commands.Cog):
         P3addrConn = sqlite3.connect("P3addr.db")
         P3addr = get_p3_address(P3addrConn, user_id)
         # Fetch the ETF's value and calculate the total cost
-        etf_value = await get_etf_value(self.conn, etf_id)
+        etf_value = await get_etf_value(self, ctx, etf_id)
 
         color = discord.Color.red()
         embed = discord.Embed(title=f"ETP Transaction Processing", color=color)
@@ -10875,7 +10944,7 @@ class CurrencySystem(commands.Cog):
             return
 
         # Fetch the ETF's value and calculate the total cost
-        etf_value = await get_etf_value(self.conn, etf_id)
+        etf_value = await get_etf_value(self, ctx, etf_id)
 
         total_sale_amount = Decimal(etf_value) * Decimal(quantity)
 
@@ -10911,10 +10980,10 @@ class CurrencySystem(commands.Cog):
         # Transfer the tax amount to the bot's address P3:03da907038
 #        update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + fee)
         await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), fee)
-        decay_other_stocks(self.conn, "P3:BANK")
+
         await log_transaction(ledger_conn, ctx, "Sell ETP", str(etf_id), quantity, total_sale_amount, total_sale_amount_with_tax, current_balance, new_balance, etf_value, "True")
 #        await self.blueChipBooster(ctx, "SELL")
-        await self.inverseStock(ctx, "sell")
+#        await self.inverseStock(ctx, "sell")
         self.conn.commit()
         if etf_id == 10:
             await self.whaleBooster(ctx)
@@ -11320,9 +11389,11 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="buy_item", help="Buy an item from the marketplace.")
-    @is_allowed_user(930513222820331590, PBot)
+#    @is_allowed_user(930513222820331590, PBot)
     async def buy_item(self, ctx, item_name: str, quantity: int):
-        await ctx.message.delete()
+        if item_name in ["FireStarter", "MarketBadge"]:
+            await ctx.send(f"{item_name} is not available at this time")
+            return
         current_timestamp = datetime.utcnow()
         user_id = ctx.author.id
         P3addrConn = sqlite3.connect("P3addr.db")
@@ -11401,74 +11472,50 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, an error occurred while updating user inventory. Error: {str(e)}")
             return
 
-        # Record the transaction
-        try:
-            cursor.execute("""
-                INSERT INTO transactions (user_id, item_id, quantity, total_cost, tax_amount)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user_id, item_id, quantity, total_cost, tax_amount))
-        except sqlite3.Error as e:
-            await ctx.send(f"{ctx.author.mention}, an error occurred while recording the transaction. Error: {str(e)}")
-            return
-        # Transfer the tax amount to the bot's address P3:03da907038
-#        update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax_amount)
+
         await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), tax_amount)
         await log_item_transaction(self.conn, ctx, "Buy", item_name, quantity, total_cost, tax_amount, new_balance)
-        await self.inverseStock(ctx, "buy")
         self.conn.commit()
 
 
-        # Calculate the amount to buy of the metal stock
-        amount_to_buy = total_cost  # Adjust this if needed based on your specific requirements
-
-        if item_name in ["Gold", "Copper", "Silver", "Platinum"]:
-            stock_symbol = f"P3:{item_name}-Reserve"
-            stock_price = Decimal(await get_stock_price(self, ctx, stock_symbol))  # Explicitly convert to Decimal
-            shares_to_buy = int(amount_to_buy / stock_price)
-            await self.metalReserveBooster(ctx, stock_symbol, shares_to_buy)
-            new_price = Decimal(await get_stock_price(self, ctx, stock_symbol))
-
-            current_timestamp = datetime.utcnow()
-            user_id = ctx.author.id
-            P3addrConn = sqlite3.connect("P3addr.db")
-            P3addr = get_p3_address(P3addrConn, user_id)
-
-            color = discord.Color.green()
-            embed = discord.Embed(title=f"Item Transaction Completed", color=color)
-            embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
-            embed.add_field(name="Item:", value=f"{item_name}", inline=False)
-            embed.add_field(name="Amount:", value=f"{quantity:,.2f}", inline=False)
-            embed.add_field(name="Value:", value=f"{total_cost:,.2f} $QSE", inline=False)
-            embed.add_field(name="Gas:", value=f"{tax_amount:,.2f} $QSE", inline=False)
-            embed.add_field(name="Reserve Stock:", value=f"{stock_symbol}", inline=False)
-            embed.add_field(name="Shares purchased by Reserve:", value=f"{shares_to_buy:,}", inline=False)
-            embed.set_footer(text=f"Timestamp: {current_timestamp}")
-
-            await ctx.send(embed=embed)
 
 
-            elapsed_time = timeit.default_timer() - self.buy_item_timer_start
-            self.buy_item_avg.append(elapsed_time)
-            avg_time = sum(self.buy_item_avg) / len(self.buy_item_avg)
-            gas = self.calculate_tax_percentage(ctx, "sell_etf") * 100
+        current_timestamp = datetime.utcnow()
+        user_id = ctx.author.id
+        P3addrConn = sqlite3.connect("P3addr.db")
+        P3addr = get_p3_address(P3addrConn, user_id)
 
-            print(f"""
-            **Metal Reserve Debug**
-            Metal: {item_name}
-            Price: {item_price:,.2f}
-            Quantity: {quantity:,}
-            Reserve: {stock_symbol}
-            Shares to buy: {shares_to_buy:,}
-            Current Price: {stock_price:,.2f}
-            New Price: {new_price:,.2f}
-            Transaction Time: {elapsed_time:.2f} seconds
-            Average Time: {avg_time:.2f} seconds
-            Gas Fee: {gas:,.4f}
+        color = discord.Color.green()
+        embed = discord.Embed(title=f"Item Transaction Completed", color=color)
+        embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
+        embed.add_field(name="Item:", value=f"{item_name}", inline=False)
+        embed.add_field(name="Amount:", value=f"{quantity:,.2f}", inline=False)
+        embed.add_field(name="Value:", value=f"{total_cost:,.2f} $QSE", inline=False)
+        embed.add_field(name="Gas:", value=f"{tax_amount:,.2f} $QSE", inline=False)
 
-            """)
+        embed.set_footer(text=f"Timestamp: {current_timestamp}")
+
+        await ctx.send(embed=embed)
+
+
+        elapsed_time = timeit.default_timer() - self.buy_item_timer_start
+        self.buy_item_avg.append(elapsed_time)
+        avg_time = sum(self.buy_item_avg) / len(self.buy_item_avg)
+        gas = self.calculate_tax_percentage(ctx, "sell_etf") * 100
+
+        print(f"""
+        **Metal Reserve Debug**
+        Metal: {item_name}
+        Price: {item_price:,.2f}
+        Quantity: {quantity:,}
+        Transaction Time: {elapsed_time:.2f} seconds
+        Average Time: {avg_time:.2f} seconds
+        Gas Fee: {gas:,.4f}
+
+        """)
 
     @commands.command(name="sell_item", help="Sell an item from your inventory.")
-    @is_allowed_user(930513222820331590, PBot)
+#    @is_allowed_user(930513222820331590, PBot)
     async def sell_item(self, ctx, item_name: str, quantity: int):
         await ctx.message.delete()
         current_timestamp = datetime.utcnow()
@@ -11521,7 +11568,6 @@ class CurrencySystem(commands.Cog):
 
         try:
             await self.send_from_reserve(ctx, user_id, total_sale_amount)
-#            update_user_balance(self.conn, user_id, new_balance)
         except ValueError as e:
             await ctx.send(f"{ctx.author.mention}, an error occurred while updating the user balance. Error: {str(e)}")
             return
@@ -11533,20 +11579,9 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, an error occurred while updating user inventory. Error: {str(e)}")
             return
 
-        # Record the transaction
-        try:
-            cursor.execute("""
-                INSERT INTO transactions (user_id, item_id, quantity, total_cost, tax_amount)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user_id, item_id, quantity, total_sale_amount, Decimal(fee)))
-        except sqlite3.Error as e:
-            await ctx.send(f"{ctx.author.mention}, an error occurred while recording the transaction. Error: {str(e)}")
-            return
         # Transfer the tax amount to the bot's address P3:03da907038
-#        update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax_amount)
         await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), tax_amount)
         await log_item_transaction(self.conn, ctx, "Sell", item_name, quantity, total_sale_amount, Decimal(fee), new_balance)
-        await self.inverseStock(ctx, "sell")
         self.conn.commit()
 
         current_timestamp = datetime.utcnow()
@@ -11625,233 +11660,6 @@ class CurrencySystem(commands.Cog):
 ##
 
 
-    @commands.command(name="adjust_balance", help="Adjust a specific user's balance.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def adjust_balance(self, ctx, user_id: int, new_balance: decimal.Decimal):
-
-        # Convert decimal.Decimal value to string
-        new_balance_str = str(new_balance)
-
-        # Update the user's balance in the database
-        cursor = self.conn.cursor()
-        try:
-            cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance_str, user_id))
-            self.conn.commit()
-            await ctx.send(f"The balance for user with ID {user_id} has been adjusted to {new_balance:,.2f} $QSE.")
-        except Exception as e:
-            await ctx.send(f"An error occurred while adjusting the balance: {str(e)}")
-
-
-## Trading Firm
-
-    @commands.command(name="create_trading_team", help="Create a new trading team. Provide the team name.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def create_trading_team(self, ctx, team_name: str):
-        user_id = ctx.author.id
-
-        # Check if the user is already in a team
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM team_members WHERE user_id=?", (user_id,))
-        existing_team = cursor.fetchone()
-        if existing_team:
-            await ctx.send(f"{ctx.author.mention}, you are already in a team.")
-            return
-
-        try:
-            cursor.execute("""
-                INSERT INTO trading_teams (name)
-                VALUES (?)
-            """, (team_name,))
-            team_id = cursor.lastrowid
-            cursor.execute("""
-                INSERT INTO team_members (user_id, team_id)
-                VALUES (?, ?)
-            """, (user_id, team_id))
-            self.conn.commit()
-            await ctx.send(f"{ctx.author.mention}, you have successfully created the trading team '{team_name}' and joined it!")
-        except sqlite3.Error as e:
-            await ctx.send(f"{ctx.author.mention}, an error occurred while creating the trading team. Error: {str(e)}")
-            self.conn.rollback()
-
-
-    @commands.command(name="join_trading_team", help="Join an existing trading team. Provide the team ID.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def join_trading_team(self, ctx, team_id: int):
-        user_id = ctx.author.id
-
-        # Check if the user is already in a team
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM team_members WHERE user_id=?", (user_id,))
-        existing_team = cursor.fetchone()
-        if existing_team:
-            await ctx.send(f"{ctx.author.mention}, you are already in a team.")
-            return
-
-        # Check if the specified team exists
-        cursor.execute("SELECT * FROM trading_teams WHERE team_id=?", (team_id,))
-        team = cursor.fetchone()
-        if team is None:
-            await ctx.send(f"{ctx.author.mention}, this team does not exist.")
-            return
-
-        try:
-            cursor.execute("""
-                INSERT INTO team_members (user_id, team_id)
-                VALUES (?, ?)
-            """, (user_id, team_id))
-            self.conn.commit()
-            await ctx.send(f"{ctx.author.mention}, you have successfully joined the trading team '{team[1]}'!")
-        except sqlite3.Error as e:
-            await ctx.send(f"{ctx.author.mention}, an error occurred while joining the trading team. Error: {str(e)}")
-            self.conn.rollback()
-
-    @commands.command(name="leave_trading_team", help="Leave your current trading team.")
-    async def leave_trading_team(self, ctx):
-        user_id = ctx.author.id
-
-        # Check if the user is in a team
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM team_members WHERE user_id=?", (user_id,))
-        existing_team = cursor.fetchone()
-        if not existing_team:
-            await ctx.send(f"{ctx.author.mention}, you are not in a team.")
-            return
-
-        try:
-            cursor.execute("""
-                DELETE FROM team_members
-                WHERE user_id = ?
-            """, (user_id,))
-            self.conn.commit()
-            await ctx.send(f"{ctx.author.mention}, you have successfully left your trading team!")
-        except sqlite3.Error as e:
-            await ctx.send(f"{ctx.author.mention}, an error occurred while leaving the trading team. Error: {str(e)}")
-            self.conn.rollback()
-
-
-    @commands.command(name="list_trading_teams", aliases=['teams'], help="List all trading teams with P/L metrics and member count.")
-    async def list_trading_teams(self, ctx):
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            SELECT trading_teams.team_id, trading_teams.name, trading_teams.total_profit_loss, team_members.user_id
-            FROM trading_teams
-            LEFT JOIN team_members ON trading_teams.team_id = team_members.team_id
-        """)
-        teams = cursor.fetchall()
-
-        if not teams:
-            await ctx.send("There are no trading teams.")
-            return
-
-        # Create a dictionary to store team information
-        team_info = {}
-
-        for team in teams:
-            team_id = team[0]
-            team_name = team[1]
-            total_profit_loss = team[2]
-            member_id = team[3]
-
-            # Get Discord username from user ID
-            member = ctx.guild.get_member(member_id)
-            member_name = member.name if member else f"User ID: {member_id}"
-
-            # Add team information to the dictionary
-            if team_id not in team_info:
-                team_info[team_id] = {
-                    "name": team_name,
-                    "profit_loss": total_profit_loss,
-                    "members": [member_name],
-                }
-            else:
-                team_info[team_id]["members"].append(member_name)
-
-        # Sort teams by profit in descending order
-        sorted_teams = sorted(team_info.items(), key=lambda x: x[1]["profit_loss"], reverse=True)
-
-        embed = discord.Embed(title="Trading Firm Profit/Loss Spread", color=discord.Color.blue())
-
-        # Add each team's information as a field in the embed
-        for team_id, info in sorted_teams:
-            team_name = info["name"]
-            total_profit_loss = info["profit_loss"]
-            member_list = ", ".join(info["members"])
-            profit_loss_str = f"**P/L:** {format(total_profit_loss, ',')}"
-
-            embed.add_field(name=f"**Team ID: {team_id}** - {team_name}", value=f"{profit_loss_str}\n**Members:** {member_list}", inline=False)
-
-        await ctx.send(embed=embed)
-
-
-
-
-    @commands.command(name="add_member", help="Add a specific member to a specific trading team. [Admin Only]")
-    @is_allowed_user(930513222820331590, PBot)
-    async def add_member(self, ctx, team_id: int, member: discord.Member):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM trading_teams WHERE team_id=?", (team_id,))
-        team = cursor.fetchone()
-        if not team:
-            await ctx.send(f"Team with ID {team_id} does not exist.")
-            return
-
-        try:
-            cursor.execute("""
-                INSERT INTO team_members (user_id, team_id)
-                VALUES (?, ?)
-            """, (member.id, team_id))
-            self.conn.commit()
-            await ctx.send(f"{ctx.author.mention}, {member.mention} has been successfully added to team {team_id}!")
-        except sqlite3.Error as e:
-            await ctx.send(f"{ctx.author.mention}, an error occurred while adding the member to the team. Error: {str(e)}")
-            self.conn.rollback()
-
-    @commands.command(name="remove_member", help="Remove a specific member from a specific trading team. [Admin Only]")
-    @is_allowed_user(930513222820331590, PBot)
-    async def remove_member(self, ctx, team_id: int, member: discord.Member):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM team_members WHERE team_id=? AND user_id=?", (team_id, member.id))
-        existing_member = cursor.fetchone()
-        if not existing_member:
-            await ctx.send(f"{member.mention} is not in team {team_id}.")
-            return
-
-        try:
-            cursor.execute("""
-                DELETE FROM team_members
-                WHERE user_id = ? AND team_id = ?
-            """, (member.id, team_id))
-            self.conn.commit()
-            await ctx.send(f"{ctx.author.mention}, {member.mention} has been successfully removed from team {team_id}!")
-        except sqlite3.Error as e:
-            await ctx.send(f"{ctx.author.mention}, an error occurred while removing the member from the team. Error: {str(e)}")
-            self.conn.rollback()
-
-    @commands.command(name="clear_teams", help="Clear all trading team database entries. [Admin Only]")
-    @is_allowed_user(930513222820331590, PBot)
-    async def clear_teams(self, ctx):
-        confirmation_message = await ctx.send(f"{ctx.author.mention}, are you sure you want to clear all trading team data? This action is irreversible. Type 'yes' to confirm.")
-
-        def check(m):
-            return m.author == ctx.author and m.content.lower() == 'yes'
-
-        try:
-            await self.bot.wait_for('message', timeout=60.0, check=check)
-        except asyncio.TimeoutError:
-            await confirmation_message.edit(content="Clearing trading team data aborted. No confirmation received.")
-            return
-
-        cursor = self.conn.cursor()
-        try:
-            cursor.execute("DELETE FROM team_members")
-            cursor.execute("DELETE FROM trading_teams")
-            self.conn.commit()
-            await ctx.send(f"{ctx.author.mention}, all trading team data has been cleared successfully.")
-        except sqlite3.Error as e:
-            await ctx.send(f"{ctx.author.mention}, an error occurred while clearing trading team data. Error: {str(e)}")
-            self.conn.rollback()
-
-
 
 
 
@@ -11922,57 +11730,6 @@ class CurrencySystem(commands.Cog):
 
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred while updating the stock supply. Error: {str(e)}")
-
-    @commands.command(name="set_etf_supply", help="Set the total and available supply for all stocks within a specified ETF.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def set_etf_supply(self, ctx, etf_id: int, total_supply: typing.Optional[int] = None, available_supply: typing.Optional[int] = None):
-        cursor = self.conn.cursor()
-
-        try:
-            # Check if the ETF exists
-            cursor.execute("SELECT * FROM etfs WHERE etf_id=?", (etf_id,))
-            etf = cursor.fetchone()
-            if etf is None:
-                await ctx.send(f"This ETF with ID {etf_id} does not exist.")
-                return
-
-            # Get the list of stocks within the ETF
-            cursor.execute("SELECT symbol FROM etf_stocks WHERE etf_id=?", (etf_id,))
-            stocks = cursor.fetchall()
-
-            if not stocks:
-                await ctx.send(f"No stocks found within ETF ID {etf_id}.")
-                return
-
-            if total_supply is not None:
-                if total_supply < 0:
-                    await ctx.send("Invalid total supply value. The total supply must be non-negative.")
-                    return
-
-                # Update total supply for all stocks within the ETF
-                for stock in stocks:
-                    stock_name = stock[0]
-                    cursor.execute("UPDATE stocks SET total_supply = ? WHERE symbol = ?", (total_supply, stock_name))
-                await ctx.send(f"The total supply for all stocks within ETF {etf_id} has been set to {total_supply}.")
-
-            if available_supply is not None:
-                if available_supply < 0:
-                    await ctx.send("Invalid available supply value. The available supply must be non-negative.")
-                    return
-
-                # Update available supply for all stocks within the ETF
-                for stock in stocks:
-                    stock_name = stock[0]
-                    cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (available_supply, stock_name))
-                await ctx.send(f"The available supply for all stocks within ETF {etf_id} has been set to {available_supply}.")
-
-            self.conn.commit()
-
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred while updating the ETF supply. Error: {str(e)}")
-
-
-
 
 
 
@@ -12294,74 +12051,6 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @commands.command(name='higher_lower', aliases=['hl'], help='Play the Higher or Lower card game.')
-    async def higher_lower(self, ctx, bet_amount: int):
-        user_id = ctx.author.id
-        current_balance = get_user_balance(self.conn, user_id)
-
-        # Check if bet amount is positive and within the limit
-        if bet_amount <= 0:
-            await ctx.send(f"{ctx.author.mention}, bet amount must be a positive number.")
-            return
-
-        if bet_amount < minBet:
-            await ctx.send(f"{ctx.author.mention}, minimum bet is {minBet:,.2f} $QSE.")
-            return
-
-        if bet_amount > maxBet:
-            await ctx.send(f"{ctx.author.mention}, the maximum bet amount is {maxBet:,.2f} $QSE.")
-            return
-
-        # Draw two random cards
-        player_card = random.randint(1, 10)
-        dealer_card = random.randint(1, 10)
-
-        # Convert card numbers to emojis
-        player_card_emoji = f"{player_card}\U000020e3"
-        dealer_card_emoji = "❓"
-
-        # Create the main embed with the game start message
-        embed = discord.Embed(title="Higher or Lower", color=discord.Color.blue())
-        embed.add_field(name="Your Card", value=player_card_emoji, inline=False)
-        embed.add_field(name="Dealer's Card", value=dealer_card_emoji, inline=False)
-        embed.add_field(name="Instructions", value="React with ⬆️ for Higher or ⬇️ for Lower.", inline=False)
-        message = await ctx.send(embed=embed)
-
-        # Add emojis to the message
-        await message.add_reaction("⬆️")
-        await message.add_reaction("⬇️")
-
-        # Wait for the user's reaction
-        reaction, _ = await self.bot.wait_for("reaction_add", timeout=30.0, check=lambda r, u: u == ctx.author and str(r.emoji) in ["⬆️", "⬇️"])
-
-        # Reveal the dealer's card
-        embed.set_field_at(1, name="Dealer's Card", value=f"{dealer_card} {dealer_card}\U000020e3", inline=False)
-        await message.edit(embed=embed)
-
-        # Determine the winner
-        if (reaction.emoji == "⬆️" and player_card < dealer_card) or (reaction.emoji == "⬇️" and player_card > dealer_card):
-            result_message = "You guessed wrong! Better luck next time."
-            win_amount = 0
-            await self.casinoTool(ctx, False)
-        else:
-            result_message = f"Congratulations! You guessed right! You won {2 * bet_amount:,.2f} $QSE!"
-            win_amount = 2 * bet_amount
-            await self.casinoTool(ctx, True)
-
-        # Update user's balance
-        new_balance = current_balance + win_amount - bet_amount
-
-        # Send the result message
-        embed.set_footer(text=f"Your new balance: {new_balance:,.2f} $QSE")
-        embed.add_field(name="Result", value=result_message, inline=False)
-        await message.edit(embed=embed)
-
-        # Update user's balance
-        await update_user_balance(self.conn, user_id, new_balance)
-
-
-
-
     @commands.command(name='rpg_stats', help='View your RPG stats.')
     async def rpg_stats(self, ctx):
         try:
@@ -12443,7 +12132,7 @@ class CurrencySystem(commands.Cog):
 
             target_cur_hp = target_stats.get('cur_hp', 0)
 
-            if target_cur_hp == 0 and healer_id == target_id:
+            if healer_id == target_id:
 
                 # Perform the healing logic (adjust as needed)
                 heal_amount = target_stats['max_hp'] - target_cur_hp  # You can customize the amount of healing
@@ -12569,6 +12258,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="attack")
+    @is_allowed_user(930513222820331590, PBot)
     async def attack(self, ctx, target):
         async with self.db_semaphore:
             async with self.transaction_lock:
@@ -12645,16 +12335,16 @@ class CurrencySystem(commands.Cog):
                             # Include attack details in the DM
                             attack_details = f"Attacker: {get_p3_address(self.P3addrConn, attacker_id)}\n"
                             attack_details += f"Defender: {get_p3_address(self.P3addrConn, defender_id)}\n"
-                            attack_details += f"Damage Dealt: {damage} HP\n"
-                            attack_details += f"Current HP: {new_defender_hp}/{defender_stats['max_hp']} HP"
+                            attack_details += f"Damage Dealt: {damage:,.0f} HP\n"
+                            attack_details += f"Current HP: {new_defender_hp:,.0f}/{defender_stats['max_hp']:,.0f} HP"
 
                             await defender_dm_channel.send(attack_details)
 
                         if damage != 0 and critical:
                             # Create an embed to display the attack result
                             embed = discord.Embed(title=f"{get_p3_address(self.P3addrConn, attacker_id)} Fires a shot at {get_p3_address(self.P3addrConn, defender_id)}", color=discord.Colour.yellow())
-                            embed.add_field(name="Critical Damage Dealt", value=f"{damage} HP")
-                            embed.add_field(name="Defender's Current HP", value=f"{new_defender_hp}/{defender_stats['max_hp']} HP")
+                            embed.add_field(name="Critical Damage Dealt", value=f"{damage:,.0f} HP")
+                            embed.add_field(name="Defender's Current HP", value=f"{new_defender_hp:,.0f}/{defender_stats['max_hp']:,.0f} HP")
 
                             await add_experience(self, self.conn, attacker_id, (damage * level) / 2, ctx)
 
@@ -12668,8 +12358,8 @@ class CurrencySystem(commands.Cog):
                         elif damage != 0 and not critical:
                             # Create an embed to display the attack result
                             embed = discord.Embed(title=f"{get_p3_address(self.P3addrConn, attacker_id)} Fires a shot at {get_p3_address(self.P3addrConn, defender_id)}", color=discord.Colour.yellow())
-                            embed.add_field(name="Damage Dealt", value=f"{damage} HP")
-                            embed.add_field(name="Defender's Current HP", value=f"{new_defender_hp}/{defender_stats['max_hp']} HP")
+                            embed.add_field(name="Damage Dealt", value=f"{damage:,.0f} HP")
+                            embed.add_field(name="Defender's Current HP", value=f"{new_defender_hp:,.0f}/{defender_stats['max_hp']:,.0f} HP")
 
                             await add_experience(self, self.conn, attacker_id, damage / 2, ctx)
 
@@ -12684,7 +12374,7 @@ class CurrencySystem(commands.Cog):
 
                         else:
                             embed = discord.Embed(title=f"{get_p3_address(self.P3addrConn, attacker_id)} Fires a shot at {get_p3_address(self.P3addrConn, defender_id)}", color=discord.Colour.red())
-                            embed.add_field(name="Damage Dealt", value=f"{damage} HP")
+                            embed.add_field(name="Damage Dealt", value=f"{damage:,.0f} HP")
                             embed.add_field(name="Attack Missed...", value="")
 
                             await ctx.send(embed=embed)
@@ -12878,7 +12568,7 @@ class CurrencySystem(commands.Cog):
         PBotAddr = get_p3_address(P3addrConn, PBot)
 
         if asset in self.etfs:
-            current_price = await get_etf_value(self.conn, int(asset))
+            current_price = await get_etf_value(self, ctx, int(asset))
             exp_day = 1
         else:
             current_price = await get_stock_price(self, ctx, asset)
@@ -12953,7 +12643,7 @@ class CurrencySystem(commands.Cog):
                 buy_price = user_option["current_price"]
                 asset = user_option["asset"]
                 if asset in self.etfs:
-                    current_price = await get_etf_value(self.conn, asset)
+                    current_price = await get_etf_value(self, ctx, asset)
                 else:
                     current_price = await get_stock_price(self, ctx, asset)
 #                    self.UpDownPer = self.UpDownPer * 2
@@ -12996,7 +12686,7 @@ class CurrencySystem(commands.Cog):
     @commands.command(name='updown')
     async def updown(self, ctx, asset):
         if asset in self.etfs:
-            current_price = await get_etf_value(self.conn, int(asset))
+            current_price = await get_etf_value(self, ctx, int(asset))
         else:
             current_price = await get_stock_price(self, ctx, asset)
 #            self.UpDownPer = self.UpDownPer * 2
@@ -13023,10 +12713,15 @@ class CurrencySystem(commands.Cog):
     @commands.command(name='stats', aliases=['portfolio'], help='Displays the user\'s financial stats.')
     async def stats(self, ctx, address: str = None):
         self.tax_command_timer_start = timeit.default_timer()
-        async with self.db_semaphore:
-            async with self.transaction_lock:
-                mv = await get_etf_value(self.conn, 6)
+        a = True
+        b = True
+        if a:
+#        async with self.db_semaphore:
+            if b:
+#            async with self.transaction_lock:
+                mv = await get_etf_value(self, ctx, 6)
                 await add_mv_metric(self, ctx, mv)
+                await add_etf_metric(self, ctx)
                 await add_reserve_metric(self, ctx)
                 if address is None:
                     user_id = ctx.author.id
@@ -13196,6 +12891,7 @@ class CurrencySystem(commands.Cog):
     async def total_stats(self, ctx):
         self.is_halted = True
         self.is_halted_order = True
+        total_escrow_value = 0
         try:
             Pbot_Balance = 0
             # Connect to databases using context managers
@@ -13207,14 +12903,13 @@ class CurrencySystem(commands.Cog):
                 # Calculate Total Escrow Value
                 cursor.execute("SELECT symbol, available, total_supply, price FROM stocks")
                 stocks = cursor.fetchall()
-                total_escrow_value = 0
                 for symbol in stocks:
                     escrow_value = 0
                     total_shares_in_orders = await get_total_shares_in_orders(self, symbol[0])
                     if total_shares_in_orders:
                         avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, symbol[0])
-                        avg_price = (avg_buy + avg_sell) / 2
-                        escrow_value = total_shares_in_orders * avg_price
+                        current_price = await get_stock_price(self, ctx, symbol[0])
+                        escrow_value = total_shares_in_orders * current_price
                         total_escrow_value += escrow_value
 
                 # Calculate total stock value
@@ -13259,9 +12954,9 @@ class CurrencySystem(commands.Cog):
 
                         # Calculate total stock value
                         user_stocks = cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=?", (user_id,)).fetchall()
+                        print(f"{total_stock_value:,.0f}")
                         total_stock_value += sum(price * amount for symbol, amount in user_stocks
                                                   for price in cursor.execute("SELECT COALESCE(price, 0) FROM stocks WHERE symbol=?", (symbol,)).fetchone())
-
                         # Calculate total ETF value
                         user_etfs = cursor.execute("SELECT etf_id, quantity FROM user_etfs WHERE user_id=?", (user_id,)).fetchall()
                         total_etf_value += sum(etf_value * quantity for etf_id, quantity in user_etfs
@@ -13290,20 +12985,23 @@ class CurrencySystem(commands.Cog):
                         stable_stock_price = await get_stock_price(self, ctx, stable_stock) or 0
                         user_owned_stable = self.get_user_stock_amount(user_id, stable_stock) or 0
                         total_stable_value += stable_stock_price * user_owned_stable
-                        bank_qse = await get_total_qse_deposited(self)
-                        Pbot_Balance = Pbot_Balance - bank_qse
 
-                        # Calculate total funds value for each user
-                        user_balance = user_qse + total_stock_value + total_etf_value + total_escrow_value + total_updown_value + total_metal_value - Pbot_Balance - reserve_stock_value
-                        total_balance = user_qse + total_stock_value + total_etf_value + total_metal_value + total_escrow_value + total_updown_value
 
                     except Exception as e:
                         print(f"An error occurred for user {user_id}: {e}")
 
+
+                bank_qse = await get_total_qse_deposited(self)
+                Pbot_Balance = abs(Pbot_Balance - bank_qse)
+                print(f"{Pbot_Balance:,.0f} - {bank_qse:,.0f} = {(Pbot_Balance - bank_qse):,.0f}")
+
+                # Calculate total funds value for each user
+                user_balance = abs(user_qse + total_stock_value + total_etf_value + total_escrow_value + total_updown_value + total_metal_value - Pbot_Balance - reserve_stock_value)
+                total_balance = abs(user_qse + total_stock_value + total_etf_value + total_metal_value + total_escrow_value + total_updown_value)
                 # Create the embed for total stats
                 embed = Embed(title="Market Financial Book", color=Colour.green())
-                embed.add_field(name="Community QSE:", value=f"{(user_qse - Pbot_Balance):,.0f} $QSE\n({(((user_qse - Pbot_Balance) / total_balance) * 100):,.4f}%)", inline=False)
-                embed.add_field(name="Community Stock Value:", value=f"{(total_stock_value - reserve_stock_value):,.0f} $QSE\n(Market: {(((total_stock_value - reserve_stock_value) / total_balance) * 100):,.4f}%)\n(Total Stock Supply: {(((total_stock_value - reserve_stock_value) / market_stock_value) * 100):,.4f}%)", inline=False)
+                embed.add_field(name="Community QSE:", value=f"{(abs(user_qse - Pbot_Balance)):,.0f} $QSE\n({(((abs(user_qse - Pbot_Balance) / total_balance) * 100)):,.4f}%)", inline=False)
+                embed.add_field(name="Community Stock Value:", value=f"{(abs(reserve_stock_value - total_stock_value)):,.0f} $QSE\n(Market: {abs((((reserve_stock_value - total_stock_value) / total_balance) * 100)):,.4f}%)\n(Total Stock Supply: {abs((((total_stock_value - reserve_stock_value) / market_stock_value) * 100)):,.4f}%)", inline=False)
                 embed.add_field(name="Community ETP Value:", value=f"{total_etf_value:,.0f} $QSE\n({((total_etf_value / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Community P3:Stable Value:", value=f"{total_stable_value:,.0f} $QSE\n({((total_stable_value / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Community Metal Value:", value=f"{total_metal_value:,.0f} $QSE\n({((total_metal_value / total_balance) * 100):,.4f}%)", inline=False)
