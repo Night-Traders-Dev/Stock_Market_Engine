@@ -65,7 +65,7 @@ dailyMax = 500000
 ticketPrice = 100
 maxTax = 0.50
 minBet = 10000
-maxBet = 500000000
+maxBet = 5_000_000_000_000
 last_buy_time = {}
 last_sell_time = {}
 user_transactions = {}
@@ -2450,6 +2450,55 @@ async def get_stock_price_interval(self, ctx, stock_symbol, interval='daily'):
         print(f"An error occurred: {str(e)}")
         return 0, 0, 0
 
+async def get_average_quantity_held(self, ctx, user_id, symbol):
+    conn = sqlite3.connect("p3ledger.db", check_same_thread=False, isolation_level=None)
+    cursor = conn.cursor()
+
+    # Calculate average quantity held
+    cursor.execute("""
+        SELECT AVG(quantity) as avg_quantity_held
+        FROM stock_transactions
+        WHERE user_id = ? AND symbol = ?
+    """, (user_id, symbol))
+    avg_quantity_held = cursor.fetchone()[0] or 0.0
+
+
+
+    return avg_quantity_held
+
+async def get_average_stock_prices(self, ctx, user_id, symbol):
+    conn = sqlite3.connect("p3ledger.db", check_same_thread=False, isolation_level=None)
+    cursor = conn.cursor()
+
+    # Calculate average buy price
+    cursor.execute("""
+        SELECT AVG(CAST(REPLACE(price, ',', '') AS REAL)) as avg_buy_price
+        FROM stock_transactions
+        WHERE user_id = ? AND symbol = ? AND action = 'Buy Stock'
+    """, (user_id, symbol))
+    avg_buy_price = cursor.fetchone()[0] or 0.0
+
+    # Calculate average sell price
+    cursor.execute("""
+        SELECT AVG(CAST(REPLACE(price, ',', '') AS REAL)) as avg_sell_price
+        FROM stock_transactions
+        WHERE user_id = ? AND symbol = ? AND action = 'Sell Stock'
+    """, (user_id, symbol))
+    avg_sell_price = cursor.fetchone()[0] or 0.0
+
+    # Calculate total average price
+    cursor.execute("""
+        SELECT AVG(CAST(REPLACE(price, ',', '') AS REAL)) as total_avg_price
+        FROM stock_transactions
+        WHERE user_id = ? AND symbol = ?
+    """, (user_id, symbol))
+    total_avg_price = cursor.fetchone()[0] or 0.0
+
+
+
+    return avg_buy_price, avg_sell_price, total_avg_price
+
+
 
 
 async def wait_for_unlocked(conn: aiosqlite.Connection):
@@ -4548,7 +4597,7 @@ class CurrencySystem(commands.Cog):
         self.stock_circuit_breaker = False
 
         self.not_trading = []
-        self.maintenance = ['secureharbor', 'p3:stable', 'GoldToken']
+        self.maintenance = ['secureharbor', 'GoldToken']
         self.stock_monitor = defaultdict(list)
 #        self.ceo_stocks = [("partyscene", 607050637292601354), ("p3:bank", 930513222820331590), ("savage", 1147507029494202461)]
         self.ceo_stocks = {
@@ -6315,9 +6364,9 @@ class CurrencySystem(commands.Cog):
 
                     # Plot the indicators on the price history chart
                     if sma is not None and len(sma) == len(sma_timestamps):
-                        ax1.plot(sma_timestamps, sma, color='green', label=f'SMA ({sma_period}-period)')
+                        ax1.plot(sma_timestamps, sma, color='green', alpha=0.5, label=f'SMA ({sma_period}-period)')
                     if ema is not None and len(ema) == len(ema_timestamps):
-                        ax1.plot(ema_timestamps, ema, color='yellow', label=f'EMA ({ema_period}-period)')
+                        ax1.plot(ema_timestamps, ema, color='yellow', alpha=0.5, label=f'EMA ({ema_period}-period)')
                     if upper is not None and lower is not None:
                         ax1.fill_between(bb_timestamps, upper, lower, color='brown', alpha=0.5, label='Bollinger Bands')
 
@@ -6344,10 +6393,10 @@ class CurrencySystem(commands.Cog):
                     ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # Format the date
 
                     # Plot the buy and sell transactions on the same price history chart
-                    if price_debug:
-                        ax1.plot(timestamps, prices, linestyle='-', color='green', label='Price')
-                        ax1.scatter(buy_timestamps, buy_prices, marker='o', color='blue', label='Buy')
-                        ax1.scatter(sell_timestamps, sell_prices, marker='o', color='red', label='Sell')
+#                    if price_debug:
+                    ax1.plot(timestamps, prices, linestyle='-', color='green', label='Price')
+                    ax1.scatter(buy_timestamps, buy_prices, marker='o', color='blue', label='Buy')
+                    ax1.scatter(sell_timestamps, sell_prices, marker='o', color='red', label='Sell')
 
                     # Plot RSI on the separate RSI chart
                     if rsi is not None and len(rsi) == len(rsi_timestamps):
@@ -8711,6 +8760,10 @@ class CurrencySystem(commands.Cog):
 
 
             new_price = await get_stock_price(self, ctx, stock_name)
+            if stock_name.lower() == "p3:stable":
+                print(f"P3:Stable Minted: {amount:,.0f}")
+                await self.mint_stock_supply(ctx, stock_name, amount, False)
+#                await self.sell_stock_for_bot(ctx, stock_name, amount)
 #            await self.change_stock_price(ctx, stock_name, new_price)
             await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, buy_price, "False")
             await log_order_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, total_cost, (cost), seller_old, seller_new, buy_price, "False", PBot)
@@ -8884,6 +8937,10 @@ class CurrencySystem(commands.Cog):
 
 
                 new_price = await get_stock_price(self, ctx, stock_name)
+                if stock_name.lower() == "p3:stable":
+                    print(f"P3:Stable Burned: {amount:,.0f}")
+                    await self.burn_stock_supply(ctx, stock_name, amount, False)
+#                    await self.buy_stock_for_bot(ctx, stock_name, amount)
 
                 seller_new = get_user_balance(self.conn, PBot)
                 await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, sell_price, "False")
@@ -8989,6 +9046,8 @@ class CurrencySystem(commands.Cog):
                     opening_price, current_price, interval_change = await get_stock_price_interval(self, ctx, stock_name, interval='daily')
                     weekly_opening_price, weekly_current_price, weekly_interval_change = await get_stock_price_interval(self, ctx, stock_name, interval='weekly')
                     monthly_opening_price, monthly_current_price, monthly_interval_change = await get_stock_price_interval(self, ctx, stock_name, interval='monthly')
+                    avg_buy, avg_sell, avg_total = await get_average_stock_prices(self, ctx, user_id , stock_name)
+                    average_hodl = await get_average_quantity_held(self, ctx, user_id , stock_name)
 
                     # Convert prices to strings and remove commas
                     opening_price_str = f"${opening_price:,.2f}" if opening_price is not None else "0.00 QSE"
@@ -9021,6 +9080,10 @@ class CurrencySystem(commands.Cog):
                     embed.add_field(name="Weekly Average Sell Price", value=f"{weekly_current_price:,.2f} QSE", inline=False)
                     embed.add_field(name="Monthly Average Buy Price", value=monthly_opening_price_str, inline=False)
                     embed.add_field(name="Monthly Average Sell Price", value=f"{monthly_current_price:,.2f} QSE", inline=False)
+                    embed.add_field(name="Average Buy Price", value=f"{avg_buy:,.2f} QSE", inline=False)
+                    embed.add_field(name="Average Sell Price", value=f"{avg_sell:,.2f} QSE", inline=False)
+                    embed.add_field(name="Average Price", value=f"{avg_total:,.2f} QSE", inline=False)
+                    embed.add_field(name="Average Holding", value=f"{average_hodl:,.0f} Shares", inline=False)
                     if opening_price != 0:
                         start_value = amount_owned[0] * opening_price
                         current_value = amount_owned[0] * latest_price
@@ -9065,6 +9128,8 @@ class CurrencySystem(commands.Cog):
                         stock_symbol = stock['symbol']
                         amount_owned = stock['amount']
                         opening_price, current_price, interval_change = await get_stock_price_interval(self, ctx, stock_symbol, interval='daily')
+                        avg_buy, avg_sell, avg_total = await get_average_stock_prices(self, ctx, user_id , stock_symbol)
+                        average_hodl = await get_average_quantity_held(self, ctx, user_id , stock_symbol)
                         latest_price = await get_stock_price(self, ctx, stock_symbol)
                         share_value = amount_owned * latest_price
 
@@ -9087,7 +9152,7 @@ class CurrencySystem(commands.Cog):
                             DPL = 0
                         embed.add_field(
                             name=f"{stock_symbol} (Amount: {amount_owned:,} )",
-                            value=f"* Current Price: {latest_price:,.2f} QSE\n* Holding Percentage: ({hold_percentage:,.{hold_decimal}f}%)\n* Daily Average Buy Price: {opening_price_str}\n* Daily Average Sell Price: {current_price:,.2f} QSE\n Daily P/L {DPL:,.0f}\n* Total Value: ${share_value:,.2f}",
+                            value=f"* Current Price: {latest_price:,.2f} QSE\n* Holding Percentage: ({hold_percentage:,.{hold_decimal}f}%)\n* Average Buy Price: {avg_buy:,.2f}\n* Average Sell Price: {avg_sell:,.2f} QSE\n 24hr P/L {DPL:,.0f} QSE @ {opening_price:,.2f} QSE\n* Average Holding: {average_hodl:,.0f} Shares\n* Total Value: ${share_value:,.2f}",
                             inline=True
                         )
 
@@ -9880,7 +9945,7 @@ class CurrencySystem(commands.Cog):
 
     @commands.command(name="unlock_shares_per")
     @is_allowed_user(930513222820331590, PBot)
-    async def unlock_shares(self, ctx,):
+    async def unlock_shares_per(self, ctx,):
         stocks = await get_etf_stocks(self, 6)
         for stock in stocks:
             result = await get_supply_stats(self, ctx, stock)
@@ -9919,14 +9984,6 @@ class CurrencySystem(commands.Cog):
         await ctx.send(f"Added new stock: {symbol} ({name}), price: {price}, total supply: {total_supply}, available: {available}")
 
 
-    @commands.command(name="true_price")
-    async def truePrice(self, ctx, symbol: str):
-        result = await get_supply_stats(self, ctx, symbol)
-        reserve, total, locked, escrow, market, circulating = result
-
-        iMC = total * 1000
-        true_price = iMC / (market + locked + escrow)
-        await ctx.send(f"True Price for {symbol}: {(true_price):,.2f}")
 
     @commands.command(name='stock_info', aliases=['stock_metric'], help='Show the current price, available supply, and top holders of a stock.')
     async def stock_info(self, ctx, symbol: str):
@@ -10043,7 +10100,7 @@ class CurrencySystem(commands.Cog):
         """, (amount, stock_name))
 
         # Update bot's balance
-        await update_user_balance(self.conn, PBot, get_user_balance(self.conn, PBot) - total_cost)
+#        await update_user_balance(self.conn, PBot, get_user_balance(self.conn, PBot) - total_cost)
 
 
 
@@ -10102,7 +10159,7 @@ class CurrencySystem(commands.Cog):
         """, (amount, stock_name))
 
         # Update bot's balance
-        await update_user_balance(self.conn, PBot, get_user_balance(self.conn, PBot) + total_earnings)
+#        await update_user_balance(self.conn, PBot, get_user_balance(self.conn, PBot) + total_earnings)
 
 
 
@@ -10175,7 +10232,38 @@ class CurrencySystem(commands.Cog):
 
 
 
+    @commands.command(name="reward_share_holders_qse", help="Reward P3:Stable shareholders with additional shares.")
+    @is_allowed_user(930513222820331590)
+    async def reward_share_holders_qse(self, ctx, stock_symbol: str, amount: int):
+        cursor = self.conn.cursor()
 
+        try:
+            # Fetch all users who hold P3:Stable
+            cursor.execute("SELECT user_id, amount FROM user_stocks WHERE symbol=? AND amount > 0", (stock_symbol,))
+            stable_holders = cursor.fetchall()
+
+            if not stable_holders:
+                await ctx.send("No users hold P3:Stable.")
+                return
+
+            total_amount = 0
+
+            # Reward each shareholder
+            for user_id, amount_held in stable_holders:
+                if user_id == 1092870544988319905 or amount_held == 0.0:
+                    continue
+
+                await self.send_from_reserve(ctx, user_id, amount)
+
+
+                total_amount += amount
+
+            await ctx.send(f"Reward distribution completed.\n{stock_symbol}\nTotal Amount QSE: {total_amount:,.2f}.")
+
+        except Exception as e:
+
+            print(f"An error occurred: {e}")
+            await ctx.send("An error occurred during the reward distribution. Please try again later.")
 
 
 
@@ -10532,41 +10620,6 @@ class CurrencySystem(commands.Cog):
 
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred: {str(e)}")
-
-    @commands.command(name="update_etf_prices", help="Update prices of stocks in an ETF by a specified percentage.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def update_etf_prices(self, ctx, etf_id: int, percentage: float):
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            SELECT symbol, price FROM stocks WHERE symbol IN (
-                SELECT symbol FROM etf_stocks WHERE etf_id = ?
-            )
-        """, (etf_id,))
-        stocks = cursor.fetchall()
-
-        if not stocks:
-            await ctx.send("The specified ETF does not exist or has no stocks.")
-            return
-
-        for stock in stocks:
-            symbol = stock[0]
-            price = stock[1]
-
-            # Calculate the new price based on the percentage
-            new_price = price * (1 + (percentage / 100))
-
-            try:
-                cursor.execute("""
-                    UPDATE stocks
-                    SET price = ?
-                    WHERE symbol = ?
-                """, (new_price, symbol))
-            except sqlite3.Error as e:
-                await ctx.send(f"An error occurred while updating the prices. Error: {str(e)}")
-                return
-
-        self.conn.commit()
-
 
 
 
@@ -11067,171 +11120,6 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @commands.command(name="reset_stock_limit", help="Reset a user's daily stock buy limit based on P3 address.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def reset_stock_limit(self, ctx, target_address: str, stock_symbol: str):
-        # Connect to the P3addr.db database
-        p3addr_conn = sqlite3.connect("P3addr.db")
-
-        # Get the user_id associated with the target address
-        user_id = get_user_id(p3addr_conn, target_address)
-
-        if not user_id:
-            await ctx.send("Invalid or unknown P3 address.")
-            return
-
-        # Connect to the currency_system database
-        currency_conn = sqlite3.connect("currency_system.db")
-        cursor = currency_conn.cursor()
-
-        try:
-            # Check if the user has a daily stock buy record
-            cursor.execute("""
-                SELECT *
-                FROM user_daily_buys
-                WHERE user_id=? AND symbol=? AND timestamp >= date('now', '-1 day')
-            """, (user_id, stock_symbol))
-            stock_limit_record = cursor.fetchone()
-
-            if stock_limit_record:
-                # Reset the daily stock buy record
-                cursor.execute("""
-                    DELETE FROM user_daily_buys
-                    WHERE user_id=? AND symbol=?
-                """, (user_id, stock_symbol))
-                currency_conn.commit()
-
-                await ctx.send(f"Successfully reset daily stock buy limit for the user with P3 address {target_address} and stock {stock_symbol}.")
-            else:
-                await ctx.send(f"This user did not reach the daily stock buy limit for {stock_symbol} yet.")
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred: {str(e)}")
-        finally:
-            # Close the database connections
-            p3addr_conn.close()
-            currency_conn.close()
-
-    @commands.command(name="reset_stock_limit_admin", help="Reset a user's daily stock buy limit based on P3 address.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def reset_stock_limit(self, ctx, target_address: str):
-        # Connect to the P3addr.db database
-        p3addr_conn = sqlite3.connect("P3addr.db")
-
-        # Get the user_id associated with the target address
-        user_id = get_user_id(p3addr_conn, target_address)
-
-        if not user_id:
-            await ctx.send("Invalid or unknown P3 address.")
-            return
-
-        # Connect to the currency_system database
-        currency_conn = sqlite3.connect("currency_system.db")
-        cursor = currency_conn.cursor()
-
-        try:
-            # Check if the user has any daily stock buy records
-            cursor.execute("""
-                SELECT *
-                FROM user_daily_buys
-                WHERE user_id=? AND timestamp >= date('now', '-1 day')
-            """, (user_id,))
-            stock_limit_records = cursor.fetchall()
-
-            if stock_limit_records:
-                # Reset all daily stock buy records for the user
-                cursor.execute("""
-                    DELETE FROM user_daily_buys
-                    WHERE user_id=?
-                """, (user_id,))
-                currency_conn.commit()
-
-                await ctx.send(f"Successfully reset daily stock buy limit for the user with P3 address {target_address}.")
-            else:
-                await ctx.send("This user did not reach the daily stock buy limit for any stocks yet.")
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred: {str(e)}")
-        finally:
-            # Close the database connections
-            p3addr_conn.close()
-            currency_conn.close()
-
-
-
-    @commands.command(name="reset_burn_limit", help="Reset a user's daily burn stock limit based on P3 address.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def reset_burn_limit(self, ctx, target_address: str):
-        # Connect to the P3addr.db database
-        p3addr_conn = sqlite3.connect("P3addr.db")
-
-        # Get the user_id associated with the target address
-        user_id = get_user_id(p3addr_conn, target_address)
-
-        if not user_id:
-            await ctx.send("Invalid or unknown P3 address.")
-            return
-
-        # Connect to the currency_system database
-        currency_conn = sqlite3.connect("currency_system.db")
-        cursor = currency_conn.cursor()
-
-        try:
-            # Check if the user has a burn history record
-            cursor.execute("SELECT * FROM burn_history WHERE user_id=? AND timestamp >= date('now', '-1 day')", (user_id,))
-            burn_history_record = cursor.fetchone()
-
-            if burn_history_record:
-                # Reset the burn history
-                cursor.execute("DELETE FROM burn_history WHERE user_id=?", (user_id,))
-                currency_conn.commit()
-
-                await ctx.send(f"Successfully reset burn limit for the user with P3 address {target_address}.")
-            else:
-                await ctx.send("This user did not reach the daily burn limit yet.")
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred: {str(e)}")
-        finally:
-            # Close the database connections
-            p3addr_conn.close()
-            currency_conn.close()
-
-    @commands.command(name="reset_burn_limit_all", help="Reset daily burn stock limits for all users.")
-    @is_allowed_user(930513222820331590, PBot)
-    async def reset_burn_limit_all(self, ctx):
-        # Connect to the P3addr.db database
-        p3addr_conn = sqlite3.connect("P3addr.db")
-
-        # Connect to the currency_system database
-        currency_conn = sqlite3.connect("currency_system.db")
-        cursor = currency_conn.cursor()
-
-        try:
-            # Get all user IDs with burn history records in the past day
-            cursor.execute("SELECT DISTINCT user_id FROM burn_history WHERE timestamp >= date('now', '-1 day')")
-            users_with_burn_history = cursor.fetchall()
-
-            if not users_with_burn_history:
-                await ctx.send("No users found with burn history in the past day.")
-                return
-
-            # Reset burn history for each user
-            for user_id in users_with_burn_history:
-                user_id = user_id[0]
-
-                cursor.execute("DELETE FROM burn_history WHERE user_id=?", (user_id,))
-                currency_conn.commit()
-
-                # Get the P3 address for notification
-                p3_address = get_p3_address(p3addr_conn, user_id)
-                await ctx.send(f"Successfully reset burn limit for the user with P3 address {p3_address}.")
-
-        except sqlite3.Error as e:
-            await ctx.send(f"An error occurred: {str(e)}")
-        finally:
-            # Close the database connections
-            p3addr_conn.close()
-            currency_conn.close()
-
-
 
 
 # Economy Tools
@@ -11588,7 +11476,6 @@ class CurrencySystem(commands.Cog):
             iMC = total_supply * item_price
             current_price = (iMC / avbl)
             current_value = circulating * current_price
-            print(f"{current_price:,.2f}\n{current_value:,.2f}\n{reserve_supply:,.0f}\n{circulating:,.0f}\n{total_supply:,.0f}")
             return current_price, current_value, reserve_supply, circulating, total_supply
         else:
             await ctx.send(f"Error fetching data for {item_name}.")
@@ -11865,6 +11752,12 @@ class CurrencySystem(commands.Cog):
                     return
                 cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (new_market, stock_name))
 
+            if total is not None:
+                if total < 0:
+                    await ctx.send("Invalid total supply value. The total supply must be non-negative.")
+                    return
+                cursor.execute("UPDATE stocks SET total_supply = ? WHERE symbol = ?", (new_total, stock_name))
+
             self.conn.commit()
             if verbose:
                 await self.buy_stock_for_bot(ctx, stock_name, mint)
@@ -11873,6 +11766,45 @@ class CurrencySystem(commands.Cog):
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred while updating the stock supply. Error: {str(e)}")
 
+
+    @commands.command(name="burn_stock", help="Set the total and available supply for a specific stock.")
+    @is_allowed_user(930513222820331590, PBot)
+    async def burn_stock_supply(self, ctx, stock_name: str, burn: int, verbose: bool = True):
+        cursor = self.conn.cursor()
+
+        try:
+            # Check if the stock exists
+            cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+            stock = cursor.fetchone()
+            if stock is None:
+                await ctx.send(f"This stock '{stock_name}' does not exist.")
+                return
+
+            result = await get_supply_stats(self, ctx, stock_name)
+            reserve, total, locked, escrow, market, circulating = result
+            new_market = market - burn
+            new_total = total - burn
+
+
+            if reserve is not None:
+                if reserve < 0:
+                    await ctx.send("Invalid available supply value. The available supply must be non-negative.")
+                    return
+                cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (new_market, stock_name))
+
+            if total is not None:
+                if total < 0:
+                    await ctx.send("Invalid total supply value. The total supply must be non-negative.")
+                    return
+                cursor.execute("UPDATE stocks SET total_supply = ? WHERE symbol = ?", (new_total, stock_name))
+
+            self.conn.commit()
+            if verbose:
+                await self.sell_stock_for_bot(ctx, stock_name, burn)
+                await ctx.send(f"Burned {burn:,.0f} to {stock_name}\n\n{market:,.0f}->{new_market:,.0f}\n{total:,.0f}->{new_total:,.0f}")
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred while updating the stock supply. Error: {str(e)}")
 
     @commands.command(name="set_stock_supply", help="Set the total and available supply for a specific stock.")
     @is_allowed_user(930513222820331590, PBot)
@@ -11907,6 +11839,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name='roulette', help='Play roulette. Choose a color (red/black/green) or a number (0-36) or "even"/"odd" and your bet amount.')
+    @is_allowed_user(930513222820331590)
     async def roulette(self, ctx, choice: str, bet: int):
         self.casino_timer_start = timeit.default_timer()
         user_id = ctx.author.id
@@ -11972,17 +11905,18 @@ class CurrencySystem(commands.Cog):
 
         if win_amount > 0:
             new_balance += win_amount
-            await update_user_balance(self.conn, user_id, new_balance)
-            await ctx.send(f"{ctx.author.mention}, congratulations! The ball landed on {spin_result} ({spin_color}). You won {win_amount} $QSE. Your new balance is {new_balance:,.2f}.")
+#            await update_user_balance(self.conn, user_id, new_balance)
+            await self.send_from_reserve(ctx, user_id, win_amount)
+            await ctx.send(f"{ctx.author.mention}, congratulations! The ball landed on {spin_result} ({spin_color}). You won {win_amount} $QSE. Your new balance is {new_balance - tax:,.2f}.")
             await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You won {win_amount} $QSE", new_balance)
             await self.casinoTool(ctx, True)
         else:
-            await ctx.send(f"{ctx.author.mention}, the ball landed on {spin_result} ({spin_color}). You lost {total_cost} $QSE including Gas. Your new balance is {new_balance:,.2f}.")
+            await ctx.send(f"{ctx.author.mention}, the ball landed on {spin_result} ({spin_color}). You lost {total_cost} $QSE including Gas. Your new balance is {new_balance - tax:,.2f}.")
             await log_gambling_transaction(ledger_conn, ctx, "Roulette", bet, f"You lost {total_cost} $QSE", new_balance)
             await self.casinoTool(ctx, False)
         # Transfer the tax amount to the bot's address P3:03da907038
-        await update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax)
-        await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), tax)
+#        await update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + tax)
+#        await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), tax)
         elapsed_time = timeit.default_timer() - self.casino_timer_start
         self.casino_avg.append(elapsed_time)
 
@@ -12034,7 +11968,10 @@ class CurrencySystem(commands.Cog):
 
         # Deduct bet and tax from user's current balance
         new_balance = current_balance - total_cost
-        await update_user_balance(self.conn, user_id, new_balance)
+#        await update_user_balance(self.conn, user_id, new_balance)
+        P3addrConn = sqlite3.connect("P3addr.db")
+        PBotAddr = get_p3_address(P3addrConn, PBot)
+        await self.give_addr(ctx, PBotAddr, int(total_cost), False)
 
         # Check if the user wins
         win = choice.lower() == coin_result
@@ -12064,6 +12001,7 @@ class CurrencySystem(commands.Cog):
         self.casino_avg.append(elapsed_time)
 
     @commands.command(name='slotmachine', aliases=['slots'], help='Play the slot machine. Bet an amount up to 500,000 $QSE.')
+    @is_allowed_user(930513222820331590)
     async def slotmachine(self, ctx, bet: int):
         self.casino_timer_start = timeit.default_timer()
         user_id = ctx.author.id
@@ -12151,6 +12089,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name='dice_roll', aliases=["dice"], help='Roll a dice. Bet on a number (1-6).')
+    @is_allowed_user(930513222820331590)
     async def dice_roll(self, ctx, chosen_number: int, bet_amount: int):
         self.casino_timer_start = timeit.default_timer()
         user_id = ctx.author.id
@@ -12359,13 +12298,15 @@ class CurrencySystem(commands.Cog):
         try:
             cursor = self.conn.cursor()
 
-            # Fetch the city statistics (population count)
-            cursor.execute("SELECT current_city, COUNT(user_id) FROM users_rpg_cities WHERE current_city IS NOT NULL GROUP BY current_city")
-            city_pop = cursor.fetchall()
-
-            # Fetch the user count and new city statistics
+            # Fetch the city statistics (population count) and additional statistics
             cursor.execute("""
-                SELECT c.current_city, s.QSE, s.Resources, s.Stocks, s.ETPs
+                SELECT
+                    c.current_city,
+                    COALESCE(COUNT(user_id), 0) AS population,
+                    COALESCE(s.QSE, 0) AS QSE,
+                    COALESCE(s.Resources, 0) AS Resources,
+                    COALESCE(s.Stocks, 0) AS Stocks,
+                    COALESCE(s.ETPs, 0) AS ETPs
                 FROM users_rpg_cities c
                 LEFT JOIN user_city_stats s ON c.current_city = s.city
                 WHERE c.current_city IS NOT NULL
@@ -12373,23 +12314,14 @@ class CurrencySystem(commands.Cog):
             """)
             city_stats = cursor.fetchall()
 
-            if city_stats and city_pop:
+            if city_stats:
                 # Create an embed to display city statistics
                 embed = discord.Embed(title='City Statistics', color=discord.Colour.blue())
 
-                for city, qse, resources, stocks, etps in city_stats:
-                    # Find the corresponding population count for the city
-                    count = next((count for c, count in city_pop if c == city), 0)
-
-                    try:
-                        qse_integer = int(qse) if qse is not None else 0
-                    except ValueError:
-                        # Handle the case where qse is not a valid integer
-                        qse_integer = 0
-
+                for city, population, qse, resources, stocks, etps in city_stats:
                     embed.add_field(
                         name=city,
-                        value=f"Number of People: {count:,.0f}\n\nQSE:\n{qse_integer:,.2f}\n\nResources:\n{resources:,.2f}\n\nStocks:\n{stocks:,.2f}\n\nETPs:\n{etps:,.2f}\n\n",
+                        value=f"Number of People: {population:,.0f}\n\nQSE: {qse:,.2f}\n\nResources: {resources:,.2f}\n\nStocks: {stocks:,.2f}\n\nETPs: {etps:,.2f}\n\n",
                         inline=False
                     )
 
@@ -12400,6 +12332,7 @@ class CurrencySystem(commands.Cog):
         except sqlite3.Error as e:
             print(f"An error occurred while fetching city statistics: {e}")
             await ctx.send("An error occurred while fetching city statistics. Please try again later.")
+
 
 
     @commands.command(name='travel', help='Travel to a different city')
@@ -13040,42 +12973,6 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @commands.command(name="reserve_funds")
-    async def reserve_funds(self, ctx):
-        Pbot_Balance = 0
-        cursor = self.conn.cursor()
-        try:
-            # Calculate total stock value
-            cursor.execute("SELECT balance FROM users WHERE user_id = ?", (PBot,))
-            row = cursor.fetchone()
-            Pbot_Balance = row[0]
-            # Calculate total stock value
-            cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=?", (PBot,))
-            user_stocks = cursor.fetchall()
-            total_stock_value = 0
-
-            for symbol, amount in user_stocks:
-                cursor.execute("SELECT price FROM stocks WHERE symbol=?", (symbol,))
-                stock_price_row = cursor.fetchone()
-                stock_price = stock_price_row[0] if stock_price_row else 0
-                total_stock_value += stock_price * amount
-        except Exception as e:
-            total_stock_value = 0
-
-        MAX_BALANCE = Pbot_Balance + total_stock_value
-
-        embed = discord.Embed(
-            title=f"Reserve Balance Sheet",
-            color=discord.Color.blue()
-        )
-        embed.add_field(name="Reserve Funds:", value=f"{Pbot_Balance:,.2f}", inline=False)
-        embed.add_field(name="Reserve Stocks:", value=f"{total_stock_value:,.2f}", inline=False)
-        embed.add_field(name="Reserve Balance:", value=f"{MAX_BALANCE:,.2f}", inline=False)
-
-        await ctx.send(embed=embed)
-        await self.reserve_chart(ctx)
-
-
 
     async def city_value(self):
         cursor = self.conn.cursor()
@@ -13089,13 +12986,15 @@ class CurrencySystem(commands.Cog):
         """)
         city_stats = cursor.fetchall()
 
+        qse_integer = 0  # Initialize qse_integer before the loop
+
         if city_stats:
             for city, qse, resources, stocks, etps in city_stats:
                 try:
-                    qse_integer = int(qse) if qse is not None else 0
+                    qse_integer += int(qse) if qse is not None else 0
                 except ValueError:
                     # Handle the case where qse is not a valid integer
-                    qse_integer = 0
+                    pass  # You may want to log or handle this error
 
         return qse_integer
 
