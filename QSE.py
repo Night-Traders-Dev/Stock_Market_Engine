@@ -47,6 +47,7 @@ import timeit
 import statistics
 import aiosqlite
 import uuid
+import pytz
 
 matplotlib.use('agg')
 
@@ -61,7 +62,7 @@ dETFLimit = 5000000000000
 MAX_BALANCE = Decimal('5000000000000000000')
 resetQSE = 100
 dailyMin = 100000
-dailyMax = 500000
+dailyMax = 500000000000
 ticketPrice = 100
 maxTax = 0.50
 minBet = 10000
@@ -432,11 +433,9 @@ def setup_database():
             CREATE TABLE IF NOT EXISTS user_etfs (
                 user_id INTEGER NOT NULL,
                 etf_id INTEGER NOT NULL,
-                symbol TEXT NOT NULL,
                 quantity INTEGER NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(user_id),
                 FOREIGN KEY (etf_id) REFERENCES etfs(etf_id),
-                FOREIGN KEY (symbol) REFERENCES etf_stocks(symbol),
                 PRIMARY KEY (user_id, etf_id)
             )
         ''')
@@ -1070,6 +1069,19 @@ def setup_database():
 
     try:
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS etf_14_value (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MV TEXT NOT NULL
+
+            );
+        """)
+
+        print("ETF 14 Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
+
+    try:
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS metal_value (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Gold TEXT NOT NULL,
@@ -1085,6 +1097,18 @@ def setup_database():
     except sqlite3.Error as e:
         print(f"An error occurred while creating the tables: {str(e)}")
 
+    try:
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS etf_shares (
+                etf_id INTEGER NOT NULL,
+                available INTEGER NOT NULL DEFAULT 0,
+                total INTEGER NOT NULL DEFAULT 0
+
+            );
+        ''')
+        print("ETF Shares Tables created successfully")
+    except sqlite3.Error as e:
+        print(f"An error occurred while creating the tables: {str(e)}")
 
     conn.commit()
     return conn
@@ -1098,6 +1122,99 @@ create_p3addr_table()
 create_vip_table()
 
 
+async def is_trading_hours():
+    # Get current time in EST timezone
+    est = pytz.timezone('US/Eastern')
+    current_time_est = datetime.now(est)
+
+    # Check if it's between 7 AM and 7 PM EST
+    if current_time_est.hour >= 7 and current_time_est.hour < 19:  # 7 AM to 7 PM EST
+        # Check if it's a weekday (Monday=0, Sunday=6)
+        if current_time_est.weekday() < 5:  # Weekday (Monday to Friday)
+            return True, "Weekday"
+        else:
+            return True, "Weekend"
+    else:
+        return False, None
+
+
+async def insert_etf_shares(self, etf_id, available, total):
+    try:
+        # Connect to the database
+
+        cursor = self.conn.cursor()
+
+        # Insert a new record into the etf_shares table
+        cursor.execute("INSERT INTO etf_shares (etf_id, available, total) VALUES (?, ?, ?)", (etf_id, available, total))
+
+        # Commit the transaction
+        self.conn.commit()
+
+        print("Record inserted successfully.")
+
+    except sqlite3.Error as e:
+        print(f"Error occurred: {e}")
+
+async def update_etf_shares(self, etf_id, available):
+    try:
+        # Connect to the database
+
+        cursor = self.conn.cursor()
+
+        # Update the available shares for the given ETF ID
+        cursor.execute("UPDATE etf_shares SET available = ? WHERE etf_id = ?", (available, etf_id))
+
+        # Commit the transaction
+        self.conn.commit()
+
+        print("Shares updated successfully.")
+
+    except sqlite3.Error as e:
+        print(f"Error occurred: {e}")
+
+async def get_available_etf_shares(self, etf_id):
+    try:
+        # Connect to the database
+        cursor = self.conn.cursor()
+
+        # Execute the SELECT query to retrieve available shares for the given ETF ID
+        cursor.execute("SELECT available FROM etf_shares WHERE etf_id = ?", (etf_id,))
+        result = cursor.fetchone()
+
+        # Check if the result is not None
+        if result is not None:
+            # Return the available shares
+            return result[0]
+        else:
+            # If the result is None, the ETF ID might not exist in the table
+            print("ETF ID not found.")
+            return None
+
+    except sqlite3.Error as e:
+        print(f"Error occurred: {e}")
+        return None
+
+async def get_total_etf_shares(self, etf_id):
+    try:
+        # Connect to the database
+        cursor = self.conn.cursor()
+
+        # Execute the SELECT query to retrieve available shares for the given ETF ID
+        cursor.execute("SELECT total FROM etf_shares WHERE etf_id = ?", (etf_id,))
+        result = cursor.fetchone()
+
+        # Check if the result is not None
+        if result is not None:
+            # Return the available shares
+            return result[0]
+        else:
+            # If the result is None, the ETF ID might not exist in the table
+            print("ETF ID not found.")
+            return None
+
+    except sqlite3.Error as e:
+        print(f"Error occurred: {e}")
+        return None
 
 ## Bank Engine
 
@@ -1244,7 +1361,7 @@ async def view_account(self, ctx, bank_id):
         """, (user_id, bank_id))
         account_data = cursor.fetchone()
         if account_data:
-            qse_balance = account_data[3]
+            qse_balance = int(account_data[3])
             formatted_qse_balance = f"{qse_balance:,.0f}"
 
             embed = Embed(
@@ -1397,7 +1514,7 @@ async def tax_command(self, ctx):
     bot_balance = get_user_balance(self.conn, bot_id)
 
     if user_balance < total_amount:
-        await ctx.send(f"{ctx.author.mention}, you don't have enough $QSE to run this command. Your current balance is {sender_balance:,.2f} $QSE. Requires {base_amount} + {tax_amount}")
+        await ctx.send(f"{ctx.author.mention}, you don't have enough $QSE to run this command. Your current balance is {user_balance:,.2f} $QSE. Requires {base_amount} + {tax_amount}")
         return
 
     # Deduct the tax from the sender's balance
@@ -1434,26 +1551,27 @@ async def get_stock_price(self, ctx, stock_name):
     initial_price = result[0] if result else 0
 
     weighted_metrics = await get_weighted_metrics(self, stock_name)
-#    wap = await get_weighted_average_price(self, ctx, stock_name)
-    weighted_average_price, total_volume = weighted_metrics if weighted_metrics else (0, 1)  # Default values to prevent division by zero
+    weighted_average_price, total_volume = weighted_metrics if weighted_metrics else (0, 1)
 
-
+    result_op = await lowest_price_order(self, ctx, "sell", stock_name)
+    if result_op:
+        order_price = result_op["price"]
+    else:
+        order_price = 0
     result = await get_supply_stats(self, ctx, stock_name)
-    reserve, total, locked, escrow, market, circulating = result if result else (0, 1, 0, 0, 0, 0)  # Default values
+    reserve, total, locked, escrow, market, circulating = result if result else (0, 1, 0, 0, 0, 0)
 
-    iMC = total * initial_price
+    iMC = (total * initial_price)
     avbl = market + locked
-    avbl = avbl if avbl != 0 else 1  # Division by zero check
+    avbl = avbl if avbl != 0 else 1
 
+    stockprice = (iMC / avbl)
 
-
-    if weighted_average_price == None:
-        weighted_average_price = 0
-        total_volume = 1
-    naturalprice = (iMC / avbl)
-    stockprice = (iMC / avbl) + (weighted_average_price / total_volume)
-#    marketprice = naturalprice + wap
-#    print(f"{naturalprice:,.2f} and {stockprice:,.2f} and {marketprice:,.2f}")
+    if result_op:
+        if weighted_average_price > 0:
+            stockprice = (stockprice + weighted_average_price) / 2
+        else:
+            stockprice = (stockprice + result_op['price']) / 2
 
     return stockprice
 
@@ -2412,12 +2530,23 @@ async def get_stock_price_interval(self, ctx, stock_symbol, interval='daily'):
         async with aiosqlite.connect("p3ledger.db") as conn:
             cursor = await conn.cursor()
 
-            # Get the current date
-            today = datetime.now().date()
+            # Get the current date and time in EST timezone
+            est_tz = pytz.timezone('America/New_York')
+            now = datetime.now(est_tz)
+
+            # Set the start and end times for the day in EST timezone
+            start_of_day = now.replace(hour=7, minute=0, second=0, microsecond=0)
+            end_of_day = now.replace(hour=19, minute=0, second=0, microsecond=0)
+
+            # Adjust the current date if necessary
+            if now < start_of_day:
+                today = now.date() - timedelta(days=1)
+            else:
+                today = now.date()
 
             # Calculate the start timestamp based on the specified interval
             if interval == 'daily':
-                start_timestamp = today
+                start_timestamp = start_of_day
             elif interval == 'weekly':
                 start_timestamp = today - timedelta(days=today.weekday())
             elif interval == 'monthly':
@@ -2428,19 +2557,16 @@ async def get_stock_price_interval(self, ctx, stock_symbol, interval='daily'):
             # Fetch the opening price and the current price for the specified stock within the specified interval
             query = """
                 SELECT
-                    COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp <= ? AND action='Buy Stock' ORDER BY timestamp DESC LIMIT 1), 0.0) as opening_price,
-                    COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1), 0.0) as current_price
+                    COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp >= ? AND timestamp <= ? AND action='Buy Stock' ORDER BY timestamp ASC LIMIT 1), 0.0) as opening_price,
+                    COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1), 0.0) as current_price
             """
-            await cursor.execute(query, (stock_symbol, start_timestamp, stock_symbol, today))
+            await cursor.execute(query, (stock_symbol, start_timestamp, end_of_day, stock_symbol, start_timestamp, end_of_day))
             result = await cursor.fetchone()
 
             opening_price, current_price = await asyncio.gather(
                 convert_to_float(result[0]),
                 convert_to_float(result[1])
             )
-
-            current_price = await get_stock_price(self, ctx, stock_symbol)
-            current_price = await convert_to_float(current_price)
 
             price_change = current_price - opening_price
 
@@ -2450,21 +2576,232 @@ async def get_stock_price_interval(self, ctx, stock_symbol, interval='daily'):
         print(f"An error occurred: {str(e)}")
         return 0, 0, 0
 
+
+async def get_stock_price_change(self, ctx, stock_symbol, interval='daily'):
+    try:
+        async with aiosqlite.connect("p3ledger.db") as conn:
+            cursor = await conn.cursor()
+
+            # Get the current date and time in EST timezone
+            est_tz = pytz.timezone('America/New_York')
+            now = datetime.now(est_tz)
+
+            # Set the start and end times for the day and after hours in EST timezone
+            start_of_day = now.replace(hour=7, minute=0, second=0, microsecond=0)
+            end_of_day = now.replace(hour=19, minute=0, second=0, microsecond=0)
+            start_after_hours = now.replace(hour=19, minute=0, second=0, microsecond=0) - timedelta(days=1)
+            end_after_hours = now.replace(hour=7, minute=0, second=0, microsecond=0)
+
+            # Adjust the current date if necessary
+            if now < start_of_day:
+                today = now.date() - timedelta(days=1)
+            else:
+                today = now.date()
+
+            # Calculate the start timestamp based on the specified interval
+            if interval == 'daily':
+                start_timestamp = start_of_day
+                end_timestamp = now
+                prev_start_timestamp = start_after_hours
+                prev_end_timestamp = end_of_day
+            elif interval == 'weekly':
+                start_timestamp = today - timedelta(days=today.weekday())
+                end_timestamp = now
+                prev_start_timestamp = start_timestamp - timedelta(days=7)
+                prev_end_timestamp = start_timestamp
+            elif interval == 'monthly':
+                start_timestamp = today.replace(day=1)
+                end_timestamp = now
+                prev_start_timestamp = start_timestamp - relativedelta(months=1)
+                prev_end_timestamp = start_timestamp
+            else:
+                raise ValueError("Invalid interval. Supported intervals: 'daily', 'weekly', 'monthly'")
+
+            # Fetch the opening price and the current price for the specified stock within the specified interval
+            query = """
+                SELECT
+                    COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp >= ? AND timestamp <= ? AND action='Buy Stock' ORDER BY timestamp ASC LIMIT 1), 0.0) as opening_price,
+                    COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1), 0.0) as current_price,
+                    COALESCE((SELECT price FROM stock_transactions WHERE symbol=? AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC LIMIT 1), 0.0) as prev_opening_price
+            """
+            await cursor.execute(query, (stock_symbol, start_timestamp, end_timestamp, stock_symbol, start_timestamp, end_timestamp, stock_symbol, prev_start_timestamp, prev_end_timestamp))
+            result = await cursor.fetchone()
+
+            opening_price, current_price, prev_opening_price = await asyncio.gather(
+                convert_to_float(result[0]),
+                convert_to_float(result[1]),
+                convert_to_float(result[2])
+            )
+
+            current_price = await get_stock_price(self, ctx, stock_symbol)
+            if opening_price == 0:
+                opening_price = current_price
+            if prev_opening_price == 0:
+                prev_opening_price = current_price
+            price_change = current_price - opening_price
+            prev_price_change = current_price - prev_opening_price
+
+            # Protect against division by zero
+            percentage_change = (price_change / opening_price) * 100 if opening_price != 0 else 0
+            prev_percentage_change = (prev_price_change / prev_opening_price) * 100 if prev_opening_price != 0 else 0
+
+
+            return opening_price, current_price, price_change, percentage_change, prev_price_change, prev_percentage_change
+
+    except aiosqlite.Error as e:
+        print(f"An error occurred: {str(e)}")
+        return 0, 0, 0, 0, 0, 0
+
+
+async def get_total_shares_for_user(self, ctx, symbol):
+    try:
+        async with aiosqlite.connect("currency_system.db") as conn:
+            cursor = await conn.cursor()
+
+            if symbol:
+                # Fetch orders placed by the user
+                await cursor.execute("""
+                    SELECT * FROM limit_orders
+                    WHERE user_id = ? and symbol = ?
+                    """, (ctx.author.id, symbol,))
+                user_orders = await cursor.fetchall()
+
+                # Calculate total number of shares
+                total_shares = sum(order['quantity'] for order in user_orders)
+                return total_shares
+
+    except aiosqlite.Error as e:
+        print(f"An error occurred: {str(e)}")
+        return 0  # Return 0 if an error occurs
+
+async def get_daily_volume(self, symbol):
+    try:
+        async with aiosqlite.connect("p3ledger.db") as conn:
+            cursor = await conn.cursor()
+
+            # Get the current date
+            today = datetime.now().date()
+
+            # Calculate the start timestamp for the day
+            start_timestamp = today.replace(hour=0, minute=0, second=0, microsecond=0)
+
+            # Fetch the daily volume for the specified stock symbol
+            query = """
+                SELECT COALESCE(SUM(quantity), 0)
+                FROM stock_transactions
+                WHERE symbol=? AND action='Buy Stock' AND timestamp >= ? AND timestamp < ?
+            """
+            await cursor.execute(query, (symbol, start_timestamp, start_timestamp + timedelta(days=1)))
+            result = await cursor.fetchone()
+
+            daily_volume = await convert_to_float(result[0])
+
+            return daily_volume
+    except aiosqlite.Error as e:
+        print(f"An error occurred: {str(e)}")
+
+async def plot_daily_volume_chart(self, ctx):
+    try:
+        async with aiosqlite.connect("p3ledger.db") as conn:
+            cursor = await conn.cursor()
+
+            # Get all unique symbols
+            cursor.execute("SELECT DISTINCT symbol FROM stock_transactions")
+            symbols = [row[0] for row in cursor.fetchall()]
+
+            # Get the first purchase date for each symbol
+            first_purchase_dates = {}
+            for symbol in symbols:
+                query = "SELECT MIN(timestamp) FROM stock_transactions WHERE symbol=?"
+                cursor.execute(query, (symbol,))
+                result = cursor.fetchone()
+                first_purchase_dates[symbol] = datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S").date()
+
+            # Initialize data for plotting
+            dates = []
+            volumes = {symbol: [] for symbol in symbols}
+
+            # Fetch daily volumes for each symbol
+            current_date = datetime.now().date()
+            while current_date >= min(first_purchase_dates.values()):
+                dates.append(current_date)
+                for symbol in symbols:
+                    start_timestamp = current_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_timestamp = start_timestamp + timedelta(days=1)
+
+                    query = """
+                        SELECT COALESCE(SUM(quantity), 0)
+                        FROM stock_transactions
+                        WHERE symbol=? AND action='Buy Stock' AND timestamp >= ? AND timestamp < ?
+                    """
+                    cursor.execute(query, (symbol, start_timestamp, end_timestamp))
+                    result = cursor.fetchone()
+                    daily_volume = await convert_to_float(result[0])
+                    volumes[symbol].append(daily_volume)
+
+                current_date -= timedelta(days=1)
+
+            # Plot the chart
+            plt.figure(figsize=(10, 6))
+            for symbol in symbols:
+                plt.plot(dates, volumes[symbol], label=symbol)
+
+            plt.xlabel('Date')
+            plt.ylabel('Daily Volume')
+            plt.title('Daily Volume Chart for Each Symbol')
+            plt.legend()
+
+            # Save the plot as an image
+            image_stream = BytesIO()
+            plt.savefig(image_stream, format='png')
+            image_stream.seek(0)
+            plt.close()
+
+            # Send the image as a file in Discord
+            await ctx.send(file=File(image_stream, filename='daily_volume_chart.png'))
+
+    except aiosqlite.Error as e:
+        print(f"An error occurred: {str(e)}")
+
 async def get_average_quantity_held(self, ctx, user_id, symbol):
     conn = sqlite3.connect("p3ledger.db", check_same_thread=False, isolation_level=None)
     cursor = conn.cursor()
 
-    # Calculate average quantity held
+    # Calculate average quantity held for "Buy Stock" action
     cursor.execute("""
         SELECT AVG(quantity) as avg_quantity_held
         FROM stock_transactions
-        WHERE user_id = ? AND symbol = ?
+        WHERE user_id = ? AND symbol = ? AND action = 'Buy Stock'
     """, (user_id, symbol))
-    avg_quantity_held = cursor.fetchone()[0] or 0.0
+    avg_quantity_held_buy = cursor.fetchone()[0] or 0.0
+
+    # Calculate average quantity held for "Sell Stock" action
+    cursor.execute("""
+        SELECT AVG(quantity) as avg_quantity_held
+        FROM stock_transactions
+        WHERE user_id = ? AND symbol = ? AND action = 'Sell Stock'
+    """, (user_id, symbol))
+    avg_quantity_held_sell = cursor.fetchone()[0] or 0.0
+
+    # Combine the averages
+    combined_avg_quantity_held = (avg_quantity_held_buy + avg_quantity_held_sell) / 2
 
 
+    return avg_quantity_held_buy, avg_quantity_held_sell, combined_avg_quantity_held
 
-    return avg_quantity_held
+
+async def get_stock_profit_loss(self, ctx, user_id, symbol):
+    # Get average prices and quantity held
+    avg_buy, avg_sell, total_avg = await get_average_stock_prices(self, ctx, user_id, symbol)
+    avg_quantity_held_buy, avg_quantity_held_sell, avg_quantity_held = await get_average_quantity_held(self, ctx, user_id, symbol)
+
+    # Calculate overall P/L
+    if avg_buy <= 0 or avg_quantity_held <= 0:
+        return 0  # No profit/loss if no purchases or holdings
+    overall_pl = (avg_sell - avg_buy) * avg_quantity_held
+
+    return overall_pl
+
 
 async def get_average_stock_prices(self, ctx, user_id, symbol):
     conn = sqlite3.connect("p3ledger.db", check_same_thread=False, isolation_level=None)
@@ -2498,7 +2835,37 @@ async def get_average_stock_prices(self, ctx, user_id, symbol):
 
     return avg_buy_price, avg_sell_price, total_avg_price
 
+async def get_average_etf_prices(self, ctx, user_id, symbol):
+    conn = sqlite3.connect("p3ledger.db", check_same_thread=False, isolation_level=None)
+    cursor = conn.cursor()
 
+    # Calculate average buy price
+    cursor.execute("""
+        SELECT AVG(CAST(REPLACE(price, ',', '') AS REAL)) as avg_buy_price
+        FROM stock_transactions
+        WHERE user_id = ? AND symbol = ? AND action = 'Buy ETF'
+    """, (user_id, symbol))
+    avg_buy_price = cursor.fetchone()[0] or 0.0
+
+    # Calculate average sell price
+    cursor.execute("""
+        SELECT AVG(CAST(REPLACE(price, ',', '') AS REAL)) as avg_sell_price
+        FROM stock_transactions
+        WHERE user_id = ? AND symbol = ? AND action = 'Sell ETF'
+    """, (user_id, symbol))
+    avg_sell_price = cursor.fetchone()[0] or 0.0
+
+    # Calculate total average price
+    cursor.execute("""
+        SELECT AVG(CAST(REPLACE(price, ',', '') AS REAL)) as total_avg_price
+        FROM stock_transactions
+        WHERE user_id = ? AND symbol = ?
+    """, (user_id, symbol))
+    total_avg_price = cursor.fetchone()[0] or 0.0
+
+
+
+    return avg_buy_price, avg_sell_price, total_avg_price
 
 
 async def wait_for_unlocked(conn: aiosqlite.Connection):
@@ -2857,7 +3224,7 @@ async def get_supply_info(self, ctx, stock_name):
     supply_info = cursor.fetchone()
 
     if supply_info is None:
-        await ctx.send(f"This stock does not exist.")
+#        await ctx.send(f"This stock does not exist.")
         return
 
     return supply_info
@@ -2875,6 +3242,18 @@ async def update_market_etf_price(bot, conn):
         etf_value = await get_etf_value(self, ctx, 6)  # Replace 6 with the ID of the "Market ETF"
         if etf_value is not None:
             await channel.edit(name=f"Market ETF: {etf_value:,.2f} ")
+
+
+async def get_etf_shares(self, ctx, etf_id):
+    etf_shares = 0
+    stocks = await get_etf_stocks(self, etf_id)
+    for stock in stocks:
+        result = await get_supply_stats(self, ctx, stock)
+        reserve, total, locked, escrow, market, circulating = result
+
+        etf_shares += locked
+    print(f"ETF Shares {etf_shares:,.0f}")
+    return etf_shares
 
 async def get_etf_value(self, ctx, etf_id):
 
@@ -4593,11 +4972,11 @@ class CurrencySystem(commands.Cog):
         self.is_long_order = False
         self.contract_pool = []
 
-        self.market_circuit_breaker =  False
-        self.stock_circuit_breaker = False
+        self.market_circuit_breaker =  True
+        self.stock_circuit_breaker = True
 
         self.not_trading = []
-        self.maintenance = ['secureharbor', 'GoldToken']
+        self.maintenance = ['secureharbor', 'goldtoken']
         self.stock_monitor = defaultdict(list)
 #        self.ceo_stocks = [("partyscene", 607050637292601354), ("p3:bank", 930513222820331590), ("savage", 1147507029494202461)]
         self.ceo_stocks = {
@@ -4620,7 +4999,7 @@ class CurrencySystem(commands.Cog):
 
         self.cities = ["StellarHub", "TechnoMetra", "Quantumopolis", "CryptoVista"]
         self.safe_city = "StellarHub"
-        self.etfs = ["1", "2", "3", "4", "6", "7", "8", "9", "10", "11", "12", "13"]
+        self.etfs = ["1", "2", "3", "4", "6", "7", "8", "9", "10", "11", "12", "13", "14"]
         self.metals = ['Gold', 'Lithium', 'Silver', 'Copper', 'Platinum']
 
 
@@ -4751,6 +5130,17 @@ class CurrencySystem(commands.Cog):
         return tax_rate
 
 
+    @commands.command(name="get_stock_daily")
+    async def get_stock_daily(self, ctx, stock):
+        opening_price, current_price, price_change, percentage_change, prev_price_change, prev_percentage_change = await get_stock_price_change(self, ctx, stock, interval='daily')
+
+        print(f"""
+        Stock: {stock}
+        Price: {current_price:,.2f} QSE
+        Open: {opening_price:,.2f} QSE
+        Daily: {price_change:,.2f}({percentage_change:,.4f})%
+        After Hours: {prev_price_change:,.2f}({prev_percentage_change:,.4f})%
+        """)
 
     @commands.command(name="transaction_metrics", help="Show average transaction speeds for each type.")
     async def show_transaction_metrics(self, ctx):
@@ -6046,10 +6436,7 @@ class CurrencySystem(commands.Cog):
         min_price = float(min_price)
         max_price = float(max_price)
         opening_price, closest_price, interval_change = await get_stock_price_interval(self, ctx, symbol, interval='daily')
-        if opening_price != 0:
-            opening_change = (interval_change / opening_price) * 100
-        else:
-            opening_change = 10
+        opening_price, current_price, price_change, percentage_change, prev_price_change, prev_percentage_change = await get_stock_price_change(self, ctx, symbol, interval='daily')
 
         # Create an embed to display the statistics
         embed = discord.Embed(
@@ -6061,14 +6448,18 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Current Price", value=f"{formatted_current_price} $QSE", inline=False)
         embed.add_field(name="Average Price", value=f"{avg_price:,.11f} $QSE🔁", inline=False)
         embed.add_field(name="Initial Price", value=f"{result[1]:,.11f} $QSE🔁", inline=False)
+        embed.add_field(name="Opening Price", value=f"{opening_price:,.2f} $QSE", inline=False)
+        embed.add_field(name="Daily Change", value=f"{price_change:,.2f}({percentage_change:,.4f})%", inline=False)
+        embed.add_field(name="After Hours", value=f"{prev_price_change:,.2f}({prev_percentage_change:,.4f})%", inline=False)
+        embed.add_field(name="", value=f"-------------------------------------", inline=False)
         embed.add_field(name="Daily Volume:", value=f"{daily_volume:,} shares", inline=False)
         embed.add_field(name="Daily Volume Value:", value=f"{daily_volume_value:,.2f} $QSE", inline=False)
         embed.add_field(name="Daily Buy Volume:", value=f"{daily_buy_volume:,.0f} shares 📈", inline=False)
-        embed.add_field(name="Daily Buy Volume Value:", value=f"{daily_buy_volume_value:,.2f} $QSE 📈", inline=False)
+#        embed.add_field(name="Daily Buy Volume Value:", value=f"{daily_buy_volume_value:,.2f} $QSE 📈", inline=False)
         embed.add_field(name="Daily Sell Volume:", value=f"{daily_sell_volume:,.0f} shares 📉", inline=False)
-        embed.add_field(name="Daily Sell Volume Value:", value=f"{daily_sell_volume_value:,.2f} $QSE 📉", inline=False)
-        embed.add_field(name="Total Buys💵", value=f"{formatted_total_buys} $QSE ({total_quantity_buys:,} buys📈)", inline=False)
-        embed.add_field(name="Total Sells💵", value=f"{formatted_total_sells} $QSE ({total_quantity_sells:,} sells📉)", inline=False)
+#        embed.add_field(name="Daily Sell Volume Value:", value=f"{daily_sell_volume_value:,.2f} $QSE 📉", inline=False)
+#        embed.add_field(name="Total Buys💵", value=f"{formatted_total_buys} $QSE ({total_quantity_buys:,} buys📈)", inline=False)
+#        embed.add_field(name="Total Sells💵", value=f"{formatted_total_sells} $QSE ({total_quantity_sells:,} sells📉)", inline=False)
         embed.add_field(name="Valuation", value=valuation_label, inline=False)
         if etfs_containing_stock:
             embed.add_field(name="ETFs Containing Stock", value=", ".join(map(str, etfs_containing_stock)), inline=False)
@@ -6858,6 +7249,8 @@ class CurrencySystem(commands.Cog):
             with open('etf_chart.png', 'rb') as file:
                 chart_file = discord.File(file)
                 await ctx.send(file=chart_file)
+            if etf_id in ['1', '13', '4', '14']:
+                await self.etf_metric(ctx, etf_id)
 
         except sqlite3.Error as e:
             print(f"An error occurred: {str(e)}")
@@ -7397,9 +7790,7 @@ class CurrencySystem(commands.Cog):
         if price < cp:
             await ctx.send(f"Price cannot be under {cp:,.2f} QSE per Share")
             return
-        if int(price) > 250000000:
-            await ctx.send("Price cannot be over 250,000,000 QSE per Share")
-            return
+
         if order_type.lower() == "buy":
             await ctx.send("Buy Orders Disabled")
             return
@@ -7427,9 +7818,9 @@ class CurrencySystem(commands.Cog):
                 return
             else:
                 current_price = await get_stock_price(self, ctx, symbol)
-                margin = (current_price * 0.25) + current_price
+                margin = (current_price * 0.50) + current_price
                 if price > margin:
-                    await ctx.send(f"Can't place orders higher than 25%({margin:,.2f}) of the current price({current_price:,.2f})")
+                    await ctx.send(f"Can't place orders higher than 50%({margin:,.2f}) of the current price({current_price:,.2f})")
                     return
                 await self.add_limit_order_command(ctx, symbol, order_type, price, quantity)
                 await add_experience(self, self.conn, ctx.author.id, 2.5, ctx)
@@ -7567,6 +7958,8 @@ class CurrencySystem(commands.Cog):
             return
 
         if type.lower() == "option":
+            await ctx.send("UpDown Derivatives are Temporarily turned off")
+            return
             if amount == "None":
                 await ctx.send("UpDown Derivatives are Temporarily turned off")
                 return
@@ -7587,10 +7980,7 @@ class CurrencySystem(commands.Cog):
 
 
         if type.lower() == "order":
-            if int(amount) > 500000000000000:
-                embed = discord.Embed(description="Can only purchase 500,000,000,000,000 at a time", color=discord.Color.red())
-                await ctx.send(embed=embed)
-                return
+
             if self.is_halted_order:
                 embed = discord.Embed(description="Order Trading Halted", color=discord.Color.red())
                 await ctx.send(embed=embed)
@@ -7621,6 +8011,12 @@ class CurrencySystem(commands.Cog):
                         return
 
         if type.lower() == "stock":
+            is_open, day_type = await is_trading_hours()
+            if is_open:
+                print("The market is open during trading hours on", day_type)
+            else:
+                await ctx.send("The market is closed.\nMarket Hours 7am-7pm EST M-F\n\nOrder Books open 24/7")
+                return
             current_price = await get_stock_price(self, ctx, symbol)
             value = int(current_price) * int(amount)
             if int(value) > 10_000_000_000_000_000_000_000:
@@ -7634,27 +8030,10 @@ class CurrencySystem(commands.Cog):
             reserve_supply = reserve_supply - escrow_supply
 
             if reserve_supply == 0:
-                embed = discord.Embed(description="Zero market supply...attempting to find an open sell order", color=discord.Color.blue())
+                embed = discord.Embed(description="Zero market supply...Try buying from Order Book", color=discord.Color.blue())
                 await ctx.send(embed=embed)
+                return
 
-
-                if self.is_halted_order:
-                    embed = discord.Embed(description="Zero market supply and order book trading halted", color=discord.Color.red())
-                    await ctx.send(embed=embed)
-                    return
-                else:
-                    if order_price:
-                        self.transaction_pool.append((ctx, type, symbol, amount, "buy"))
-                        if len(self.transaction_pool) != 0:
-                            print("Processing Transactions")
-                            await self.process_transactions(ctx)
-                            await autoliquidate(self, ctx)
-                            return
-
-                    else:
-                        embed = discord.Embed(description="Zero market supply and couldn't find an order", color=discord.Color.red())
-                        await ctx.send(embed=embed)
-                        return
 
             if reserve_supply < amount:
                 embed = discord.Embed(description=f"Only {reserve_supply} shares", color=discord.Color.blue())
@@ -7705,15 +8084,11 @@ class CurrencySystem(commands.Cog):
         except ValueError:
             await ctx.send("Invalid amount. Please provide a valid integer.")
 
-    @commands.command(name="sell", help="Buy Stocks, ETFs, and Items")
+    @commands.command(name="sell", help="Sell Stocks, ETFs, and Items")
 #    @is_allowed_server(1161678765894664323, 1087147399371292732)
     async def sell(self, ctx, type: str, symbol, amount):
-        current_price = await get_stock_price(self, ctx, symbol)
-        value = int(current_price) * int(amount)
-        if int(value) > 10_000_000_000_000_000_000_000:
-            embed = discord.Embed(description="Can only sell 10,000,000,000,000,000,000,000 of value at a time", color=discord.Color.red())
-            await ctx.send(embed=embed)
-            return
+
+
         if check_current_hp(ctx.author.id) == 0:
             embed = discord.Embed(description="Your HP is zero, Please Heal", color=discord.Color.red())
             await ctx.send(embed=embed)
@@ -7734,6 +8109,12 @@ class CurrencySystem(commands.Cog):
 
         await check_store_addr(self, ctx)
         if type.lower() == "stock":
+            is_open, day_type = await is_trading_hours()
+            if is_open:
+                print("The market is open during trading hours on", day_type)
+            else:
+                await ctx.send("The market is closed.\nMarket Hours 7am-7pm EST M-F\n\nOrder Books open 24/7")
+                return
             await self.check_stock_change(ctx, symbol)
         user_id = ctx.author.id
         p3addr = get_p3_address(self.P3addrConn, user_id)
@@ -8118,6 +8499,19 @@ class CurrencySystem(commands.Cog):
             sell_value_depth = sum(order['price'] * order['total_quantity'] for order in sell_orders)
             total_value_depth = buy_value_depth + sell_value_depth
 
+            # Get the current price
+            current_price = await get_stock_price(self, ctx, symbol)
+
+            # Get the total user shares
+            total_user_shares = await get_total_shares_user_order(self, ctx.author.id, symbol)
+
+#            total_user_shares = 0
+            # Calculate the percentage of total user shares against all order book shares
+            if total_value_depth != 0:
+                user_shares_percentage = (total_user_shares * current_price / total_value_depth) * 100
+            else:
+                user_shares_percentage = 0
+
             if users:
                 embed = discord.Embed(title=f"Buy/Sell Depth for {symbol} with your orders", color=discord.Color.blue())
             else:
@@ -8130,7 +8524,8 @@ class CurrencySystem(commands.Cog):
             embed.add_field(name="Total Value of Depth", value=f"{total_value_depth:,.2f} QSE", inline=False)
             embed.add_field(name="Average Market Price", value=f"{weighted_average_price:,.2f} QSE", inline=False)
             result = await lowest_price_order(self, ctx, "sell", symbol)
-            embed.add_field(name="Current Market Price", value=f"{result['price']:,.2f} QSE", inline=False)
+            embed.add_field(name="Current Market Price", value=f"{current_price:,.2f} QSE", inline=False)
+            embed.add_field(name="Your Shares in Escrow", value=f"{total_user_shares:,.0f}({user_shares_percentage:,.4f}%) Shares", inline=False)
 
             await ctx.send(embed=embed)
             await self.order_book_chart(ctx, symbol)
@@ -9044,15 +9439,13 @@ class CurrencySystem(commands.Cog):
                     latest_price = await get_stock_price(self, ctx, stock_name)
                     # Display daily, weekly, and monthly average buy and sell prices for a specific stock
                     opening_price, current_price, interval_change = await get_stock_price_interval(self, ctx, stock_name, interval='daily')
-                    weekly_opening_price, weekly_current_price, weekly_interval_change = await get_stock_price_interval(self, ctx, stock_name, interval='weekly')
-                    monthly_opening_price, monthly_current_price, monthly_interval_change = await get_stock_price_interval(self, ctx, stock_name, interval='monthly')
                     avg_buy, avg_sell, avg_total = await get_average_stock_prices(self, ctx, user_id , stock_name)
-                    average_hodl = await get_average_quantity_held(self, ctx, user_id , stock_name)
+                    avg_quantity_held_buy, avg_quantity_held_sell, average_hodl = await get_average_quantity_held(self, ctx, user_id, stock_name)
+                    overall_pl = await get_stock_profit_loss(self, ctx, user_id, stock_name)
 
                     # Convert prices to strings and remove commas
                     opening_price_str = f"${opening_price:,.2f}" if opening_price is not None else "0.00 QSE"
-                    weekly_opening_price_str = f"${weekly_opening_price:,.2f}" if weekly_opening_price is not None else "0.00 QSE"
-                    monthly_opening_price_str = f"${monthly_opening_price:,.2f}" if monthly_opening_price is not None else "0.00 QSE"
+
 
                     embed = discord.Embed(
                         title=f"Stock Performance - {stock_name}",
@@ -9076,30 +9469,15 @@ class CurrencySystem(commands.Cog):
                         embed.add_field(name="Value", value=f"{(amount_owned[0] * latest_price):,.2f}", inline=False)
                     embed.add_field(name="Daily Average Buy Price", value=opening_price_str, inline=False)
                     embed.add_field(name="Daily Average Sell Price", value=f"{current_price:,.2f} QSE", inline=False)
-                    embed.add_field(name="Weekly Average Buy Price", value=weekly_opening_price_str, inline=False)
-                    embed.add_field(name="Weekly Average Sell Price", value=f"{weekly_current_price:,.2f} QSE", inline=False)
-                    embed.add_field(name="Monthly Average Buy Price", value=monthly_opening_price_str, inline=False)
-                    embed.add_field(name="Monthly Average Sell Price", value=f"{monthly_current_price:,.2f} QSE", inline=False)
+
                     embed.add_field(name="Average Buy Price", value=f"{avg_buy:,.2f} QSE", inline=False)
                     embed.add_field(name="Average Sell Price", value=f"{avg_sell:,.2f} QSE", inline=False)
                     embed.add_field(name="Average Price", value=f"{avg_total:,.2f} QSE", inline=False)
                     embed.add_field(name="Average Holding", value=f"{average_hodl:,.0f} Shares", inline=False)
-                    if opening_price != 0:
-                        start_value = amount_owned[0] * opening_price
-                        current_value = amount_owned[0] * latest_price
-                        DPL = current_value - start_value
-                        embed.add_field(name="Daily P/L", value=f"{DPL:,.2f} QSE", inline=False)
+                    embed.add_field(name="Average Buy Holding", value=f"{avg_quantity_held_buy:,.0f} Shares", inline=False)
+                    embed.add_field(name="Average Sells Holding", value=f"{avg_quantity_held_sell:,.0f} Shares", inline=False)
+                    embed.add_field(name="Overall P/L", value=f"{overall_pl:,.2f} QSE", inline=False)
 
-                    if weekly_opening_price != 0:
-                        start_value = amount_owned[0] * weekly_opening_price
-                        current_value = amount_owned[0] * latest_price
-                        WPL = current_value - start_value
-                        embed.add_field(name="Weekly P/L", value=f"{WPL:,.2f} QSE", inline=False)
-                    if monthly_opening_price != 0:
-                        start_value = amount_owned[0] * monthly_opening_price
-                        current_value = amount_owned[0] * latest_price
-                        MPL = current_value - start_value
-                        embed.add_field(name="Monthly P/L", value=f"{MPL:,.2f} QSE", inline=False)
 
                     await ctx.send(embed=embed)
                     return
@@ -9129,8 +9507,9 @@ class CurrencySystem(commands.Cog):
                         amount_owned = stock['amount']
                         opening_price, current_price, interval_change = await get_stock_price_interval(self, ctx, stock_symbol, interval='daily')
                         avg_buy, avg_sell, avg_total = await get_average_stock_prices(self, ctx, user_id , stock_symbol)
-                        average_hodl = await get_average_quantity_held(self, ctx, user_id , stock_symbol)
+                        avg_quantity_held_buy, avg_quantity_held_sell, average_hodl = await get_average_quantity_held(self, ctx, user_id, stock_symbol)
                         latest_price = await get_stock_price(self, ctx, stock_symbol)
+                        overall_pl = await get_stock_profit_loss(self, ctx, user_id, stock_symbol)
                         share_value = amount_owned * latest_price
 
 
@@ -9152,7 +9531,7 @@ class CurrencySystem(commands.Cog):
                             DPL = 0
                         embed.add_field(
                             name=f"{stock_symbol} (Amount: {amount_owned:,} )",
-                            value=f"* Current Price: {latest_price:,.2f} QSE\n* Holding Percentage: ({hold_percentage:,.{hold_decimal}f}%)\n* Average Buy Price: {avg_buy:,.2f}\n* Average Sell Price: {avg_sell:,.2f} QSE\n 24hr P/L {DPL:,.0f} QSE @ {opening_price:,.2f} QSE\n* Average Holding: {average_hodl:,.0f} Shares\n* Total Value: ${share_value:,.2f}",
+                            value=f"* Current Price: {latest_price:,.2f} QSE\n* Holding Percentage: ({hold_percentage:,.{hold_decimal}f}%)\n* Average Buy Price: {avg_buy:,.2f}\n* Average Sell Price: {avg_sell:,.2f} QSE\n* Overall P/L {overall_pl:,.2f} QSE\n* Average Holding: {average_hodl:,.0f} Shares\n* Total Value: {share_value:,.2f} QSE",
                             inline=True
                         )
 
@@ -9283,6 +9662,96 @@ class CurrencySystem(commands.Cog):
         await message.clear_reactions()
 
 # Stock Tools
+
+    @commands.command(name="top_held_stocks", help="Show the top 10 owned stocks.")
+    async def top_stocks1(self, ctx):
+        try:
+            cursor = self.conn.cursor()
+
+            # Fetch the top 10 owned stocks
+            cursor.execute("""
+                SELECT symbol, SUM(amount) AS total_amount
+                FROM user_stocks
+                WHERE user_id != ?
+                GROUP BY symbol
+                ORDER BY total_amount DESC
+                LIMIT 10
+            """, (PBot,))
+            top_stocks = cursor.fetchall()
+
+            if not top_stocks:
+                await ctx.send("No stocks found.")
+                return
+
+            # Create an embed to display the top stocks
+            embed = discord.Embed(title="Top 10 Owned Stocks", color=discord.Color.blue())
+            for rank, stock in enumerate(top_stocks, start=1):
+                symbol = stock['symbol']
+                total_amount = stock['total_amount']
+                embed.add_field(name=f"{rank}. {symbol}", value=f"Total Amount:\n{total_amount:,.0f} shares", inline=False)
+
+            await ctx.send(embed=embed)
+            await self.top_user_stocks(ctx)
+
+        except sqlite3.Error as e:
+            embed = discord.Embed(description=f"An error occurred while fetching the top stocks: {e}")
+            await ctx.send(embed=embed)
+        except Exception as e:
+            embed = discord.Embed(description=f"An error occurred while fetching the top stocks: {e}")
+            await ctx.send(embed=embed)
+
+    @commands.command(name="top_user_stocks", help="Show the top users by volume of stock they hold and their top stocks.")
+    async def top_user_stocks(self, ctx):
+        try:
+            cursor = self.conn.cursor()
+
+            # Fetch the top users by volume of stock they hold
+            cursor.execute("""
+                SELECT user_id, SUM(amount) AS total_amount
+                FROM user_stocks
+                WHERE user_id != ?
+                GROUP BY user_id
+                ORDER BY total_amount DESC
+                LIMIT 10
+            """, (PBot,))
+            top_users = cursor.fetchall()
+
+            if not top_users:
+                await ctx.send("No users found.")
+                return
+
+            # Create an embed to display the top users and their top stocks
+            embed = discord.Embed(title="Top Users by Volume of Stock Held", color=discord.Color.blue())
+            for user_info in top_users:
+                user_id = user_info['user_id']
+                total_amount = user_info['total_amount']
+
+                # Fetch the top stocks held by the user
+                cursor.execute("""
+                    SELECT symbol, SUM(amount) AS total_amount
+                    FROM user_stocks
+                    WHERE user_id = ?
+                    GROUP BY symbol
+                    ORDER BY total_amount DESC
+                    LIMIT 3
+                """, (user_id,))
+                user_stocks = cursor.fetchall()
+
+                # Format stock information
+                stock_info = "\n".join([f"{stock['symbol']}: {stock['total_amount']:.0f} shares" for stock in user_stocks])
+
+                # Add user's information to the embed
+                embed.add_field(name=f"User {get_p3_address(self.P3addrConn, user_id)}", value=f"Total Stock Held: {total_amount:,.0f} shares\nTop Stocks:\n{stock_info}\n-----------------------------------------", inline=False)
+
+            await ctx.send(embed=embed)
+
+        except sqlite3.Error as e:
+            embed = discord.Embed(description=f"An error occurred while fetching the top user stocks: {e}")
+            await ctx.send(embed=embed)
+        except Exception as e:
+            embed = discord.Embed(description=f"An error occurred while fetching the top user stocks: {e}")
+            await ctx.send(embed=embed)
+
 
     @commands.command(name='topstocks', help='Shows the top stocks based on specified criteria.')
     async def topstocks(self, ctx, option: str = 'mixed'):
@@ -9993,7 +10462,6 @@ class CurrencySystem(commands.Cog):
 
 
 
-            price = await get_stock_price(self, ctx, symbol)
 
             cursor = self.conn.cursor()
 
@@ -10029,6 +10497,9 @@ class CurrencySystem(commands.Cog):
             escrow_percentage = (escrow / total) * 100
             market_percentage = (market / total) * 100
             circulating_percentage = (circulating / total) * 100
+            current_price = await get_stock_price(self, ctx, symbol)
+            circulating_value = current_price * circulating
+            escrow_value = current_price * escrow
 
 
             embed.add_field(name="Market Supply", value=f"{market:,.0f} shares\n({market_percentage:,.2f}%)", inline=False)
@@ -10052,6 +10523,8 @@ class CurrencySystem(commands.Cog):
                 embed.add_field(name="Top Holders", value="No one currently holds shares.", inline=False)
 
             embed.add_field(name="Total Holders", value=f"{total_holders} holders", inline=False)
+            embed.add_field(name="Circulating Value", value=f"{circulating_value:,.2f} $QSE", inline=False)
+            embed.add_field(name="Escrow Value", value=f"{escrow_value:,.2f} $QSE", inline=False)
 
             await ctx.send(embed=embed)
 
@@ -10485,9 +10958,14 @@ class CurrencySystem(commands.Cog):
                     etf_id = etf[0]
                     etf_name = etf[1]
                     etf_price = await get_etf_value(self, ctx, etf_id)
+                    etf_total = await get_total_etf_shares(self, etf_id)
+                    etf_avbl = await get_available_etf_shares(self, etf_id)
                     etf_value += etf_price
+                    if etf_id == 1 or etf_id == 13 or etf_id == 14 or etf_id == 4:
+                        embed.add_field(name=f"Index ID: {etf_id}", value=f"Name: {etf_name}\nValue: {etf_price:,.2f} $QSE\nAvailable: {etf_avbl:,.0f}({((etf_avbl / etf_total) * 100):,.4f}%)\nTotal: {etf_total:,.0f}\nCirculating: {(etf_total - etf_avbl):,.0f}({(((etf_total - etf_avbl) / etf_total) * 100):,.4f}%)", inline=False)
+                    else:
+                        embed.add_field(name=f"Index ID: {etf_id}", value=f"Name: {etf_name}\nValue: {etf_price:,.2f} $QSE", inline=False)
 
-                    embed.add_field(name=f"Index ID: {etf_id}", value=f"Name: {etf_name}\nValue: {etf_price:,.2f} $QSE", inline=False)
 
                 await ctx.message.delete()
                 await ctx.send(embed=embed)
@@ -10524,10 +11002,11 @@ class CurrencySystem(commands.Cog):
                     etf_name = cursor.fetchone()[0]
 
                     etf_value = await get_etf_value(self, ctx, etf_id)
+                    avg_buy, avg_sell, avg_total = await get_average_etf_prices(self, ctx, user_id , etf_id)
 
                     total_value += (etf_value or 0) * quantity
                     if quantity != 0.0:
-                        embed.add_field(name=f"ETF ID: {etf_id}", value=f"Name: {etf_name}\nQuantity: {quantity:,}\nCurrent ETF value: {etf_value:,.2f}\nValue: {(etf_value or 0) * quantity:,.2f} $QSE", inline=False)
+                        embed.add_field(name=f"ETF ID: {etf_id}", value=f"Name: {etf_name}\nQuantity: {quantity:,}\nCurrent ETF value: {etf_value:,.2f}\nValue: {(etf_value or 0) * quantity:,.2f} $QSE\nAvg Buy: {avg_buy:,.2f} $QSE\nAvg Sell: {avg_sell:,.2f} $QSE", inline=False)
 
                 embed.set_footer(text=f"Total Value: {total_value:,.2f} $QSE")
                 await ctx.send(embed=embed)
@@ -10657,6 +11136,16 @@ class CurrencySystem(commands.Cog):
 
         return stocks_info
 
+
+    @commands.command(name='etf_shares')
+    async def show_etf_shares(self, ctx, etf_id):
+        etf_shares = await get_total_etf_shares(self, etf_id)
+        etf_avbl = await get_available_etf_shares(self, etf_id)
+        etf_value = await get_etf_value(self, ctx, etf_id)
+
+        await ctx.send(f"ETF Metric {etf_id}\n\nAvailable: {etf_avbl:,.0f}\nTotal: {etf_shares:,.0f}\nCurrent ETF Value: {etf_value:,.2f} QSE\n\nTotal ETF Value: {(etf_shares * etf_value):,.2f} QSE")
+#        await insert_etf_shares(self, etf_id, etf_shares, etf_shares)
+
     @commands.command(name="etf_info", aliases=["etp_info"], help="Display information about a specific ETF.")
     async def etf_info(self, ctx, etf_id: int):
         stocks_info = await self.get_etf_info(ctx, etf_id)
@@ -10670,6 +11159,7 @@ class CurrencySystem(commands.Cog):
         chunk_size = 10
         stock_chunks = list(chunk_list(stocks_info, chunk_size))
 
+        etf_shares = await get_etf_shares(self, ctx, etf_id)
         embeds = []
         for i, stock_chunk in enumerate(stock_chunks, start=1):
             embed = discord.Embed(title=f"ETP Information (Index ID: {etf_id})", color=discord.Color.blue())
@@ -10682,7 +11172,7 @@ class CurrencySystem(commands.Cog):
                 lowest_sell_price = stock['lowest_sell_price']
 
 
-                embed.add_field(name=symbol, value=f"{price:,.2f} $QSE\n{int(available):,.0f} shares\n{total_shares_in_escrow:,.0f} shares\n{lowest_sell_price:,.2f} $QSE" if lowest_sell_price else f"{price:,.2f} $QSE\n{int(available):,.0f} shares\n{total_shares_in_escrow:,.0f} shares", inline=False)
+                embed.add_field(name=symbol, value=f"{price:,.2f} $QSE\n{int(available):,.0f} shares\n{total_shares_in_escrow:,.0f} shares\n{lowest_sell_price:,.2f} $QSE" if lowest_sell_price else f"{price:,.2f} $QSE\n{int(available):,.0f} shares\n{total_shares_in_escrow:,.0f} shares\n", inline=False)
 
             if len(stock_chunks) > 1:
                 embed.set_footer(text=f"Page {i}/{len(stock_chunks)}")
@@ -10859,9 +11349,16 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="buy_etf", help="Buy an ETF. Provide the ETF ID and quantity.")
     @is_allowed_user(930513222820331590, PBot)
     async def buy_etf(self, ctx, etf_id: int, quantity: int):
+        etf_buyable = ['1', '13', '14', '4']
         await ctx.message.delete()
-        await ctx.send("ETF Purchases are temporaily blocked, ETF sells allowed")
-        return
+#        await ctx.send("ETF Purchases are temporaily blocked, ETF sells allowed")
+#        return
+        if etf_id in etf_buyable:
+            etf_shares = await get_available_etf_shares(self, etf_id)
+        else:
+            await ctx.send(f"ETF {etf_id} not buyable")
+            return
+        etf_shares = await get_available_etf_shares(self, etf_id)
         current_timestamp = datetime.utcnow()
         user_id = ctx.author.id
         P3addrConn = sqlite3.connect("P3addr.db")
@@ -10897,11 +11394,13 @@ class CurrencySystem(commands.Cog):
         cursor.execute("SELECT COALESCE(SUM(quantity), 0) FROM user_etfs WHERE user_id=? AND etf_id=?", (user_id, etf_id))
         current_holding = cursor.fetchone()[0]
 
+        if etf_shares == 0:
+            await ctx.send(f"No Shares available for ETF {etf_id}")
+            return
 
-
-#        if int(current_holding) + int(quantity) >= int(dETFLimit + 1):
-#            await ctx.send("Reached Max ETP Limit")
-#            return
+        if int(current_holding) + int(quantity) >= int(etf_shares):
+            await ctx.send(f"Not enough shares left\n\nAvailable: {etf_shares:,.0f}")
+            return
 
         # Fetch the ETF's value and calculate the total cost
         etf_value = await get_etf_value(self, ctx, etf_id)
@@ -10928,14 +11427,15 @@ class CurrencySystem(commands.Cog):
         try:
             P3addrConn = sqlite3.connect("P3addr.db")
             PBotAddr = get_p3_address(P3addrConn, PBot)
-            await self.give_addr(ctx, PBotAddr, int(total_cost), False)
+            await self.give_addr(ctx, PBotAddr, int(total_cost_with_tax), False)
             user_id = ctx.author.id
             add_city_tax(user_id, fee)
 #            update_user_balance(self.conn, user_id, new_balance)
         except ValueError as e:
             await ctx.send(f"An error occurred while updating the user balance. Error: {str(e)}")
             return
-
+        new_shares = etf_shares - quantity
+        await update_etf_shares(self, etf_id, new_shares)
         # Update user's ETF holdings
         try:
             cursor.execute("""
@@ -10948,7 +11448,7 @@ class CurrencySystem(commands.Cog):
             return
 
         await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), fee)
-        await log_transaction(ledger_conn, ctx, "Buy ETP", str(etf_id), quantity, total_cost, total_cost_with_tax, current_balance, new_balance, etf_value, "True")
+        await log_transaction(ledger_conn, ctx, "Buy ETP", str(etf_id), quantity, total_cost_with_tax, (total_cost_with_tax + fee), current_balance, new_balance, etf_value, "True")
 
         self.conn.commit()
 
@@ -10956,7 +11456,7 @@ class CurrencySystem(commands.Cog):
         self.buy_etf_avg.append(elapsed_time)
         avg_time = sum(self.buy_etf_avg) / len(self.buy_etf_avg)
 #        await self.update_etf_prices(ctx, etf_id, (((int(amount) - int(etf_value)) / int(etf_value)) * 100) * 0.1)
-        print(f"Updated Stocks in ETF {etf_id} by {((((int(quantity) - int(etf_value)) / int(etf_value)) * 100) * 0.1):,.5f}%")
+#        print(f"Updated Stocks in ETF {etf_id} by {((((int(quantity) - int(etf_value)) / int(etf_value)) * 100) * 0.1):,.5f}%")
         user_id = ctx.author.id
         P3addrConn = sqlite3.connect("P3addr.db")
         P3addr = get_p3_address(P3addrConn, user_id)
@@ -10966,7 +11466,7 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
         embed.add_field(name="ETP:", value=f"{etf_id}", inline=False)
         embed.add_field(name="Amount:", value=f"{quantity:,.2f}", inline=False)
-        embed.add_field(name="Total Cost w/Gas:", value=f"{total_cost_with_tax:,.2f} $QSE", inline=False)
+        embed.add_field(name="Total Cost w/Gas:", value=f"{(total_cost_with_tax + fee):,.2f} $QSE", inline=False)
         embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
         embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
         tax_rate = tax_percentage * 100
@@ -10983,7 +11483,7 @@ class CurrencySystem(commands.Cog):
                 User: {generate_crypto_address(user_id)}
                 Amount: {quantity:,}
                 Price: {etf_value:,.2f} $QSE
-                Gas Paid: {fee:,.2f} $QSE
+                Gas Paid: {(fee * 2):,.2f} $QSE
                 Transaction Time: {elapsed_time:.2f}
                 Average Transaction Time: {avg_time:.2f}
                 Gas Fee: {(self.calculate_tax_percentage(ctx, "buy_etf") * 100):.2f}%
@@ -11058,6 +11558,10 @@ class CurrencySystem(commands.Cog):
         except ValueError as e:
             await ctx.send(f"An error occurred while updating the user balance. Error: {str(e)}")
             return
+
+        etf_shares = await get_available_etf_shares(self, etf_id)
+        new_shares = etf_shares + quantity
+        await update_etf_shares(self, etf_id, new_shares)
 
         # Update user's ETF holdings
         try:
@@ -11484,6 +11988,8 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="buy_item", help="Buy an item from the marketplace.")
     @is_allowed_user(930513222820331590, PBot)
     async def buy_item(self, ctx, item_name: str, quantity: int):
+        await ctx.send(f"{item_name} is not available at this time")
+        return
         if item_name in ["FireStarter", "MarketBadge"]:
             await ctx.send(f"{item_name} is not available at this time")
             return
@@ -11750,7 +12256,7 @@ class CurrencySystem(commands.Cog):
                 if reserve < 0:
                     await ctx.send("Invalid available supply value. The available supply must be non-negative.")
                     return
-                cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (new_market, stock_name))
+#                cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (new_market, stock_name))
 
             if total is not None:
                 if total < 0:
@@ -11759,6 +12265,7 @@ class CurrencySystem(commands.Cog):
                 cursor.execute("UPDATE stocks SET total_supply = ? WHERE symbol = ?", (new_total, stock_name))
 
             self.conn.commit()
+#            await self.buy_stock_for_bot(ctx, stock_name, mint)
             if verbose:
                 await self.buy_stock_for_bot(ctx, stock_name, mint)
                 await ctx.send(f"Minted {mint:,.0f} to {stock_name}\n\n{market:,.0f}->{new_market:,.0f}\n{total:,.0f}->{new_total:,.0f}")
@@ -11790,17 +12297,17 @@ class CurrencySystem(commands.Cog):
                 if reserve < 0:
                     await ctx.send("Invalid available supply value. The available supply must be non-negative.")
                     return
-                cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (new_market, stock_name))
+#                cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (new_market, stock_name))
 
             if total is not None:
                 if total < 0:
                     await ctx.send("Invalid total supply value. The total supply must be non-negative.")
                     return
                 cursor.execute("UPDATE stocks SET total_supply = ? WHERE symbol = ?", (new_total, stock_name))
-
+            await self.sell_stock_for_bot(ctx, stock_name, burn)
             self.conn.commit()
             if verbose:
-                await self.sell_stock_for_bot(ctx, stock_name, burn)
+#                await self.sell_stock_for_bot(ctx, stock_name, burn)
                 await ctx.send(f"Burned {burn:,.0f} to {stock_name}\n\n{market:,.0f}->{new_market:,.0f}\n{total:,.0f}->{new_total:,.0f}")
 
         except sqlite3.Error as e:
@@ -12873,10 +13380,7 @@ class CurrencySystem(commands.Cog):
 
                             for etf_id, quantity in user_etfs:
                                 # Fetch current ETF value
-                                current_etf_value = cursor.execute("""
-                                    SELECT COALESCE(SUM(get_stock_price(self, ctx, etf_stocks.symbol) * etf_stocks.quantity), 0)
-                                    FROM etf_stocks WHERE etf_stocks.etf_id=? GROUP BY etf_stocks.etf_id
-                                """, (etf_id,)).fetchone()
+                                current_etf_value = await get_etf_value(self, ctx, etf_id)
 
                                 # Accumulate total ETF value
                                 total_etf_value += current_etf_value * quantity
@@ -12998,6 +13502,11 @@ class CurrencySystem(commands.Cog):
 
         return qse_integer
 
+
+    @commands.command(name="stock_volume")
+    async def stock_volume(self, ctx):
+        await plot_daily_volume_chart(self, ctx)
+
     @commands.command(name='total_stats', aliases=['total_portfolio', 'market_stats'], help='Displays the total financial stats of all users.')
     @is_allowed_user(930513222820331590, PBot)
     async def total_stats(self, ctx):
@@ -13042,7 +13551,8 @@ class CurrencySystem(commands.Cog):
                 for symbol, amount in user_stocks:
                     cursor.execute("SELECT price FROM stocks WHERE symbol=?", (symbol,))
                     stock_price_row = cursor.fetchone()
-                    stock_price = stock_price_row[0] if stock_price_row else 0
+                    stock_price = await get_stock_price(self, ctx, symbol) if stock_price_row else 0
+#                    stock_price = stock_price_row[0] if stock_price_row else 0
                     reserve_stock_value += stock_price * amount
 
                 reserve_stock_value = reserve_stock_value - total_escrow_value
@@ -13055,10 +13565,10 @@ class CurrencySystem(commands.Cog):
                 # Initialize total values
                 total_balance = 0
                 total_stock_value = 0
-                total_etf_value = 0
                 total_stable_value = 0
                 total_metal_value = 0
                 total_funds_value = 0
+                user_stock_value = 0
                 user_qse = 0
                 total_updown_value = get_total_current_prices(self)
 
@@ -13071,15 +13581,17 @@ class CurrencySystem(commands.Cog):
 
                         # Calculate total stock value
                         user_stocks = cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=?", (user_id,)).fetchall()
-                        total_stock_value += sum(price * amount for symbol, amount in user_stocks
-                                                  for price in cursor.execute("SELECT COALESCE(price, 0) FROM stocks WHERE symbol=?", (symbol,)).fetchone())
-                        # Calculate total ETF value
-                        user_etfs = cursor.execute("SELECT etf_id, quantity FROM user_etfs WHERE user_id=?", (user_id,)).fetchall()
-                        total_etf_value += sum(etf_value * quantity for etf_id, quantity in user_etfs
-                                               for etf_value in cursor.execute("""
-                                                   SELECT COALESCE(SUM(stocks.price * etf_stocks.quantity), 0)
-                                                   FROM etf_stocks JOIN stocks ON etf_stocks.symbol = stocks.symbol
-                                                   WHERE etf_stocks.etf_id=? GROUP BY etf_stocks.etf_id""", (etf_id,)).fetchone())
+
+
+                        for symbol, amount in user_stocks:
+                            # Fetch the stock price asynchronously
+                            price = await get_stock_price(self, ctx, symbol)
+
+
+                            # Calculate the value of the current stock holding and add it to the total stock value
+                            user_stock_value += price * amount
+
+
 
                         # Calculate total value of metals in the user's inventory
                         metal_values = cursor.execute("""
@@ -13093,8 +13605,29 @@ class CurrencySystem(commands.Cog):
                         cursor.execute("SELECT symbol, available, price, total_supply FROM stocks")
                         stocks_data = cursor.fetchall()
 
-                        # Calculate the total value of all stocks
-                        market_stock_value = sum(price * total_supply for symbol, available, price, total_supply in stocks_data)
+                        market_stock_value = 0
+                        locked_stock_value = 0
+                        open_stock_value = 0
+                        escrow_stock_value = 0
+                        # Iterate over stocks data and calculate the total market value
+                        for symbol, available, price, total_supply in stocks_data:
+                            # Fetch the stock price asynchronously
+                            stock_price = await get_stock_price(self, ctx, symbol)
+                            result = await get_supply_stats(self, ctx, symbol)
+                            reserve, total, locked, escrow, market, circulating = result
+
+
+                            # Calculate the total market value for the current stock
+                            total_stock_value = stock_price * total
+                            lock_stock = stock_price * locked
+                            open_stock = stock_price * market
+                            escrow_stock = stock_price * escrow
+
+                            # Add the total market value for the current stock to the total market stock value
+                            market_stock_value += total_stock_value
+                            locked_stock_value += lock_stock
+                            open_stock_value += open_stock
+                            escrow_stock_value += escrow_stock
 
                         # Get P3:Stable value
                         stable_stock = "P3:Stable"
@@ -13122,23 +13655,38 @@ class CurrencySystem(commands.Cog):
                         reserve_metal_value = 0
 
 
+
+                total_etf_value = 0
+                etfs_buy = [1, 13, 14, 4]
+                for etf_id in etfs_buy:
+                    etf_shares = await get_total_etf_shares(self, etf_id)
+                    etf_avbl = await get_available_etf_shares(self, etf_id)
+                    etf_value = await get_etf_value(self, ctx, etf_id)
+                    print(f"ETF: {etf_id} Value: {etf_value:,.2f} avbl: {etf_avbl:,.0f} total: {etf_shares:,.0f} community value: {((etf_shares - etf_avbl) * etf_value):,.2f}")
+                    total_etf_value += ((etf_shares - etf_avbl) * etf_value)
                 qse_integer = await self.city_value()
                 bank_qse = await get_total_qse_deposited(self)
                 Pbot_Balance = abs(Pbot_Balance - bank_qse)
-                surplus = Pbot_Balance - abs(total_stock_value + total_etf_value + total_escrow_value + total_metal_value)
+                surplus = Pbot_Balance  + reserve_metal_value - abs(user_stock_value + total_etf_value + total_metal_value)
 
 
                 # Calculate total funds value for each user
-                user_balance = abs(user_qse + total_stock_value + total_etf_value + total_escrow_value + total_updown_value + total_metal_value - Pbot_Balance)
-                total_balance = abs(user_qse + total_stock_value + total_etf_value + total_metal_value + total_escrow_value + total_updown_value + reserve_metal_value + qse_integer)
+                user_balance = abs(user_qse + user_stock_value + total_etf_value + total_escrow_value + total_updown_value + total_metal_value - Pbot_Balance)
+                total_balance = abs(user_qse + user_stock_value + total_etf_value + total_metal_value + total_escrow_value + total_updown_value + reserve_metal_value + qse_integer)
+                market_etf_value = 0
+                etfs = ['1', '13', '14', '4']
+                for etf_id in etfs:
+                    etf_price = await get_etf_value(self, ctx, etf_id)
+                    etf_total = await get_total_etf_shares(self, etf_id)
+                    market_etf_value += (etf_price * etf_total)
                 # Create the embed for total stats
                 embed = Embed(title="Market Financial Book", color=Colour.green())
                 embed.add_field(name="Community QSE:", value=f"{(abs(user_qse - Pbot_Balance)):,.0f} $QSE\n({(((abs(user_qse - Pbot_Balance) / total_balance) * 100)):,.4f}%)", inline=False)
-                embed.add_field(name="Community Stock Value:", value=f"{(total_stock_value):,.0f} $QSE\n(Market: {((total_stock_value / total_balance) * 100):,.4f}%)\n(Total Stock Supply: {((total_stock_value / market_stock_value) * 100):,.4f}%)", inline=False)
-                embed.add_field(name="Community ETP Value:", value=f"{total_etf_value:,.0f} $QSE\n({((total_etf_value / total_balance) * 100):,.4f}%)", inline=False)
+                embed.add_field(name="Community Stock Value:", value=f"{(user_stock_value):,.0f} $QSE\n(Market: {((user_stock_value / total_balance) * 100):,.4f}%)\n(Total Stock Supply: {((user_stock_value / market_stock_value) * 100):,.4f}%)", inline=False)
+                embed.add_field(name="Community ETP Value:", value=f"{total_etf_value:,.0f} $QSE\n(Market: {((total_etf_value / total_balance) * 100):,.4f}%)\n(Total ETF Supply: {((total_etf_value / market_etf_value) * 100):,.4f})%", inline=False)
                 embed.add_field(name="Community P3:Stable Value:", value=f"{total_stable_value:,.0f} $QSE\n({((total_stable_value / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Community Metal Value:", value=f"{total_metal_value:,.0f} $QSE\n({((total_metal_value / total_balance) * 100):,.4f}%)", inline=False)
-                embed.add_field(name="Community Escrow Value:", value=f"{total_escrow_value:,.0f} $QSE\n({((total_escrow_value / total_balance) * 100):,.4f}%)", inline=False)
+                embed.add_field(name="Community Escrow Value:", value=f"{total_escrow_value:,.0f} $QSE\n(Market: {((total_escrow_value / total_balance) * 100):,.4f}%)\n(Total Stock Supply: {((total_escrow_value / market_stock_value) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Community UpDown Value:", value=f"{total_updown_value:,.0f} $QSE\n({((total_updown_value / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Community Asset Value:", value=f"{user_balance:,.0f} $QSE\n({((user_balance / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="", value="---------------------------------------------", inline=False)
@@ -13151,7 +13699,12 @@ class CurrencySystem(commands.Cog):
                 embed.add_field(name="", value="---------------------------------------------", inline=False)
                 embed.add_field(name="City QSE:", value=f"{qse_integer:,.0f} $QSE\n({((qse_integer / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="", value="---------------------------------------------", inline=False)
+                embed.add_field(name="Escrow Stock Supply Value:", value=f"{escrow_stock_value:,.0f} $QSE", inline=False)
+                embed.add_field(name="Locked Stock Supply Value:", value=f"{locked_stock_value:,.0f} $QSE", inline=False)
+                embed.add_field(name="Market Stock Supply Value:", value=f"{open_stock_value:,.0f} $QSE", inline=False)
                 embed.add_field(name="Total Stock Supply Value:", value=f"{market_stock_value:,.0f} $QSE", inline=False)
+                embed.add_field(name="", value="---------------------------------------------", inline=False)
+                embed.add_field(name="Total ETF Supply Value:", value=f"{market_etf_value:,.0f} $QSE", inline=False)
                 embed.add_field(name="Total Market Value:", value=f"{total_balance:,.0f} $QSE", inline=False)
 
                 await ctx.send(embed=embed)
