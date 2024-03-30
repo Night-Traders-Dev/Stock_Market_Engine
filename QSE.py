@@ -2,6 +2,7 @@ from discord.ext import commands, tasks
 from discord import Embed, Colour, File
 from tabulate import tabulate
 from datetime import datetime, timedelta, timezone
+from dateutil.relativedelta import relativedelta
 from decimal import Decimal, InvalidOperation
 from matplotlib.ticker import FuncFormatter
 from discord.utils import get
@@ -1965,15 +1966,16 @@ async def add_limit_orders(self, ctx, orders, verbose: bool = True):
             new_price = round(float(new_price))
         else:
             new_price = round(float(order_price))
+        mp = await get_stock_price(self, ctx, order_symbol)
         print(f"""
-            {order[0]}
-            {order[1]}
-            {order[2]}
-            {order[3]}
-            {order[4]}
-            {order[5]}
-            {order[6]:,.0f}
-            {(order_length):,.0f}
+            Order Placed
+            User: {get_p3_address(P3addrConn, order_user_id)}
+            Asset: {order[3]}
+            Type: {order[4]}
+            Order Price: {order[5]:,.0f}
+            Market Price: ({mp:,.2f})
+            Quantity: {order[6]:,.0f}
+            Order Block Length: {(order_length):,.0f}
 
 
         """)
@@ -2608,6 +2610,9 @@ async def get_stock_price_change(self, ctx, stock_symbol, interval='daily'):
             est_tz = pytz.timezone('America/New_York')
             now = datetime.now(est_tz)
 
+            # Adjust the current time to account for the timestamp discrepancy
+            now = now - timedelta(hours=4)  # Subtract 4 hours to align with the ledger's timestamp
+
             # Set the start and end times for the day and after hours in EST timezone
             start_of_day = now.replace(hour=7, minute=0, second=0, microsecond=0)
             end_of_day = now.replace(hour=19, minute=0, second=0, microsecond=0)
@@ -2667,13 +2672,54 @@ async def get_stock_price_change(self, ctx, stock_symbol, interval='daily'):
             percentage_change = (price_change / opening_price) * 100 if opening_price != 0 else 0
             prev_percentage_change = (prev_price_change / prev_opening_price) * 100 if prev_opening_price != 0 else 0
 
-
             return opening_price, current_price, price_change, percentage_change, prev_price_change, prev_percentage_change
 
     except aiosqlite.Error as e:
         print(f"An error occurred: {str(e)}")
         return 0, 0, 0, 0, 0, 0
 
+
+async def count_active_users(self, interval='daily'):
+    try:
+        # Connect to the ledger database
+        async with aiosqlite.connect("p3ledger.db") as conn:
+            cursor = await conn.cursor()
+
+            # Get the current date and time in EST timezone
+            est_tz = pytz.timezone('America/New_York')
+            now = datetime.now(est_tz)
+
+            # Adjust the current time to account for the timestamp discrepancy
+            now = now - timedelta(hours=4)  # Subtract 4 hours to align with the ledger's timestamp
+
+            # Set the start and end times based on the specified interval
+            if interval == 'daily':
+                start_time = now.replace(hour=7, minute=0, second=0, microsecond=0)
+                end_time = now.replace(hour=19, minute=0, second=0, microsecond=0)
+            elif interval == 'weekly':
+                start_time = now - timedelta(days=now.weekday())
+                start_time = start_time.replace(hour=7, minute=0, second=0, microsecond=0)
+                end_time = start_time + timedelta(days=7)
+            elif interval == 'monthly':
+                start_time = now.replace(day=1, hour=7, minute=0, second=0, microsecond=0)
+                end_time = start_time + relativedelta(months=1)
+            else:
+                raise ValueError("Invalid interval. Supported intervals: 'daily', 'weekly', 'monthly'")
+
+            # Query to count the number of distinct users who made transactions within the specified interval
+            query = """
+                SELECT COUNT(DISTINCT user_id)
+                FROM stock_transactions
+                WHERE timestamp >= ? AND timestamp <= ? AND (action = 'Buy Stock' OR action = 'Sell Stock')
+            """
+            await cursor.execute(query, (start_time, end_time))
+            result = await cursor.fetchone()
+
+            return result[0] if result else 0
+
+    except aiosqlite.Error as e:
+        print(f"An error occurred: {str(e)}")
+        return 0
 
 async def get_total_shares_for_user(self, ctx, symbol):
     try:
@@ -3382,6 +3428,8 @@ async def reward_stock_holder_auto(self, ctx, user_id: int, stock_symbol: str, s
         # Update the user's stock holdings with the rewarded shares
         addrDB = sqlite3.connect("P3addr.db")
         P3Addr = get_p3_address(addrDB, user_id)
+        result = await get_supply_stats(self, ctx, stock_symbol)
+        reserve, total, locked, escrow, market, circulating = result
         await self.give_stock(ctx, P3Addr, stock_symbol, reward_shares, False)
 
         return reward_shares
@@ -5135,6 +5183,7 @@ class CurrencySystem(commands.Cog):
 
         self.UpDownPer = 250
         self.UpDownPerRange = 10 / 100.0
+        self.blacklisted = [1126022241101033523]
 
 
 
@@ -5611,6 +5660,9 @@ class CurrencySystem(commands.Cog):
     async def stake(self, ctx, nft: str, tokenid: str):
         try:
             user_id = ctx.author.id
+            if ctx.author.id in self.blacklisted:
+                await ctx.send("Your address has been blacklisted")
+                return
 
             # Assuming you have a connection to the database
             conn = sqlite3.connect("currency_system.db")
@@ -6315,10 +6367,13 @@ class CurrencySystem(commands.Cog):
         await check_store_addr(self, ctx)
         async with self.lock:  # Use the asynchronous lock
             user_id = ctx.author.id
+            if ctx.author.id in self.blacklisted:
+                await ctx.send("Your address has been blacklisted")
+                return
             member = ctx.guild.get_member(user_id)
             current_time = datetime.now()
             stake_rewards = await calculate_daily_staking_reward(self, user_id)
-            derivatives = await reward_stock_holder_auto(self, ctx, user_id, "EmeraldCoin", 0.0064)
+            derivatives = await reward_stock_holder_auto(self, ctx, user_id, "DiamondCoin", 0.0064)
 
             # If the user hasn't claimed or 24 hours have passed since the last claim
             if user_id not in self.last_claimed or (current_time - self.last_claimed[user_id]).total_seconds() > 86400:
@@ -6342,7 +6397,7 @@ class CurrencySystem(commands.Cog):
                 resource = result if result else 0
 
 
-                await ctx.send(f"{ctx.author.mention},\n You have claimed {amount:,.0f} $QSE from Reserve Grants\n\nClaimed {stake_rewards:,.0f} $QSE from staking rewards\n\nClaimed {resource:,.0f} Gold from Penthouses\n\nClaimed {derivatives:,.0f} shares of EmeraldCoin @ 2.33% APY\n\nAwarded 10 XP\n\nYour new balance is: {new_balance:,.0f} $QSE.")
+                await ctx.send(f"{ctx.author.mention},\n You have claimed {amount:,.0f} $QSE from Reserve Grants\n\nClaimed {stake_rewards:,.0f} $QSE from staking rewards\n\nClaimed {resource:,.0f} Gold from Penthouses\n\nClaimed {derivatives:,.0f} shares of DiamondCoin @ 2.33% APY\n\nAwarded 10 XP\n\nYour new balance is: {new_balance:,.0f} $QSE.")
 
                 self.last_claimed[user_id] = current_time  # Update the last claimed time
             else:
@@ -7054,6 +7109,160 @@ class CurrencySystem(commands.Cog):
 
 
 
+    @commands.command(name="compare_symbols", aliases=["compare"], help="Compare price history charts with technical indicators for two stocks.")
+    async def compare_symbols(self, ctx, symbol1, symbol2, time_period=None, rsi_period=None, sma_period=None, ema_period=None, price_debug: bool = False):
+        self.tax_command_timer_start = timeit.default_timer()
+        try:
+            # Fetch data for symbol1
+            avg_buy_1, avg_sell_1 = await calculate_average_prices_by_symbol(self, symbol1)
+            current_price_1 = await get_stock_price(self, ctx, symbol1)
+
+            # Fetch data for symbol2
+            avg_buy_2, avg_sell_2 = await calculate_average_prices_by_symbol(self, symbol2)
+            current_price_2 = await get_stock_price(self, ctx, symbol2)
+
+            # Connect to the currency_system database
+            currency_conn = sqlite3.connect("currency_system.db")
+            currency_cursor = currency_conn.cursor()
+
+            # Check if the given symbols exist
+            currency_cursor.execute("SELECT symbol, price FROM stocks WHERE symbol=?", (symbol1,))
+            stock1 = currency_cursor.fetchone()
+            currency_cursor.execute("SELECT symbol, price FROM stocks WHERE symbol=?", (symbol2,))
+            stock2 = currency_cursor.fetchone()
+
+            # Fetch data for symbol1
+            if stock1:
+                symbol1, current_price_1 = stock1
+
+            # Fetch data for symbol2
+            if stock2:
+                symbol2, current_price_2 = stock2
+
+            # Fetch transactions for symbol1
+            with sqlite3.connect("p3ledger.db") as ledger_conn:
+                ledger_cursor = ledger_conn.cursor()
+                transactions_1 = ledger_cursor.execute("""
+                    SELECT timestamp, action, price
+                    FROM stock_transactions
+                    WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock')
+                    ORDER BY timestamp
+                """, (symbol1,))
+
+            # Fetch transactions for symbol2
+            with sqlite3.connect("p3ledger.db") as ledger_conn:
+                ledger_cursor = ledger_conn.cursor()
+                transactions_2 = ledger_cursor.execute("""
+                    SELECT timestamp, action, price
+                    FROM stock_transactions
+                    WHERE symbol=? AND (action='Buy Stock' OR action='Sell Stock')
+                    ORDER BY timestamp
+                """, (symbol2,))
+
+            # Process transactions for symbol1
+            if transactions_1:
+                buy_prices_1 = []
+                sell_prices_1 = []
+                all_prices_1 = []
+
+                for timestamp_str, action, price_str in transactions_1:
+                    if symbol1.lower() == "roflstocks":
+                        formatted_price = str(price_str).replace(",", "") if isinstance(price_str, str) else price_str
+                        price = float(formatted_price)
+                    else:
+                        formatted_price = str(price_str).replace(",", "")
+                        price = float(formatted_price)
+                    datetime_obj = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # Parse timestamp string
+                    all_prices_1.append((datetime_obj, price, action))
+
+                    if action == 'Buy Stock':
+                        buy_prices_1.append((datetime_obj, price))
+                    elif action == 'Sell Stock':
+                        sell_prices_1.append((datetime_obj, price))
+
+                # Calculate indicators for symbol1
+                # Example calculation:
+                # Calculate RSI
+                if buy_prices_1:
+                    buy_prices_1_np = np.array(buy_prices_1)
+                    buy_prices_1_np = buy_prices_1_np[:, 1]  # Extract only prices
+                    if buy_prices_1_np.size >= int(rsi_period):
+                        rsi_1 = talib.RSI(buy_prices_1_np, timeperiod=int(rsi_period))
+                    else:
+                        rsi_1 = None
+
+                # Prepare data for plotting for symbol1
+
+            # Process transactions for symbol2
+            if transactions_2:
+                buy_prices_2 = []
+                sell_prices_2 = []
+                all_prices_2 = []
+
+                for timestamp_str, action, price_str in transactions_2:
+                    if symbol2.lower() == "roflstocks":
+                        formatted_price = str(price_str).replace(",", "") if isinstance(price_str, str) else price_str
+                        price = float(formatted_price)
+                    else:
+                        formatted_price = str(price_str).replace(",", "")
+                        price = float(formatted_price)
+                    datetime_obj = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # Parse timestamp string
+                    all_prices_2.append((datetime_obj, price, action))
+
+                    if action == 'Buy Stock':
+                        buy_prices_2.append((datetime_obj, price))
+                    elif action == 'Sell Stock':
+                        sell_prices_2.append((datetime_obj, price))
+
+                # Calculate indicators for symbol2
+                # Example calculation:
+                # Calculate RSI
+                if buy_prices_2:
+                    buy_prices_2_np = np.array(buy_prices_2)
+                    buy_prices_2_np = buy_prices_2_np[:, 1]  # Extract only prices
+                    if buy_prices_2_np.size >= int(rsi_period):
+                        rsi_2 = talib.RSI(buy_prices_2_np, timeperiod=int(rsi_period))
+                    else:
+                        rsi_2 = None
+
+                # Prepare data for plotting for symbol2
+
+            # Plotting and sending chart for both symbols on one chart
+            fig, ax = plt.subplots(figsize=(10, 6))
+
+            # Plot data for symbol1
+            if buy_prices_1:
+                ax.plot([x[0] for x in buy_prices_1], [x[1] for x in buy_prices_1], label=f"{symbol1} Buy", linestyle='-', marker='o')
+            if sell_prices_1:
+                ax.plot([x[0] for x in sell_prices_1], [x[1] for x in sell_prices_1], label=f"{symbol1} Sell", linestyle='-', marker='o')
+
+            # Plot data for symbol2
+            if buy_prices_2:
+                ax.plot([x[0] for x in buy_prices_2], [x[1] for x in buy_prices_2], label=f"{symbol2} Buy", linestyle='-', marker='o')
+            if sell_prices_2:
+                ax.plot([x[0] for x in sell_prices_2], [x[1] for x in sell_prices_2], label=f"{symbol2} Sell", linestyle='-', marker='o')
+
+            # Add legends, title, labels, grid, etc.
+            ax.set_title("Price History Comparison")
+            ax.set_xlabel("Date")
+            ax.set_ylabel("Price")
+            ax.grid(True)
+            ax.legend()
+
+            # Save the chart to a BytesIO object
+            buffer = io.BytesIO()
+            plt.savefig(buffer, format='png')
+            buffer.seek(0)
+
+            # Send the chart as a Discord message
+            file = discord.File(buffer, filename='chart.png')
+            await ctx.send(file=file)
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
+
+
+
     @commands.command(name="transaction_counts", help="Shows the count of buy and sell transactions for a stock.")
     async def transaction_counts(self, ctx, stock_name: str):
         # Get transaction counts
@@ -7735,6 +7944,12 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Highest Pool Size:", value=f"{self.total_pool}", inline=False)
         embed.add_field(name="Market Halts since last Reload:", value=f"{self.market_halts}", inline=False)
         embed.add_field(name="Stock Halts since last Reload:", value=f"{self.stock_halts}", inline=False)
+        active_users_today = await count_active_users(self, "daily")
+        active_users_week = await count_active_users(self, "weekly")
+        active_users_month = await count_active_users(self, "monthly")
+        embed.add_field(name="Total Users Today:", value=f"{active_users_today:,.0f}", inline=False)
+        embed.add_field(name="Total Users Weekly:", value=f"{active_users_week:,.0f}", inline=False)
+        embed.add_field(name="Total Users Monthly:", value=f"{active_users_month:,.0f}", inline=False)
 
 
         await ctx.send(embed=embed)
@@ -7953,8 +8168,8 @@ class CurrencySystem(commands.Cog):
             user_owned = self.get_user_stock_amount(ctx.author.id, symbol)
             result = await get_supply_stats(self, ctx, symbol)
             reserve, total, locked, escrow, market, circulating = result
-            if (user_owned + int(quantity)) > (total * 0.51):
-                embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 51% of the total supply of {stock_name} stocks.\nAvailable: {market:,}\nTotal: {total:,}\nYour Shares: {user_owned:,}", color=discord.Color.red())
+            if (user_owned + int(quantity)) > (total * 0.18):
+                embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 18%({(total_supply * 0.18):,.0f}) of the total supply of {stock_name} stocks.\nAvailable: {market:,}\nTotal: {total:,}\nYour Shares: {user_owned:,}", color=discord.Color.red())
                 await ctx.send(embed=embed)
                 return
             else:
@@ -7962,8 +8177,8 @@ class CurrencySystem(commands.Cog):
                 result = await get_supply_stats(self, ctx, symbol)
                 reserve, total, locked, escrow, market, circulating = result
                 escrow_user_shares = await get_total_shares_user_order(self, ctx.author.id, symbol)
-                if (user_owned + int(quantity) + escrow_user_shares) > (total * 0.51):
-                    embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 51% of the total supply of {stock_name} stocks.\nAvailable: {market:,}\nTotal: {total:,}\nYour Shares + escrow: {user_owned:,} + {escrow_user_shares:,}", color=discord.Color.red())
+                if (user_owned + int(quantity) + escrow_user_shares) > (total * 0.18):
+                    embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 18%({(total_supply * 0.18):,.0f}) of the total supply of {stock_name} stocks.\nAvailable: {market:,}\nTotal: {total:,}\nYour Shares + escrow: {user_owned:,} + {escrow_user_shares:,}", color=discord.Color.red())
                     await ctx.send(embed=embed)
                 else:
                     await self.add_limit_order_command(ctx, symbol, order_type, price, quantity)
@@ -8111,6 +8326,9 @@ class CurrencySystem(commands.Cog):
             if isinstance(amount, str):
                 amount = int(amount.replace(",", ""))
         userid = ctx.author.id
+        if userid in self.blacklisted:
+            await ctx.send("Your address has been blacklisted")
+            return
 
 
         if check_current_hp(userid) == 0:
@@ -8191,9 +8409,34 @@ class CurrencySystem(commands.Cog):
             reserve_supply = reserve_supply - escrow_supply
 
             if reserve_supply == 0:
-                embed = discord.Embed(description="Zero market supply...Try buying from Order Book", color=discord.Color.blue())
-                await ctx.send(embed=embed)
-                return
+                if self.is_halted_order:
+                    embed = discord.Embed(description="Order Trading Halted", color=discord.Color.red())
+                    await ctx.send(embed=embed)
+                    return
+                else:
+                    try:
+                        user_id = ctx.author.id
+                        p3addr = get_p3_address(self.P3addrConn, user_id)
+
+
+
+                        print(f"\n\nDebug Buy Wrapper\nType: {type}\nAsset: {symbol}\nQuantity: {amount:,.0f}\nUserID: {user_id}\nP3 Address: {p3addr}\n\n")
+                        self.transaction_pool.append((ctx, type, symbol, amount, "buy"))
+                        if len(self.transaction_pool) != 0:
+                            print("Processing Transactions")
+                            await self.process_transactions(ctx)
+                            await autoliquidate(self, ctx)
+                        return
+                    except discord.errors.GatewayNotFound as e:
+                        print(f"Gateway not found warning: {e}")
+                        await ctx.send("Warning: Gateway not found. canceling order")
+                        return
+                    except sqlite3.Error as e:
+                        # Check if the error message contains the specific error
+                        if "Python int too large to convert to SQLite INTEGER" in str(e):
+                            embed = discord.Embed(description="Transaction Failed: Try a smaller quantity", color=discord.Color.red())
+                            await ctx.send(embed=embed)
+                            return
 
 
             if reserve_supply < amount:
@@ -8248,6 +8491,10 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="sell", help="Sell Stocks, ETFs, and Items")
 #    @is_allowed_server(1161678765894664323, 1087147399371292732)
     async def sell(self, ctx, type: str, symbol, amount):
+        if ctx.author.id in self.blacklisted:
+            await ctx.send("Your address has been blacklisted")
+            return
+
 
 
         if check_current_hp(ctx.author.id) == 0:
@@ -9036,8 +9283,8 @@ class CurrencySystem(commands.Cog):
         user_owned = int(user_stock[0]) if user_stock else 0
         user_escrow = await get_total_shares_user_order(self, buyer_id, symbol)
 
-        if (user_owned + quantity_to_buy + user_escrow) > (total_supply * 0.51):
-            embed = discord.Embed(description=f"{buyer_addr}, you cannot own more than 51% of the total supply of {symbol} stocks.\nAvailable: {available:,}\nTotal: {total_supply:,}\nYour Shares + Escrow: {user_owned:,} + {user_escrow:,}", color=discord.Color.red())
+        if (user_owned + quantity_to_buy + user_escrow) > (total_supply * 0.18):
+            embed = discord.Embed(description=f"{buyer_addr}, you cannot own more than 18%({(total_supply * 0.18):,.0f}) of the total supply of {symbol} stocks.\nAvailable: {available:,}\nTotal: {total_supply:,}\nYour Shares + Escrow: {user_owned:,} + {user_escrow:,}", color=discord.Color.red())
             await ctx.send(embed=embed)
             return
 
@@ -9276,8 +9523,8 @@ class CurrencySystem(commands.Cog):
         user_stock = cursor.fetchone()
         user_owned = int(user_stock[0]) if user_stock else 0
 
-        if (user_owned + amount) > (total_supply * 0.51):
-            embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 51% of the total supply of {stock_name} stocks.\nAvailable: {reserve_supply:,}\nTotal: {total_supply:,}\nYour Shares: {user_owned:,}", color=discord.Color.red())
+        if (user_owned + amount) > (total_supply * 0.18):
+            embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 18%({(total_supply * 0.18):,.0f}) of the total supply of {stock_name} stocks.\nAvailable: {reserve_supply:,}\nTotal: {total_supply:,}\nYour Shares: {user_owned:,}", color=discord.Color.red())
             await ctx.send(embed=embed)
             return
 
@@ -9533,6 +9780,15 @@ class CurrencySystem(commands.Cog):
                 P3addrConn = sqlite3.connect("P3addr.db")
                 P3addr = get_p3_address(P3addrConn, user_id)
                 current_timestamp = datetime.utcnow()
+                weighted_price = sell_price
+                weighted_price = await get_weighted_average_price(self, ctx, stock_name)
+                if weighted_price == None:
+                    weighted_price = sell_price
+                print(weighted_price)
+                orders = []
+                orders.append((self, ctx, PBot, stock_name, "sell", weighted_price, amount))
+                await add_limit_orders(self, ctx, orders, False)
+
 
                 color = discord.Color.red()
                 embed = discord.Embed(title=f"Stock Transaction Completed", color=color)
@@ -9599,6 +9855,154 @@ class CurrencySystem(commands.Cog):
             self.halt_trading = False
             embed = discord.Embed(description=f"Trading Resumed, Database Vacuum Completed", color=discord.Color.green())
             await ctx.send(embed=embed)
+
+
+    @commands.command(name="profit_loss_chart", aliases=["pl_chart"], help="Show profit/loss in a chart along with average buy/sell prices and bought/sold quantities.")
+    async def profit_loss_chart(self, ctx, symbol):
+        try:
+            user_id = ctx.author.id
+            # Fetch user's average stock prices
+            avg_buy_price, avg_sell_price, total_avg_price = await get_average_stock_prices(self, ctx, user_id, symbol)
+
+            # Fetch user's average quantity held
+            avg_quantity_held_buy, avg_quantity_held_sell, combined_avg_quantity_held = await get_average_quantity_held(self, ctx, user_id, symbol)
+
+            # Calculate profit/loss
+            profit_loss = (avg_sell_price - avg_buy_price) * combined_avg_quantity_held
+
+            # Calculate profit/loss ratio
+            if avg_buy_price != 0:
+                profit_loss_ratio = profit_loss / avg_buy_price
+            else:
+                profit_loss_ratio = 0
+
+            # Create labels and values for the pie charts
+            labels_buy_sell = ['Average Buy Price', 'Average Sell Price']
+            values_buy_sell = [avg_buy_price, avg_sell_price]
+
+            labels_bought_sold = ['Average Bought Quantity', 'Average Sold Quantity']
+            values_bought_sold = [avg_quantity_held_buy, avg_quantity_held_sell]
+
+            labels_profit_loss = ['Profit/Loss', 'Profit/Loss Ratio']
+            values_profit_loss = [profit_loss, profit_loss_ratio]
+
+            # Plotting the pie charts
+            fig, axs = plt.subplots(3, 1, figsize=(8, 8))
+
+            # Black background for each chart
+            fig.patch.set_facecolor('black')
+
+            # White labels for each pie chart
+            label_color = 'white'
+
+            # Chart for average buy/sell prices
+            axs[0].pie(values_buy_sell, labels=labels_buy_sell, autopct='%1.1f%%', colors=['blue', 'green'], textprops={'color': label_color})
+            axs[0].set_title(f"Average Buy/Sell Prices for {symbol}")
+
+            # Chart for average bought/sold quantities
+            axs[1].pie(values_bought_sold, labels=labels_bought_sold, autopct='%1.1f%%', colors=['purple', 'yellow'], textprops={'color': label_color})
+            axs[1].set_title(f"Average Bought/Sold Quantities for {symbol}")
+
+            # Chart for profit/loss
+            axs[2].pie(values_profit_loss, labels=labels_profit_loss, autopct='%1.1f%%', colors=['green', 'red'], textprops={'color': label_color})
+            axs[2].set_title(f"Profit/Loss for {symbol}")
+
+            # Set number format to non-scientific notation
+            for ax in axs:
+                ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: '{:,.2f}'.format(x)))
+
+            # Save the charts to a BytesIO object
+            buffer = io.BytesIO()
+            plt.savefig(buffer, format='png')
+            buffer.seek(0)
+
+            # Send the charts as a Discord message
+            file = discord.File(buffer, filename='pie_charts.png')
+            await ctx.send(file=file)
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
+
+
+    @commands.command(name="buy_sell_line_chart", aliases=["bs_line_chart"], help="Show line chart for all buys and sells of a specific symbol by a user.")
+    async def buy_sell_line_chart(self, ctx, symbol):
+        try:
+            user_id = ctx.author.id
+
+            # Connect to the database
+            conn = sqlite3.connect("p3ledger.db", check_same_thread=False, isolation_level=None)
+            cursor = conn.cursor()
+
+            # Fetch all buy transactions for the symbol by the user
+            cursor.execute("""
+                SELECT timestamp, price, quantity
+                FROM stock_transactions
+                WHERE user_id = ? AND symbol = ? AND action = 'Buy Stock'
+            """, (user_id, symbol))
+            buy_transactions = cursor.fetchall()
+
+            # Fetch all sell transactions for the symbol by the user
+            cursor.execute("""
+                SELECT timestamp, price, quantity
+                FROM stock_transactions
+                WHERE user_id = ? AND symbol = ? AND action = 'Sell Stock'
+            """, (user_id, symbol))
+            sell_transactions = cursor.fetchall()
+
+            # Close database connection
+
+            # Extract timestamps, prices, and quantities for buys and sells
+            buy_timestamps, buy_prices, buy_quantities = zip(*buy_transactions) if buy_transactions else ([], [], [])
+            sell_timestamps, sell_prices, sell_quantities = zip(*sell_transactions) if sell_transactions else ([], [], [])
+
+            # Create the line chart
+            fig, ax = plt.subplots(figsize=(10, 6))
+
+            # Black background for the chart
+            fig.patch.set_facecolor('black')
+            ax.set_facecolor('black')  # Set axis background color
+
+            # Set line colors
+            buy_color = 'blue'
+            sell_color = 'red'
+
+            # Plot buy and sell transactions
+            ax.plot(buy_timestamps, buy_prices, color=buy_color, marker='o', linestyle='-', label='Buy')
+            ax.plot(sell_timestamps, sell_prices, color=sell_color, marker='o', linestyle='-', label='Sell')
+
+            # Set title and labels
+            ax.set_title(f"Buy and Sell Transactions for {symbol}", color='white')  # Set title color
+            ax.set_xlabel("Timestamp", color='white')  # Set x-axis label color
+            ax.set_ylabel("Price", color='white')  # Set y-axis label color
+            ax.grid(True, color='grey')  # Set grid color
+
+            # Set number format to non-scientific notation
+            ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: '{:,.2f}'.format(x)))
+
+            # Rotate x-axis labels for better readability
+            plt.xticks(rotation=45, color='white')  # Set x-axis label color
+
+            # Set tick colors
+            ax.tick_params(axis='x', colors='white')  # Set x-axis tick color
+            ax.tick_params(axis='y', colors='white')  # Set y-axis tick color
+
+            # Add legend
+            ax.legend()
+
+            # Save the chart to a BytesIO object
+            buffer = io.BytesIO()
+            plt.savefig(buffer, format='png', facecolor='black')  # Set background color
+            buffer.seek(0)
+
+            # Send the chart as a Discord message
+            file = discord.File(buffer, filename='line_chart.png')
+            await ctx.send(file=file)
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
+
+
+
 
     @commands.command(name="my_stocks", help="Shows the user's stocks.")
     async def my_stocks(self, ctx, stock_name: str = None):
@@ -9667,6 +10071,8 @@ class CurrencySystem(commands.Cog):
 
 
                     await ctx.send(embed=embed)
+                    await self.profit_loss_chart(ctx, stock_name)
+                    await self.buy_sell_line_chart(ctx, stock_name)
                     return
 
 
@@ -13949,6 +14355,8 @@ class CurrencySystem(commands.Cog):
                     etf_price = await get_etf_value(self, ctx, etf_id)
                     etf_total = await get_total_etf_shares(self, etf_id)
                     market_etf_value += (etf_price * etf_total)
+
+
                 # Create the embed for total stats
                 embed = Embed(title="Market Financial Book", color=Colour.green())
                 embed.add_field(name="Community QSE:", value=f"{(abs(user_qse - Pbot_Balance)):,.0f} $QSE\n({(((abs(user_qse - Pbot_Balance) / total_balance) * 100)):,.4f}%)", inline=False)
@@ -13980,6 +14388,8 @@ class CurrencySystem(commands.Cog):
                 await ctx.send(embed=embed)
                 await  self.market_chart(ctx)
                 await self.reserve_chart(ctx)
+                await self.top_stocks1(ctx)
+                await self.circuit_stats(ctx)
                 self.is_halted = False
                 self.is_halted_order = False
 
