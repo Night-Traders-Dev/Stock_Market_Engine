@@ -1125,6 +1125,34 @@ def setup_database():
     except sqlite3.Error as e:
         print(f"An error occurred while creating the tables: {str(e)}")
 
+
+    try:
+
+        # Liquidity Pool Schema
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS LiquidityPool (
+                pool_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset1_id INTEGER NOT NULL,
+                asset2_id INTEGER NOT NULL,
+                asset1_amount REAL NOT NULL,
+                asset2_amount REAL NOT NULL
+            )
+        ''')
+
+        # User Positions Schema
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS UserPositions (
+                user_id INTEGER NOT NULL,
+                asset_id INTEGER NOT NULL,
+                amount REAL NOT NULL
+            )
+        ''')
+
+        print("Tables created successfully.")
+
+    except sqlite3.Error as e:
+        print(f"An error occurred: {e}")
+
     conn.commit()
     return conn
 
@@ -1136,6 +1164,167 @@ setup_ledger()
 create_p3addr_table()
 create_vip_table()
 
+
+
+#LP
+
+# Function to add a record to the LiquidityPool table
+async def add_to_liquidity_pool(self, asset1_id, asset2_id, asset1_amount, asset2_amount):
+    try:
+        cursor = self.conn.cursor()
+
+        cursor.execute('''
+            INSERT INTO LiquidityPool (asset1_id, asset2_id, asset1_amount, asset2_amount)
+            VALUES (?, ?, ?, ?)
+        ''', (asset1_id, asset2_id, asset1_amount, asset2_amount))
+
+        self.conn.commit()
+        print("Added to LiquidityPool successfully.")
+
+    except sqlite3.Error as e:
+        print(f"An error occurred: {e}")
+
+# Function to remove a record from the LiquidityPool table
+async def remove_from_liquidity_pool(self, pool_id):
+    try:
+        cursor = self.conn.cursor()
+
+        cursor.execute('''
+            DELETE FROM LiquidityPool WHERE pool_id=?
+        ''', (pool_id,))
+
+        self.conn.commit()
+        print("Removed from LiquidityPool successfully.")
+
+    except sqlite3.Error as e:
+        print(f"An error occurred: {e}")
+
+# Function to update a record in the LiquidityPool table
+async def update_liquidity_pool(self, pool_id, asset1_amount, asset2_amount):
+    try:
+        cursor = self.conn.cursor()
+
+        cursor.execute('''
+            UPDATE LiquidityPool SET asset1_amount=?, asset2_amount=? WHERE pool_id=?
+        ''', (asset1_amount, asset2_amount, pool_id))
+
+        self.conn.commit()
+        print("Updated LiquidityPool successfully.")
+
+    except sqlite3.Error as e:
+        print(f"An error occurred: {e}")
+
+def debug_buy_wrapper(type, symbol, amount, user_id, p3addr):
+    # Define the width of the ASCII window
+    window_width = 50
+
+    # Clear the console for a clean display (optional)
+#    print('\033c', end='')
+
+    # Display the debug information in an ASCII window
+    print("+" + "-" * (window_width - 2) + "+")
+    print(f"|{'Debug Buy Wrapper':^{window_width - 2}}|")
+    print("+" + "-" * (window_width - 2) + "+")
+    print(f"| Type: {type:<{window_width - 7}} |")
+    print(f"| Asset: {symbol:<{window_width - 9}} |")
+    print(f"| Quantity: {amount:,.0f} :<{window_width - 16} |")
+    print(f"| UserID: {user_id:<{window_width - 10}} |")
+    print(f"| P3 Address: {p3addr:<{window_width - 14}} |")
+    print("+" + "-" * (window_width - 2) + "+")
+
+def print_minted_details(mint, stock_name, old_price, current_price, market, new_market, total, new_total):
+    # Define the width of the ASCII-like window
+    window_width = 50
+
+    # Clear the console for a clean display (optional)
+#    print('\033c', end='')
+
+    # Construct the formatted output with ASCII-like layout
+    print("+" + "-" * (window_width - 2) + "+")
+    print(f"|{'Minted Details':^{window_width - 2}}|")
+    print("+" + "-" * (window_width - 2) + "+")
+    print(f"| Minted {mint:,.0f} to {stock_name:<{window_width - 15}} |")
+    print(f"| Price: {old_price:,.2f} -> {current_price:,.2f}{' ' * (window_width - 31)} |")
+    print(f"| {market:,.0f} -> {new_market:,.0f}{' ' * (window_width - 24)} |")
+    print(f"| {total:,.0f} -> {new_total:,.0f}{' ' * (window_width - 24)} |")
+    print("+" + "-" * (window_width - 2) + "+")
+
+def print_transaction_buy_market(current_balance, new_balance, total_cost):
+    # Define the width of the ASCII-like debug window
+    window_width = 50
+
+
+    # Construct the formatted output with ASCII-like layout
+    print("+" + "-" * (window_width - 2) + "+")
+    print(f"|{'Transaction Buy Market':^{window_width - 2}}|")
+    print("+" + "-" * (window_width - 2) + "+")
+    print(f"| Current Balance: {current_balance:,.2f}{' ' * (window_width - 21)} |")
+    print(f"| New Balance: {new_balance:,.2f}{' ' * (window_width - 17)} |")
+    print(f"| Total Cost: {total_cost:,.2f}{' ' * (window_width - 17)} |")
+    print(f"| Balance After Transaction: {(current_balance - total_cost):,.2f}{' ' * (window_width - 34)} |")
+    print("+" + "-" * (window_width - 2) + "+")
+
+def print_stock_info(stock_name, locked, total, market, reserve, escrow):
+    # Calculate reserve percentage
+    reserve_per = (locked / total) * 100
+
+    # Define the width of the ASCII window
+    window_width = 50
+
+    # Clear the console for a clean display (optional)
+#    print('\033c', end='')
+
+    # Display the stock information in an ASCII window
+    print("+" + "-" * (window_width - 2) + "+")
+    print(f"|{'Stock Information':^{window_width - 2}}|")
+    print("+" + "-" * (window_width - 2) + "+")
+    print(f"| Stock: {stock_name:<{window_width - 10}} |")
+    print(f"| Locked: {locked:,.0f} ({reserve_per:.10f}%):<{window_width - 19} |")
+    print(f"| Market: {market:,.0f} :<{window_width - 14} |")
+    print(f"| Reserve: {reserve:,.0f} :<{window_width - 15} |")
+    print(f"| Escrow: {escrow:,.0f} :<{window_width - 14} |")
+    print("+" + "-" * (window_width - 2) + "+")
+
+def print_order_placed(order_user_id, order_asset, order_type, order_price, market_price, order_quantity, order_length, get_p3_address):
+    # Calculate market price
+    mp = float(market_price)
+
+    # Define the width of the ASCII window
+    window_width = 50
+
+    # Clear the console for a clean display (optional)
+#    print('\033c', end='')
+
+    # Get the P3 address using the provided function
+    user_p3_address = get_p3_address
+
+    # Format and display the order information in an ASCII window
+    print("+" + "-" * (window_width - 2) + "+")
+    print(f"|{'Order Placed':^{window_width - 2}}|")
+    print("+" + "-" * (window_width - 2) + "+")
+    print(f"| User: {user_p3_address[:window_width - 9]:<{window_width - 9}} |")
+    print(f"| Asset: {order_asset:<{window_width - 9}} |")
+    print(f"| Type: {order_type:<{window_width - 8}} |")
+    print(f"| Order Price: {int(order_price):,}:<{window_width - 15} |")
+    print(f"| Market Price: ({mp:.2f}):<{window_width - 15} |")
+    print(f"| Quantity: {int(order_quantity):,}:<{window_width - 12} |")
+    print(f"| Order Block Length: {order_length:,}:<{window_width - 21} |")
+    print("+" + "-" * (window_width - 2) + "+")
+
+
+# Function to read records from the LiquidityPool table
+def read_liquidity_pool(self):
+    try:
+        cursor = self.conn.cursor()
+
+        cursor.execute('SELECT * FROM LiquidityPool')
+        records = cursor.fetchall()
+
+        for record in records:
+            print(record)  # Or you can return the records if needed
+
+    except sqlite3.Error as e:
+        print(f"An error occurred: {e}")
 
 async def is_trading_hours():
     # Get current time in EST timezone
@@ -1583,7 +1772,7 @@ async def get_stock_price(self, ctx, stock_name):
     stockprice = (iMC / avbl)
 
     if result_op:
-        if avbl < 1:
+        if market < 1:
             stockprice = result_op['price']
             return stockprice
         if weighted_average_price > 0:
@@ -1591,6 +1780,8 @@ async def get_stock_price(self, ctx, stock_name):
         else:
             stockprice = (stockprice + result_op['price']) / 2
 
+    if stock_name.lower() == "p3:stable":
+        stockprice = 1000
     return stockprice
 
 
@@ -1643,6 +1834,19 @@ async def send_stock(self, ctx, target, sender, symbol: str, amount: int, verbos
     cursor = self.conn.cursor()
     target_user_id = get_user_id(self.P3addrConn, target)
     sender_user_id = get_user_id(self.P3addrConn, sender)
+
+    # Define the width of the ASCII-like debug window
+    window_width = 70
+
+    # Display debug information in a bordered ASCII-like window
+    def debug_print(message):
+        print("+" + "-" * (window_width - 2) + "+")
+        print(f"|{'Stock Transfer':^{window_width - 2}}|")
+        print("+" + "-" * (window_width - 2) + "+")
+        for line in message.split('\n'):
+            print(f"| {line:<{window_width - 3}} |")
+        print("+" + "-" * (window_width - 2) + "+")
+
     # Validate P3 address
     if not target.startswith("P3:"):
         await ctx.send("Please provide a valid P3 address.")
@@ -1683,8 +1887,11 @@ async def send_stock(self, ctx, target, sender, symbol: str, amount: int, verbos
 
         self.conn.commit()
 
+
         # Log the stock transfer
-#        await log_stock_transfer(self, ledger_conn, ctx, sender_user_id, target_user_id, symbol, amount)
+        debug_print(f"Sent {amount:,.0f} of {symbol}\n\n"
+                    f"Available Shares: {stock['available']:,.2f} -> {stock['available'] - amount:,.2f}\n\n"
+                    f"From:{sender}({user_stock['amount']:,}) -> To:{target}({new_amount:,})")
 
         if verbose:
             await ctx.send(f"Sent {amount:,} of {symbol} to {target}.")
@@ -1693,8 +1900,10 @@ async def send_stock(self, ctx, target, sender, symbol: str, amount: int, verbos
     except Exception as e:
         # Handle exceptions (rollback changes if necessary)
         self.conn.rollback()
+        debug_print(f"An error occurred during the stock transfer: {e}")
         await ctx.send(f"An error occurred during the stock transfer: {e}")
         return False
+
 
 async def get_weighted_metrics(self, symbol):
     try:
@@ -1892,6 +2101,42 @@ async def check_smart_contract(self, ctx):
                     await self.stock_chart(contract[2], contract[3], contract[4], contract[5], contract[6], contract[7], contract[8])
                     self.is_paused = False
 
+async def check_recent_travel(self, ctx):
+    user_id = ctx.author.id
+    last_travel_timestamp = get_last_travel_timestamp(self, user_id)
+    cooldown_duration = timedelta(hours=1)
+
+    if (datetime.now() - last_travel_timestamp) < cooldown_duration:
+        # Calculate the amount of QSE to be paid for early travel
+        qse_cost = 100  # Example QSE cost for early travel, adjust as needed
+
+        # Prompt the user to pay QSE for early travel
+        confirmation_message = await ctx.send(f"You have recently traveled. Do you want to pay {qse_cost} QSE to travel early? (yes/no)")
+
+        try:
+            # Wait for the user's response
+            def check(message):
+                return message.author == ctx.author and message.channel == ctx.channel and message.content.lower() in ['yes', 'no']
+
+            response = await ctx.bot.wait_for('message', check=check, timeout=30)
+
+            if response.content.lower() == 'yes':
+                # Deduct QSE from user's account
+                # Add code to deduct QSE from the user's account
+                await ctx.send(f"{qse_cost} QSE has been deducted from your account.")
+                return True
+            else:
+                await ctx.send("Travel cancelled.")
+                return False
+
+        except asyncio.TimeoutError:
+            await confirmation_message.delete()
+            await ctx.send("You took too long to respond. Travel cancelled.")
+            return False
+    else:
+        # No recent travel, continue with travel
+        return True
+
 
 
 async def add_contract_pool(self, ctx, contract):
@@ -1946,10 +2191,11 @@ async def add_limit_orders(self, ctx, orders, verbose: bool = True):
     PBotAddr = get_p3_address(P3addrConn, PBot)
 
     order_length = len(orders)
-    embed = discord.Embed(description="New Limit Order")
-    embed.add_field(name="Creating Limit Order", value=f"Orders: {order_length:,.0f}", inline=False)
+    if verbose:
+        embed = discord.Embed(description="New Limit Order")
+        embed.add_field(name="Creating Limit Order", value=f"Orders: {order_length:,.0f}", inline=False)
 
-    await ctx.send(embed=embed)
+        await ctx.send(embed=embed)
     order_id_list = []
     for order in orders:
 
@@ -1967,30 +2213,18 @@ async def add_limit_orders(self, ctx, orders, verbose: bool = True):
         else:
             new_price = round(float(order_price))
         mp = await get_stock_price(self, ctx, order_symbol)
-        print(f"""
-            Order Placed
-            User: {get_p3_address(P3addrConn, order_user_id)}
-            Asset: {order[3]}
-            Type: {order[4]}
-            Order Price: {order[5]:,.0f}
-            Market Price: ({mp:,.2f})
-            Quantity: {order[6]:,.0f}
-            Order Block Length: {(order_length):,.0f}
-
-
-        """)
+        print_order_placed(order_user_id, order_symbol, order_order_type, order_price, mp, order_chunk_quantity, 1,  get_p3_address(self.P3addrConn, order_user_id))
         order_length -= 1
-        if verbose:
-            if order_order_type.lower() == "sell" and order_user_id != PBot:
-                result = await send_stock(self, ctx, self.bot_address, get_p3_address(P3addrConn, order_user_id), order_symbol, order_chunk_quantity, False)
-                if not result:
-                    return
-            else:
-                tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
-                cost = order_price * order_chunk_quantity
-                fee = Decimal(cost) * Decimal(tax_percentage)
-                total = int(cost) + int(fee)
-                await self.give_addr(ctx, PBotAddr, int(total), False)
+        if order_order_type.lower() == "sell":
+            result = await send_stock(self, ctx, self.bot_address, get_p3_address(self.P3addrConn, order_user_id), order_symbol, order_chunk_quantity, False)
+            if not result:
+                return
+        else:
+            tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
+            cost = order_price * order_chunk_quantity
+            fee = Decimal(cost) * Decimal(tax_percentage)
+            total = int(cost) + int(fee)
+            await self.give_addr(ctx, PBotAddr, int(total), False)
 
         cursor = self.conn.cursor()
         cursor.execute("""
@@ -2721,6 +2955,8 @@ async def count_active_users(self, interval='daily'):
         print(f"An error occurred: {str(e)}")
         return 0
 
+
+
 async def get_total_shares_for_user(self, ctx, symbol):
     try:
         async with aiosqlite.connect("currency_system.db") as conn:
@@ -2902,6 +3138,34 @@ async def get_average_stock_prices(self, ctx, user_id, symbol):
 
 
     return avg_buy_price, avg_sell_price, total_avg_price
+
+async def send_claim_message(self, ctx, amount, stake_rewards, resource, derivatives, total_yield, new_balance):
+    # Define the width of the ASCII-like window
+    window_width = 10
+    user_addr = get_p3_address(self.P3addrConn, ctx.author.id)
+
+    # Clear the console for a clean display (optional)
+#    print('\033c', end='')
+
+    # Construct the formatted message with ASCII-like layout
+    message = f"""\
++{'-' * (window_width - 2)}+
+|{'Claim Summary':^{window_width - 2}}|
++{'-' * (window_width - 2)}+
+| {user_addr},{' ' * (window_width - len(ctx.author.mention) - 3)} |
+|{' ' * (window_width - 3)}|
+| You have claimed {amount:,.0f} $QSE{' ' * (window_width - 21 - len(str(amount)))} |
+| Claimed {stake_rewards:,.0f} $QSE from staking rewards{' ' * (window_width - 41 - len(str(stake_rewards)))} |
+| Claimed {resource:,.0f} Gold from Penthouses{' ' * (window_width - 36 - len(str(resource)))} |
+| Claimed {derivatives:,.0f} shares of DiamondCoin @ 2.33% APY{' ' * (window_width - 50 - len(str(derivatives)))} |
+| Claimed {total_yield:,.0f} shares from Derivatives @ 2.33% APY{' ' * (window_width - 50 - len(str(total_yield)))} |
+| Awarded 10 XP{' ' * (window_width - 18)} |
+| Your new balance is: {new_balance:,.0f} $QSE{' ' * (window_width - 28 - len(str(new_balance)))} |
++{'-' * (window_width - 2)}+
+"""
+
+    # Send the formatted message to the Discord channel
+    await ctx.send(f"```{message}```")
 
 async def get_average_etf_prices(self, ctx, user_id, symbol):
     conn = sqlite3.connect("p3ledger.db", check_same_thread=False, isolation_level=None)
@@ -3275,8 +3539,9 @@ async def get_supply_stats(self, ctx, symbol):
     total, locked = await get_supply_info(self, ctx, symbol)
     escrow = await get_total_shares_in_orders(self, symbol)
     market = abs(reserve - escrow)
-    circulating = abs(total - escrow - locked - market)
+    circulating = await self.get_circulating_supply(ctx, symbol)
     total = abs(market + locked + escrow + circulating)
+
 
     return reserve, total, locked, escrow, market, circulating
 
@@ -3430,6 +3695,7 @@ async def reward_stock_holder_auto(self, ctx, user_id: int, stock_symbol: str, s
         P3Addr = get_p3_address(addrDB, user_id)
         result = await get_supply_stats(self, ctx, stock_symbol)
         reserve, total, locked, escrow, market, circulating = result
+        await self.mint_stock_supply(ctx, stock_symbol, reward_shares, False)
         await self.give_stock(ctx, P3Addr, stock_symbol, reward_shares, False)
 
         return reward_shares
@@ -4092,7 +4358,59 @@ async def delete_orders(self, order_ids):
 
 
 
+async def update_city_config(self, ctx):
+    # Define the width of the ASCII window
+    window_width = 90
 
+    # Get Global Tax
+    tax_multiplier = self.calculate_tax_percentage(ctx, "tax_command")
+
+    # Iterate over each city in the city_config dictionary
+    for city, config in self.city_config.items():
+        # Save the old values for comparison
+        old_buy_margin = config["buy_margin"]
+        old_sell_margin = config["sell_margin"]
+        old_tax_rate = config["tax_rate"]
+
+        # Update buy and sell margins with slight daily changes
+        buy_margin_change = random.uniform(-0.001, 0.001)
+        buy_margin_change = buy_margin_change + (buy_margin_change * tax_multiplier)
+        config["buy_margin"] += buy_margin_change
+        sell_margin_change = random.uniform(-0.001, 0.001)
+        sell_margin_change = sell_margin_change + (sell_margin_change * tax_multiplier)
+        config["sell_margin"] += sell_margin_change
+
+        # Ensure margins are within bounds [0, 1]
+        config["buy_margin"] = min(max(config["buy_margin"], 0), 1)
+        config["sell_margin"] = min(max(config["sell_margin"], 0), 1)
+
+        # Update tax rate with slight daily changes
+        tax_rate_change = random.uniform(-0.01, 0.01)
+        tax_rate_change = tax_rate_change + (tax_rate_change * tax_multiplier)
+        config["tax_rate"] += tax_rate_change
+
+        # Ensure tax rate is within bounds [0, 1]
+        config["tax_rate"] = min(max(config["tax_rate"], 0), 1)
+
+        # Calculate percentage change for each parameter
+        buy_margin_change_percent = ((config["buy_margin"] - old_buy_margin) / old_buy_margin) * 100
+        sell_margin_change_percent = ((config["sell_margin"] - old_sell_margin) / old_sell_margin) * 100
+        tax_rate_change_percent = ((config["tax_rate"] - old_tax_rate) / old_tax_rate) * 100
+
+        # Display the changes in an ASCII window
+        print("+" + "-" * (window_width - 2) + "+")
+        print(f"|{'City Config Update':^{window_width - 2}}|")
+        print("+" + "-" * (window_width - 2) + "+")
+        print(f"| City: {city:<25} |")
+        print("+" + "-" * (window_width - 2) + "+")
+        print(f"| {'Parameter':<20} | {'Old Value':<15} | {'New Value':<15} | {'Change (%)':<15} |")
+        print("+" + "-" * (window_width - 2) + "+")
+        print(f"| {'Buy Margin':<20} | {(old_buy_margin * 100):.3f}% | {(config['buy_margin'] * 100):.3f}% | {buy_margin_change_percent:.2f}% |")
+        print(f"| {'Sell Margin':<20} | {(old_sell_margin * 100):.3f}% | {(config['sell_margin'] * 100):.3f}% | {sell_margin_change_percent:.2f}% |")
+        print(f"| {'Tax Rate':<20} | {(old_tax_rate * 100):.3f}% | {(config['tax_rate'] * 100):.3f}% | {tax_rate_change_percent:.2f}% |")
+        print("+" + "-" * (window_width - 2) + "+")
+
+    print("City config updated successfully.")
 
 
 def count_user_contracts(self, user_id, asset):
@@ -4599,9 +4917,9 @@ async def calculate_daily_staking_reward(self, user_id):
 
         # Calculate total rewards
         base_rewards = {
-            "penthouse-legendary": 750_000_000_000,  # 100 billion uPPN per week
+            "penthouse-legendary": 750_000_000_000,  # 100 billion $QSE per week
             "penthouse-og": 50_000_000_000,
-            "poly-the-parrot": 25_000_000_000,   # 30 billion uPPN per week
+            "poly-the-parrot": 25_000_000_000,   # 30 billion $QSE per week
             "realtor-license": 100_000_000_000,
             "urban-penthouse": 45_000_000_000,
             "stake-booster": 0.10,  # 10% bonus to overall staking rewards
@@ -4955,34 +5273,60 @@ def execute_stock_swap(user_order, matched_order):
         print(f"Unexpected error during stock swap: {e}")
 
 
-async def boost_woodvale(self, ctx, booster):
-    currency_conn = sqlite3.connect("currency_system.db")
+async def get_city_prices_for_stock(self, ctx, symbol: str, city: str):
+    # Fetch city configurations
+    city_prices = await get_city_config(self, city)
+    if city_prices:
+        buy_price = 0
+        sell_price = 0
+        cp = await get_stock_price(self, ctx, symbol)
+        buy_price_multiplier = city_prices["buy_margin"]
+        buy_price = (cp * buy_price_multiplier) + cp
+        sell_price_multiplier = city_prices["sell_margin"]
+        sell_price = cp - (cp * sell_price_multiplier)
+        return buy_price, sell_price
 
-    try:
-        # Retrieve the list of underlying stocks and their quantities for Woodvale ETF
-        with currency_conn:
-            currency_cursor = currency_conn.cursor()
-            etf_id = 7
+    else:
+        return None, None
 
-            # Exclude "Om" stock from boosting
-            currency_cursor.execute("""
-                SELECT symbol, quantity
-                FROM etf_stocks
-                WHERE etf_id = ? AND symbol != "Om"
-            """, (etf_id,))
+async def get_city_addr(self, ctx, city):
+    city_id = await get_city_id(self, city)
+    addrDB = sqlite3.connect("P3addr.db")
+    p3_address = get_p3_address(addrDB, city_id)
+    return p3_address
 
-            stocks = currency_cursor.fetchall()
 
-            for stock_symbol, _ in stocks:
-                await self.buy_stock_for_bot(ctx, stock_symbol, booster)
-                print(f"Boosted Stock: {stock_symbol}")
+async def get_city_tax(self, ctx, city: str):
+    # Fetch city configurations
+    city_config = await get_city_config(self, city)
+    if city_config:
+        city_tax = city_config["tax_rate"]
 
-    finally:
-        currency_conn.close()
+        return city_tax
+
+    else:
+        return 0
+
+async def get_city_config(self, city_name):
+    # Retrieve the configuration for the specified city
+    return self.city_config.get(city_name, {})
+
+
+async def get_city_id(self, city_name):
+    # Retrieve the configuration for the specified city
+    return self.city_ids.get(city_name)
 
 def is_allowed_user(*user_ids):
     async def predicate(ctx):
         if ctx.author.id not in user_ids:
+            await ctx.send("You do not have the required permissions to use this command.")
+            return False
+        return True
+    return commands.check(predicate)
+
+def is_not_allowed_user(*user_ids):
+    async def predicate(ctx):
+        if ctx.author.id in user_ids:
             await ctx.send("You do not have the required permissions to use this command.")
             return False
         return True
@@ -5176,14 +5520,25 @@ class CurrencySystem(commands.Cog):
 
 
         self.cities = ["StellarHub", "TechnoMetra", "Quantumopolis", "CryptoVista"]
+        self.city_config = {
+            "StellarHub": {"buy_margin": 0.02, "sell_margin": 0.02, "tax_rate": 0.05},
+            "TechnoMetra": {"buy_margin": 0.01, "sell_margin": 0.01, "tax_rate": 0.06},
+            "Quantumopolis": {"buy_margin": 0.015, "sell_margin": 0.015, "tax_rate": 0.04},
+            "CryptoVista": {"buy_margin": 0.025, "sell_margin": 0.025, "tax_rate": 0.07}
+        }
         self.safe_city = "StellarHub"
+        self.city_ids = {
+            "StellarHub": 1224458697728593962,
+            "TechnoMetra": 1224461917448437892,
+            "Quantumopolis": 1224463766956015670,
+            "CryptoVista": 1224465106835083348
+        }
         self.etfs = ["1", "2", "3", "4", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
         self.metals = ['Gold', 'Lithium', 'Silver', 'Copper', 'Platinum']
 
-
         self.UpDownPer = 250
         self.UpDownPerRange = 10 / 100.0
-        self.blacklisted = [1126022241101033523]
+        self.blacklisted = []
 
 
 
@@ -5308,6 +5663,47 @@ class CurrencySystem(commands.Cog):
 
         return tax_rate
 
+    @commands.command(name="city_info", help="Displays current margins and tax rate for each city.")
+    async def city_config_info(self, ctx):
+        embed = discord.Embed(
+            title="City Configuration Information",
+            description="Current margins and tax rate for each city:",
+            color=discord.Color.green()
+        )
+
+        for city, config in self.city_config.items():
+            buy_margin = config["buy_margin"]
+            sell_margin = config["sell_margin"]
+            tax_rate = config["tax_rate"]
+
+            embed.add_field(
+                name=city,
+                value=f"Buy Margin: {buy_margin:.2%}\nSell Margin: {sell_margin:.2%}\nTax Rate: {tax_rate:.2%}",
+                inline=False
+            )
+
+        await ctx.send(embed=embed)
+
+    @commands.command(name="stock_prices_by_city", help="Display stock prices for a symbol in every city")
+    async def stock_prices_by_city(self, ctx, symbol: str):
+        # Create an embed to display the stock prices
+        embed = discord.Embed(
+            title=f"Stock Prices for {symbol} in Different Cities 🏙️",
+            color=discord.Color.blue()
+        )
+
+        for city in self.cities:
+            # Fetch buy and sell prices for the stock in the current city
+            buy_price, sell_price = await get_city_prices_for_stock(self, ctx, symbol, city)
+
+            if buy_price is not None and sell_price is not None:
+                # Add buy and sell prices to the embed
+                embed.add_field(name=f"\n{city} Buy Price", value=f"${buy_price:.2f}", inline=True)
+                embed.add_field(name=f"{city} Sell Price", value=f"${sell_price:.2f}\n------------------", inline=True)
+            else:
+                embed.add_field(name=f"{city} Prices", value="Not available", inline=True)
+
+        await ctx.send(embed=embed)
 
     @commands.command(name="get_stock_daily")
     async def get_stock_daily(self, ctx, stock):
@@ -5657,6 +6053,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="stake")
+    @is_allowed_server(1161678765894664323, 1087147399371292732)
     async def stake(self, ctx, nft: str, tokenid: str):
         try:
             user_id = ctx.author.id
@@ -5761,7 +6158,7 @@ class CurrencySystem(commands.Cog):
             cursor.execute("SELECT nft, COUNT(*) FROM user_stakes WHERE user_id=? GROUP BY nft", (user_id,))
             stake_counts = cursor.fetchall()
             base_rewards = {
-                "penthouse-legendary": 750,  # 100 billion uPPN per week
+                "penthouse-legendary": 750,  # 100 billion $QSE per week
                 "penthouse-og": 50,
                 "urban-penthouse": 45
 
@@ -5798,9 +6195,9 @@ class CurrencySystem(commands.Cog):
 
             # Calculate rewards based on staked items
             base_rewards = {
-                "penthouse-legendary": 750_000_000_000,  # 100 billion uPPN per week
+                "penthouse-legendary": 750_000_000_000,  # 100 billion $QSE per week
                 "penthouse-og": 50_000_000_000,
-                "poly-the-parrot": 25_000_000_000,   # 30 billion uPPN per week
+                "poly-the-parrot": 25_000_000_000,   # 30 billion $QSE per week
                 "realtor-license": 100_000_000_000,
                 "urban-penthouse": 45_000_000_000,
                 "stake-booster": 0.10,  # 10% bonus to overall staking rewards
@@ -5814,7 +6211,7 @@ class CurrencySystem(commands.Cog):
             for nft, count in stake_counts:
                 if nft in base_rewards and nft != "stake-booster" and nft != "qse-genesis":
                     base_reward = base_rewards[nft] * count
-                    result_str += f"{nft}: {count} items, Weekly Rewards: {base_reward:,.2f} uPPN\n"
+                    result_str += f"{nft}: {count} items, Weekly Rewards: {base_reward:,.2f} $QSE\n"
                     total_rewards += base_reward
 
             # Check for stake-boosters and apply the bonus
@@ -5828,8 +6225,8 @@ class CurrencySystem(commands.Cog):
             qse_genesis_boost = base_rewards.get("qse-genesis", 0.0)
             total_rewards += total_rewards * qse_genesis_boost * qse_genesis_count
 
-            result_str += f"\nStake Booster Bonus: {bonus_rewards:,.2f} uPPN\n"
-            result_str += f"Total Weekly Rewards: {total_rewards:,.2f} uPPN"
+            result_str += f"\nStake Booster Bonus: {bonus_rewards:,.2f} $QSE\n"
+            result_str += f"Total Weekly Rewards: {total_rewards:,.2f} $QSE"
 
             # Send the result in an embed
             color = discord.Color.green()
@@ -5853,9 +6250,9 @@ class CurrencySystem(commands.Cog):
 
             # Calculate total rewards
             base_rewards = {
-                "penthouse-legendary": 750_000_000_000,  # 100 billion uPPN per week
+                "penthouse-legendary": 750_000_000_000,  # 100 billion $QSE per week
                 "penthouse-og": 50_000_000_000,
-                "poly-the-parrot": 25_000_000_000,   # 30 billion uPPN per week
+                "poly-the-parrot": 25_000_000_000,   # 30 billion $QSE per week
                 "realtor-license": 100_000_000_000,
                 "urban-penthouse": 45_000_000_000,
                 "stake-booster": 0.10,  # 10% bonus to overall staking rewards
@@ -5901,7 +6298,7 @@ class CurrencySystem(commands.Cog):
                 # Send rewards to the staker using the modified send_rewards function
                 await self.send_rewards(ctx, staker_id, staker_rewards)
 
-            await ctx.send(f"Weekly rewards distributed: {weekly_rewards:,.2f} uPPN to all stakers.")
+            await ctx.send(f"Weekly rewards distributed: {weekly_rewards:,.2f} $QSE to all stakers.")
 
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred: {e}")
@@ -6304,6 +6701,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="give", help="Give a specified amount of $QSE to another user.")
+    @is_not_allowed_user(1224458697728593962, 1224461917448437892, 1224463766956015670, 1224465106835083348)
     async def give_addr(self, ctx, target, amount: int, verbose: bool = True):
         sender_id = ctx.author.id
         sender_balance = get_user_balance(self.conn, sender_id)
@@ -6363,6 +6761,8 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="daily", help="Claim your daily $QSE.")
+    @is_allowed_server(1161678765894664323, 1087147399371292732)
+    @is_not_allowed_user(1224458697728593962, 1224461917448437892, 1224463766956015670, 1224465106835083348)
     async def daily(self, ctx):
         await check_store_addr(self, ctx)
         async with self.lock:  # Use the asynchronous lock
@@ -6370,41 +6770,53 @@ class CurrencySystem(commands.Cog):
             if ctx.author.id in self.blacklisted:
                 await ctx.send("Your address has been blacklisted")
                 return
-            member = ctx.guild.get_member(user_id)
-            current_time = datetime.now()
+            # If the user hasn't claimed or 24 hours have passed since the last claim
+        member = ctx.guild.get_member(user_id)
+        current_time = datetime.now()
+        if user_id not in self.last_claimed or (current_time - self.last_claimed[user_id]).total_seconds() > 86400:
+
             stake_rewards = await calculate_daily_staking_reward(self, user_id)
             derivatives = await reward_stock_holder_auto(self, ctx, user_id, "DiamondCoin", 0.0064)
+#            stable_rewards = 0
+            stocks = await get_etf_stocks(self, 13)
+            total_yield = 0
+            for stock in stocks:
 
-            # If the user hasn't claimed or 24 hours have passed since the last claim
-            if user_id not in self.last_claimed or (current_time - self.last_claimed[user_id]).total_seconds() > 86400:
-                if has_role(member, bronze_pass):
-                    amount = random.randint(dailyMin * 2, dailyMax * 2)
-                else:
-                    amount = random.randint(dailyMin, dailyMax)
-                current_balance = get_user_balance(self.conn, user_id)
-                new_balance = current_balance + (int(amount) + int(stake_rewards))
-
-                # Deduct the amount from the bot's balance
-                bot_balance = get_user_balance(self.conn, self.bot.user.id)
-                await update_user_balance(self.conn, self.bot.user.id, bot_balance - (int(amount) + int(stake_rewards)))
-
-                # Log the transfer from the bot to the user
-                await log_transfer(self, ledger_conn, ctx, "P3 Bot", ctx.author.name, user_id, (int(amount) + int(stake_rewards)))
-
-                await update_user_balance(self.conn, user_id, new_balance)
-                await add_experience(self, self.conn, ctx.author.id, 10, ctx)
-                result = await self.daily_resource(ctx)
-                resource = result if result else 0
+                yields = await reward_stock_holder_auto(self, ctx, user_id, stock, 0.0064)
+                print(f"Derivatives: {stock}({yields:,.0f}) -> {get_p3_address(self.P3addrConn, user_id)}")
+                total_yield += yields
 
 
-                await ctx.send(f"{ctx.author.mention},\n You have claimed {amount:,.0f} $QSE from Reserve Grants\n\nClaimed {stake_rewards:,.0f} $QSE from staking rewards\n\nClaimed {resource:,.0f} Gold from Penthouses\n\nClaimed {derivatives:,.0f} shares of DiamondCoin @ 2.33% APY\n\nAwarded 10 XP\n\nYour new balance is: {new_balance:,.0f} $QSE.")
 
-                self.last_claimed[user_id] = current_time  # Update the last claimed time
+            if has_role(member, bronze_pass):
+                amount = random.randint(dailyMin * 2, dailyMax * 2)
             else:
-                time_left = 86400 - (current_time - self.last_claimed[user_id]).total_seconds()
-                hours, remainder = divmod(time_left, 3600)
-                minutes, _ = divmod(remainder, 60)
-                await ctx.send(f"You've already claimed your daily reward! You can claim again in {int(hours)} hours and {int(minutes)} minutes.")
+                amount = random.randint(dailyMin, dailyMax)
+            current_balance = get_user_balance(self.conn, user_id)
+            new_balance = current_balance + (int(amount) + int(stake_rewards))
+
+            # Deduct the amount from the bot's balance
+            bot_balance = get_user_balance(self.conn, self.bot.user.id)
+            await update_user_balance(self.conn, self.bot.user.id, bot_balance - (int(amount) + int(stake_rewards)))
+
+            # Log the transfer from the bot to the user
+            await log_transfer(self, ledger_conn, ctx, "P3 Bot", ctx.author.name, user_id, (int(amount) + int(stake_rewards)))
+
+            await update_user_balance(self.conn, user_id, new_balance)
+            await add_experience(self, self.conn, ctx.author.id, 10, ctx)
+            result = await self.daily_resource(ctx)
+            resource = result if result else 0
+
+            await send_claim_message(self, ctx, amount, stake_rewards, resource, derivatives, total_yield, new_balance)
+
+#            await ctx.send(f"{ctx.author.mention},\n You have claimed {amount:,.0f} $QSE from Reserve Grants\n\nClaimed {stake_rewards:,.0f} $QSE from staking rewards\n\nClaimed {resource:,.0f} Gold from Penthouses\n\nClaimed {derivatives:,.0f} shares of DiamondCoin @ 2.33% APY\n\nClaimed {total_yield:,.0f} shares from Derivatives @ 2.33% APY\n\nClaimed {stable_rewards:,.0f} shares of P3:Stable @ 2,555% APY\n\nAwarded 10 XP\n\nYour new balance is: {new_balance:,.0f} $QSE.")
+
+            self.last_claimed[user_id] = current_time  # Update the last claimed time
+        else:
+            time_left = 86400 - (current_time - self.last_claimed[user_id]).total_seconds()
+            hours, remainder = divmod(time_left, 3600)
+            minutes, _ = divmod(remainder, 60)
+            await ctx.send(f"You've already claimed your daily reward! You can claim again in {int(hours)} hours and {int(minutes)} minutes.")
 
 
 
@@ -6642,11 +7054,8 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Daily Volume:", value=f"{daily_volume:,} shares", inline=False)
         embed.add_field(name="Daily Volume Value:", value=f"{daily_volume_value:,.2f} $QSE", inline=False)
         embed.add_field(name="Daily Buy Volume:", value=f"{daily_buy_volume:,.0f} shares 📈", inline=False)
-#        embed.add_field(name="Daily Buy Volume Value:", value=f"{daily_buy_volume_value:,.2f} $QSE 📈", inline=False)
         embed.add_field(name="Daily Sell Volume:", value=f"{daily_sell_volume:,.0f} shares 📉", inline=False)
-#        embed.add_field(name="Daily Sell Volume Value:", value=f"{daily_sell_volume_value:,.2f} $QSE 📉", inline=False)
-#        embed.add_field(name="Total Buys💵", value=f"{formatted_total_buys} $QSE ({total_quantity_buys:,} buys📈)", inline=False)
-#        embed.add_field(name="Total Sells💵", value=f"{formatted_total_sells} $QSE ({total_quantity_sells:,} sells📉)", inline=False)
+
         embed.add_field(name="Valuation", value=valuation_label, inline=False)
         if etfs_containing_stock:
             embed.add_field(name="ETFs Containing Stock", value=", ".join(map(str, etfs_containing_stock)), inline=False)
@@ -7079,6 +7488,7 @@ class CurrencySystem(commands.Cog):
                     await ctx.send(embed=embed)
                     await self.stock_info(ctx, stock_symbol)
                     await self.stock_stats(ctx, stock_symbol)
+                    await self.stock_prices_by_city(ctx, stock_symbol)
 
                     # Set data structures to None to release memory
                     transactions = None
@@ -7978,16 +8388,39 @@ class CurrencySystem(commands.Cog):
         else:
             await ctx.send("Wrong Syntax")
 
+    @commands.command(name="ban")
+    @is_allowed_user(930513222820331590, PBot, 607050637292601354)
+    async def ban_user(self, ctx, P3address, banned: bool):
+        user_id = get_user_id(self.P3addrConn, P3address)
+        timestamp_est = ctx.message.created_at.astimezone(timezone(timedelta(hours=-5)))
+        # Send report to admin
+        admin_user_id = 930513222820331590  # Replace with your admin user ID
+        admin = await self.bot.fetch_user(admin_user_id)
+        if banned:
+            if user_id not in self.blacklisted:
+                self.blacklisted.append(user_id)
+                embed = discord.Embed(description=f"{P3address} Banned", color=discord.Color.red())
+                admin_message = f"{get_p3_address(self.P3addrConn, ctx.author.id)} has banned {P3address}\n**Timestamp (EST):** {timestamp_est.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                await ctx.send(embed=embed)
+        else:
+            if user_id in self.blacklisted:
+                self.blacklisted.remove(user_id)
+                embed = discord.Embed(description=f"{P3address} Unbanned", color=discord.Color.green())
+                admin_message = f"{get_p3_address(self.P3addrConn, ctx.author.id)} has unbanned {P3address}\n**Timestamp (EST):** {timestamp_est.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                await ctx.send(embed=embed)
+        await admin.send(admin_message)
 
     @commands.command(name="halt_trading")
     @is_allowed_user(930513222820331590, PBot)
     async def halt_trading(self, ctx, halt: bool):
         if halt:
             self.is_halted = True
+            self.is_halted_order = True
             embed = discord.Embed(description="Trading Halted", color=discord.Color.red())
             await ctx.send(embed=embed)
         else:
             self.is_halted = False
+            self.is_halted_order = False
             embed = discord.Embed(description="Trading Resumed", color=discord.Color.green())
             await ctx.send(embed=embed)
 
@@ -8094,11 +8527,19 @@ class CurrencySystem(commands.Cog):
                 return
 
     async def process_transactions(self, ctx):
-        print("Grabbing Pool")
+        # Define the width of the ASCII-like debug window
+        window_width = 70
+
+        def debug_print(message):
+            for line in message.split('\n'):
+                print(f"| {line:<{window_width - 3}} |")
+            print("+" + "-" * (window_width - 2) + "+")
+
+        debug_print("Grabbing Pool")
         while self.transaction_pool or self.skipped_transactions:
-            print("Aquiring Lock")
+            debug_print("Acquiring Lock")
             async with self.transaction_lock:
-                print("Beginning Transaction")
+                debug_print("Beginning Transaction")
                 if self.skipped_transactions:
                     # Add skipped transactions back to the pool
                     self.transaction_pool.extend(self.skipped_transactions)
@@ -8107,12 +8548,17 @@ class CurrencySystem(commands.Cog):
                 if not self.transaction_pool:
                     break
 
-                print(f"Pool Size: {len(self.transaction_pool)}")
-                print(f"Skipped Pool Size: {len(self.skipped_transactions)}")
+                debug_print(f"Pool Size: {len(self.transaction_pool)}")
+                debug_print(f"Skipped Pool Size: {len(self.skipped_transactions)}")
+
                 if len(self.transaction_pool) > self.total_pool:
-                    pool_difference = (len(self.transaction_pool) - self.total_pool)
+                    pool_difference = len(self.transaction_pool) - self.total_pool
                     self.total_pool += pool_difference
+
+                # Extract transaction details
                 ctx, type, symbol, amount, action = self.transaction_pool.pop(0)
+
+            # Process the extracted transaction
             await self.process_transaction(ctx, type, symbol, amount, action)
             await self.check_market(ctx)
 
@@ -8142,6 +8588,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="order")
+    @is_allowed_server(1161678765894664323, 1087147399371292732)
     async def place_order(self, ctx, order_type: str, symbol: str, price: str, quantity: str):
         quantity = int(quantity.replace(",", ""))
         new_price = price.replace(",", "")
@@ -8169,7 +8616,7 @@ class CurrencySystem(commands.Cog):
             result = await get_supply_stats(self, ctx, symbol)
             reserve, total, locked, escrow, market, circulating = result
             if (user_owned + int(quantity)) > (total * 0.18):
-                embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 18%({(total_supply * 0.18):,.0f}) of the total supply of {stock_name} stocks.\nAvailable: {market:,}\nTotal: {total:,}\nYour Shares: {user_owned:,}", color=discord.Color.red())
+                embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 18%({(total * 0.18):,.0f}) of the total supply of {stock_name} stocks.\nAvailable: {market:,}\nTotal: {total:,}\nYour Shares: {user_owned:,}", color=discord.Color.red())
                 await ctx.send(embed=embed)
                 return
             else:
@@ -8178,7 +8625,7 @@ class CurrencySystem(commands.Cog):
                 reserve, total, locked, escrow, market, circulating = result
                 escrow_user_shares = await get_total_shares_user_order(self, ctx.author.id, symbol)
                 if (user_owned + int(quantity) + escrow_user_shares) > (total * 0.18):
-                    embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 18%({(total_supply * 0.18):,.0f}) of the total supply of {stock_name} stocks.\nAvailable: {market:,}\nTotal: {total:,}\nYour Shares + escrow: {user_owned:,} + {escrow_user_shares:,}", color=discord.Color.red())
+                    embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 18%({(total * 0.18):,.0f}) of the total supply of {stock_name} stocks.\nAvailable: {market:,}\nTotal: {total:,}\nYour Shares + escrow: {user_owned:,} + {escrow_user_shares:,}", color=discord.Color.red())
                     await ctx.send(embed=embed)
                 else:
                     await self.add_limit_order_command(ctx, symbol, order_type, price, quantity)
@@ -8282,7 +8729,6 @@ class CurrencySystem(commands.Cog):
         mv = await get_etf_value(self, ctx, 6)
         await add_mv_metric(self, ctx, mv)
         await add_etf_metric(self, ctx)
-#        await add_metal_metric(self, ctx)
         await add_reserve_metric(self, ctx)
         await ctx.send(f"Minted {amount:,.0f} QSE to the Reserve\n\nPrevious Funds: {old_balance:,.2f}\nNew Funds: {new_balance:,.2f}")
 
@@ -8320,7 +8766,7 @@ class CurrencySystem(commands.Cog):
             print(f"No {order_type} order for {symbol}")
 
     @commands.command(name="buy", help="Buy Stocks, ETFs, and Items")
-#    @is_allowed_server(1161678765894664323, 1087147399371292732)
+    @is_allowed_server(1161678765894664323, 1087147399371292732)
     async def buy(self, ctx, type: str, symbol = None, amount = None):
         if amount != None:
             if isinstance(amount, str):
@@ -8371,12 +8817,18 @@ class CurrencySystem(commands.Cog):
 
 
 
-                    print(f"\n\nDebug Buy Wrapper\nType: {type}\nAsset: {symbol}\nQuantity: {amount:,.0f}\nUserID: {user_id}\nP3 Address: {p3addr}\n\n")
+
+                    debug_buy_wrapper(type, symbol, amount, user_id, p3addr)
+#                    print(f"\n\nDebug Buy Wrapper\nType: {type}\nAsset: {symbol}\nQuantity: {amount:,.0f}\nUserID: {user_id}\nP3 Address: {p3addr}\n\n")
                     self.transaction_pool.append((ctx, type, symbol, amount, "buy"))
                     if len(self.transaction_pool) != 0:
-                        print("Processing Transactions")
+                        print("+" + "-" * (70 - 2) + "+")
+                        print(f"|{'Processing Transaction':^{70 - 2}}|")
+                        print("+" + "-" * (70 - 2) + "+")
                         await self.process_transactions(ctx)
                         await autoliquidate(self, ctx)
+                        if symbol in inverseStocks:
+                            await self.mint_stock_supply(ctx, symbol, round(amount * 4), False)
                     return
                 except discord.errors.GatewayNotFound as e:
                     print(f"Gateway not found warning: {e}")
@@ -8394,7 +8846,7 @@ class CurrencySystem(commands.Cog):
             if is_open:
                 print("The market is open during trading hours on", day_type)
             else:
-                await ctx.send("The market is closed.\nMarket Hours 7am-7pm EST M-F\n\nOrder Books open 24/7")
+                await ctx.send("The market is closed.\nMarket Hours 7am-7pm EST\n\nOrder Books open 24/7")
                 return
             current_price = await get_stock_price(self, ctx, symbol)
             value = int(current_price) * int(amount)
@@ -8404,9 +8856,10 @@ class CurrencySystem(commands.Cog):
                 return
             order_price = await lowest_price_order(self, ctx, "sell", symbol)
             total_supply, available = await get_supply_info(self, ctx, symbol)
-            escrow_supply = await get_total_shares_in_orders(self, symbol)
-            reserve_supply = self.get_user_stock_amount(PBot, symbol)
-            reserve_supply = reserve_supply - escrow_supply
+            result = await get_supply_stats(self, ctx, symbol)
+            reserve, total_supply, locked, escrow, market, circulating = result
+            escrowe_supply = escrow
+            reserve_supply = reserve
 
             if reserve_supply == 0:
                 if self.is_halted_order:
@@ -8420,12 +8873,16 @@ class CurrencySystem(commands.Cog):
 
 
 
-                        print(f"\n\nDebug Buy Wrapper\nType: {type}\nAsset: {symbol}\nQuantity: {amount:,.0f}\nUserID: {user_id}\nP3 Address: {p3addr}\n\n")
+                        debug_buy_wrapper(type, symbol, amount, user_id, p3addr)
+#                        print(f"\n\nDebug Buy Wrapper\nType: {type}\nAsset: {symbol}\nQuantity: {amount:,.0f}\nUserID: {user_id}\nP3 Address: {p3addr}\n\n")
                         self.transaction_pool.append((ctx, type, symbol, amount, "buy"))
                         if len(self.transaction_pool) != 0:
-                            print("Processing Transactions")
+                            print("+" + "-" * (70 - 2) + "+")
+                            print(f"|{'Processing Transaction':^{70 - 2}}|")
+                            print("+" + "-" * (70 - 2) + "+")
                             await self.process_transactions(ctx)
                             await autoliquidate(self, ctx)
+
                         return
                     except discord.errors.GatewayNotFound as e:
                         print(f"Gateway not found warning: {e}")
@@ -8470,18 +8927,19 @@ class CurrencySystem(commands.Cog):
         p3addr = get_p3_address(self.P3addrConn, user_id)
 
         try:
-
-            print(f"\n\nDebug Buy Wrapper\nType: {type}\nAsset: {symbol}\nQuantity: {amount:,.0f}\nUserID: {user_id}\nP3 Address: {p3addr}\n\n")
+            debug_buy_wrapper(type, symbol, amount, user_id, p3addr)
+#            print(f"\n\nDebug Buy Wrapper\nType: {type}\nAsset: {symbol}\nQuantity: {amount:,.0f}\nUserID: {user_id}\nP3 Address: {p3addr}\n\n")
             async with self.transaction_lock:
                 self.transaction_pool.append((ctx, type, symbol, amount, "buy"))
             if len(self.transaction_pool) != 0:
-                print("Processing Transactions")
+                print("+" + "-" * (70 - 2) + "+")
+                print(f"|{'Processing Transaction':^{70 - 2}}|")
+                print("+" + "-" * (70 - 2) + "+")
                 await self.process_transactions(ctx)
                 await autoliquidate(self, ctx)
                 mv = await get_etf_value(self, ctx, 6)
                 await add_mv_metric(self, ctx, mv)
                 await add_etf_metric(self, ctx)
-#        await add_metal_metric(self, ctx)
                 await add_reserve_metric(self, ctx)
                 mv_avg = await calculate_average_mv(self)
                 print(f"MV Avg: {mv_avg:,.2f}")
@@ -8489,7 +8947,8 @@ class CurrencySystem(commands.Cog):
             await ctx.send("Invalid amount. Please provide a valid integer.")
 
     @commands.command(name="sell", help="Sell Stocks, ETFs, and Items")
-#    @is_allowed_server(1161678765894664323, 1087147399371292732)
+    @is_allowed_server(1161678765894664323, 1087147399371292732)
+    @is_not_allowed_user(1224458697728593962, 1224461917448437892, 1224463766956015670, 1224465106835083348)
     async def sell(self, ctx, type: str, symbol, amount):
         if ctx.author.id in self.blacklisted:
             await ctx.send("Your address has been blacklisted")
@@ -8520,7 +8979,6 @@ class CurrencySystem(commands.Cog):
             mv = await get_etf_value(self, ctx, 6)
             await add_mv_metric(self, ctx, mv)
             await add_etf_metric(self, ctx)
-#        await add_metal_metric(self, ctx)
             await add_reserve_metric(self, ctx)
             mv_avg = await calculate_average_mv(self)
             print(f"MV: {mv:,.2f}\nMV Avg: {mv_avg:,.2f}")
@@ -8532,11 +8990,13 @@ class CurrencySystem(commands.Cog):
             await add_experience(self, self.conn, ctx.author.id, 2.5, ctx)
             return
         if type.lower() == "stock":
+#            await ctx.send("Selling to Reserve turned off, try buying/selling off orderbooks")
+#            return
             is_open, day_type = await is_trading_hours()
             if is_open:
                 print("The market is open during trading hours on", day_type)
             else:
-                await ctx.send("The market is closed.\nMarket Hours 7am-7pm EST M-F\n\nOrder Books open 24/7")
+                await ctx.send("The market is closed.\nMarket Hours 7am-7pm EST\n\nOrder Books open 24/7")
                 return
             await self.check_stock_change(ctx, symbol)
         user_id = ctx.author.id
@@ -8549,7 +9009,9 @@ class CurrencySystem(commands.Cog):
 
             if len(self.transaction_pool) != 0:
                 print(f"Pool Size: {len(self.transaction_pool)}")
-                print("Processing Transactions")
+                print("+" + "-" * (70 - 2) + "+")
+                print(f"|{'Processing Transaction':^{70 - 2}}|")
+                print("+" + "-" * (70 - 2) + "+")
                 await self.process_transactions(ctx)
                 await autoliquidate(self, ctx)
                 mv = await get_etf_value(self, ctx, 6)
@@ -8575,7 +9037,9 @@ class CurrencySystem(commands.Cog):
                 self.transaction_pool.append((ctx, game, choice, amount, "casino"))
                 print(f"Pool Size: {len(self.transaction_pool)}")
             if len(self.transaction_pool) == 1:
-                print("Processing Transactions")
+                print("+" + "-" * (70 - 2) + "+")
+                print(f"|{'Processing Transaction':^{70 - 2}}|")
+                print("+" + "-" * (70 - 2) + "+")
                 await self.process_transactions()
         except ValueError:
             await ctx.send("Invalid amount. Please provide a valid integer.")
@@ -9277,14 +9741,15 @@ class CurrencySystem(commands.Cog):
         # Check the existing amount of this stock owned by the user
         cursor.execute("SELECT * FROM stocks WHERE symbol=?", (symbol,))
         stock = cursor.fetchone()
-        available, price, total_supply = int(stock[4]), Decimal(stock[2]), int(stock[3])
+        result = await get_supply_stats(self, ctx, symbol)
+        reserve, total_supply, locked, escrow, market, circulating = result
         cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (buyer_id, symbol))
         user_stock = cursor.fetchone()
         user_owned = int(user_stock[0]) if user_stock else 0
         user_escrow = await get_total_shares_user_order(self, buyer_id, symbol)
 
         if (user_owned + quantity_to_buy + user_escrow) > (total_supply * 0.18):
-            embed = discord.Embed(description=f"{buyer_addr}, you cannot own more than 18%({(total_supply * 0.18):,.0f}) of the total supply of {symbol} stocks.\nAvailable: {available:,}\nTotal: {total_supply:,}\nYour Shares + Escrow: {user_owned:,} + {user_escrow:,}", color=discord.Color.red())
+            embed = discord.Embed(description=f"{buyer_addr}, you cannot own more than 18%({(total_supply * 0.18):,.0f}) of the total supply of {symbol} stocks.\nAvailable: {escrow:,}\nTotal: {total_supply:,}\nYour Shares + Escrow: {user_owned:,} + {user_escrow:,}", color=discord.Color.red())
             await ctx.send(embed=embed)
             return
 
@@ -9352,7 +9817,12 @@ class CurrencySystem(commands.Cog):
             total_cost = price * quantity_to_fill
             tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
             fee = total_cost * tax_percentage
-            total_cost_tax = total_cost + fee
+            city = get_current_city(buyer_id)
+            city_tax = await get_city_tax(self, ctx, city)
+            c_tax = (Decimal(city_tax) * Decimal(total_cost))
+            city_addr = await get_city_addr(self, ctx, city)
+            await self.give_addr(ctx, city_addr, c_tax, False)
+            total_cost_tax = Decimal(total_cost) + Decimal(fee) + Decimal(c_tax)
 
 
             seller_addr = get_p3_address(self.P3addrConn, seller_id)
@@ -9364,8 +9834,9 @@ class CurrencySystem(commands.Cog):
             seller_old = get_user_balance(self.conn, seller_id)
             if buyer_balance >= total_cost_tax:
                 await self.give_addr(ctx, seller_addr, int(total_cost - fee), False)
-                add_city_tax(buyer_id, (fee / 2))
-                add_city_tax(seller_id, (fee / 2))
+#                add_city_tax(buyer_id, (fee / 2))
+#                add_city_tax(seller_id, (fee / 2))
+
                 await send_stock(self, ctx, buyer_addr, escrow_addr, symbol, quantity_to_fill, False)
                 seller_new = get_user_balance(self.conn, seller_id)
                 new_balance = get_user_balance(self.conn, buyer_id)
@@ -9457,12 +9928,15 @@ class CurrencySystem(commands.Cog):
             await ctx.send("Amount must be a positive number.")
             return
 
+
         price = await get_stock_price(self, ctx, stock_name)
         result = await get_supply_stats(self, ctx, stock_name)
         reserve, total, locked, escrow, market, circulating = result
 
         supply_a = market if market > 0 else escrow
-        buy_price = price
+        city = get_current_city(ctx.author.id)
+        buy_price, sell_price = await get_city_prices_for_stock(self, ctx, stock_name, city)
+        price = buy_price
         cost = Decimal(price) * Decimal(amount)
         tax_percentage = self.calculate_tax_percentage(ctx, "buy_stock")
         fee = cost * Decimal(tax_percentage)
@@ -9475,6 +9949,9 @@ class CurrencySystem(commands.Cog):
         P3addr = get_p3_address(P3addrConn, user_id)
         sender_addr = get_p3_address(self.P3addrConn, PBot)
         seller_old = get_user_balance(self.conn, PBot)
+        city = get_current_city(user_id)
+        city_tax = await get_city_tax(self, ctx, city)
+        c_tax = (Decimal(city_tax) * Decimal(cost))
         is_staking_qse_genesis = self.is_staking_qse_genesis(user_id)
         color = discord.Color.green()
         dPlace = "2"
@@ -9486,7 +9963,8 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Quantity to Purchase:", value=f"{amount:,.0f}", inline=False)
         embed.add_field(name="Price:", value=f"{buy_price:,.{dPlace}f}", inline=False)
         embed.add_field(name="QSE to Pay:", value=f"{(Decimal(amount) * Decimal(buy_price)):,.2f}", inline=False)
-        embed.add_field(name="Gas to Pay:", value=f"{(fee):,.2f}", inline=False)
+        embed.add_field(name="Gas to Pay:", value=f"{(fee + c_tax):,.2f}", inline=False)
+        embed.add_field(name="City Tax:", value=f"{(city_tax * 100):,.2f}%", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
         await ctx.send(embed=embed)
@@ -9496,7 +9974,8 @@ class CurrencySystem(commands.Cog):
         member = ctx.guild.get_member(user_id)
 
 
-
+        result = await get_supply_stats(self, ctx, stock_name)
+        reserve_owned, total_supply, locked, escrow, market, circulating = result
 
         cursor.execute("SELECT amount FROM user_stocks WHERE user_id=? AND symbol=?", (PBot, stock_name))
         reserve_stock = cursor.fetchone()
@@ -9513,9 +9992,8 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, this stock does not exist.")
             return
 
-        escrow_supply = await get_total_shares_in_orders(self, stock_name)
-        reserve_supply = self.get_user_stock_amount(PBot, stock_name)
-        reserve_supply = reserve_supply - escrow_supply
+        escrow_supply = escrow
+        reserve_supply = reserve_owned
 
 
         # Check the existing amount of this stock owned by the user
@@ -9523,10 +10001,13 @@ class CurrencySystem(commands.Cog):
         user_stock = cursor.fetchone()
         user_owned = int(user_stock[0]) if user_stock else 0
 
-        if (user_owned + amount) > (total_supply * 0.18):
-            embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 18%({(total_supply * 0.18):,.0f}) of the total supply of {stock_name} stocks.\nAvailable: {reserve_supply:,}\nTotal: {total_supply:,}\nYour Shares: {user_owned:,}", color=discord.Color.red())
-            await ctx.send(embed=embed)
-            return
+        if (user_owned + amount) > (total * 0.18):
+            if stock_name.lower() == "p3:stable":
+                pass
+            else:
+                embed = discord.Embed(description=f"{ctx.author.mention}, you cannot own more than 18%({(total * 0.18):,.0f}) of the total supply of {stock_name} stocks.\nAvailable: {reserve_supply:,}\nTotal: {total:,}\nYour Shares: {user_owned:,}", color=discord.Color.red())
+                await ctx.send(embed=embed)
+                return
 
         if amount > reserve_supply:
             await ctx.send(f"{ctx.author.mention}, there are only {reserve_supply:,} {stock_name} stocks available.")
@@ -9545,34 +10026,18 @@ class CurrencySystem(commands.Cog):
         new_balance = current_balance - total_cost
         P3addrConn = sqlite3.connect("P3addr.db")
         PBotAddr = get_p3_address(P3addrConn, PBot)
-        print(f"""Transaction Buy Market:
-
-        {current_balance:,.2f}
-
-        {new_balance:,.2f}
-
-        {total_cost:,.2f}
-
-        {(current_balance - total_cost):,.2f}
-        """)
+        print_transaction_buy_market(current_balance, new_balance, total_cost)
+        c_tax = (Decimal(city_tax) * Decimal(cost))
+        city_addr = await get_city_addr(self, ctx, city)
+        await self.give_addr(ctx, PBotAddr, fee, False)
+        await self.give_addr(ctx, city_addr, c_tax, False)
         await self.give_addr(ctx, PBotAddr, int(cost), False)
-        await self.give_addr(ctx, PBotAddr, round(int(int(fee) * 0.25)), False)
-        user_id = ctx.author.id
-        add_city_tax(user_id, fee)
         P3addrConn = sqlite3.connect("P3addr.db")
         await send_stock(self, ctx, P3addr, sender_addr, stock_name, amount, False)
 
 
+        print_stock_info(stock_name, locked, total, market, reserve, escrow)
 
-
-        reserve_per = (locked / total) * 100
-        print(f"""\n\n
-            Stock: {stock_name}
-            Locked: {locked:,}({reserve_per:,.10f}%)
-            Market: {market:,}
-            Reserve: {reserve:,}
-            Escrow: {escrow:,}\n\n
-        """)
 
 
 
@@ -9583,15 +10048,15 @@ class CurrencySystem(commands.Cog):
 
 
             new_price = await get_stock_price(self, ctx, stock_name)
+            new_price, sell_price = await get_city_prices_for_stock(self, ctx, stock_name, city)
             if stock_name.lower() == "p3:stable":
                 print(f"P3:Stable Minted: {amount:,.0f}")
-                await self.mint_stock_supply(ctx, stock_name, amount, False)
-                await self.sell_stock_for_bot(ctx, stock_name, amount)
-#            await self.change_stock_price(ctx, stock_name, new_price)
+                await self.mint_stock_stable(ctx, stock_name, (amount), False)
             await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, buy_price, "True")
             await log_order_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, total_cost, (cost), seller_old, seller_new, buy_price, "True", PBot)
-            await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), int(fee) + round(int(int(fee) * 0.25)))
-
+            await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), int(fee) + c_tax)
+            if stock_name in inverseStocks:
+                                await self.mint_stock_supply(ctx, stock_name, round(amount * 4), False)
 
         current_timestamp = datetime.utcnow()
         color = discord.Color.green()
@@ -9608,7 +10073,7 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
         embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
         tax_rate = tax_percentage * 100
-        embed.add_field(name="Gas Rate:", value=f"{tax_rate:.2f}%", inline=False)
+        embed.add_field(name="Gas + City Tax:", value=f"{tax_rate:.2f}% + {(city_tax * 100):,.2f}%", inline=False)
         elapsed_time = timeit.default_timer() - self.buy_timer_start
         embed.add_field(name="Transaction Time:", value=f"{elapsed_time:.2f} seconds", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
@@ -9638,9 +10103,7 @@ class CurrencySystem(commands.Cog):
         result = await get_supply_stats(self, ctx, stock_name)
         reserve, total, locked, escrow, market, circulating = result
         price = await get_stock_price(self, ctx, stock_name)
-        if stock_name.lower() == "rubycoin":
-            await ctx.send("RubyCoin Can only be Purchased via Order Books('!buy order RubyCoin quantity')")
-            return
+
 
         current_timestamp = datetime.utcnow()
         self.last_sellers = [entry for entry in self.last_sellers if (current_timestamp - entry[1]).total_seconds() <= self.calculate_average_time_type("sell_stock")]
@@ -9650,12 +10113,18 @@ class CurrencySystem(commands.Cog):
         P3addrConn = sqlite3.connect("P3addr.db")
         P3addr = get_p3_address(P3addrConn, user_id)
         supply_a = market if market > 0 else escrow
-        sell_price = price
+        city = get_current_city(ctx.author.id)
+        buy_price, sell_price = await get_city_prices_for_stock(self, ctx, stock_name, city)
+        price = sell_price
+        city = get_current_city(user_id)
+        city_tax = await get_city_tax(self, ctx, city)
+
 
         earnings = Decimal(price) * Decimal(amount)
         tax_percentage = self.calculate_tax_percentage(ctx, "sell_stock")  # Custom function to determine the tax percentage based on quantity and earnings
         fee = earnings * Decimal(tax_percentage)
         total_earnings = earnings - fee
+        c_tax = (Decimal(city_tax) * Decimal(earnings))
         color = discord.Color.red()
         embed = discord.Embed(title=f"Stock Transaction Processing", color=color)
         embed.add_field(name="Address:", value=f"{P3addr}", inline=False)
@@ -9663,7 +10132,8 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Quantity to Sell:", value=f"{amount:,.0f}", inline=False)
         embed.add_field(name="Price:", value=f"{sell_price:,.2f}", inline=False)
         embed.add_field(name="QSE to recieve:", value=f"{(Decimal(amount) * Decimal(sell_price)):,.2f}", inline=False)
-        embed.add_field(name="Gas to Pay:", value=f"{fee:,.2f}", inline=False)
+        embed.add_field(name="Gas to Pay:", value=f"{(fee + c_tax):,.2f}", inline=False)
+        embed.add_field(name="City Tax:", value=f"{(city_tax * 100):,.2f}%", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
 
@@ -9735,8 +10205,10 @@ class CurrencySystem(commands.Cog):
             new_balance = current_balance + total_earnings
             user_id = ctx.author.id
             PBotAddr = get_p3_address(self.P3addrConn, PBot)
-            add_city_tax(user_id, fee)
-            await self.give_addr(ctx, PBotAddr, round(int(int(fee) * 0.50)), False)
+            c_tax = (Decimal(city_tax) * Decimal(earnings))
+            city_addr = await get_city_addr(self, ctx, city)
+            await self.give_addr(ctx, PBotAddr, fee, False)
+            await self.give_addr(ctx, city_addr, c_tax, False)
 
 
             try:
@@ -9751,43 +10223,41 @@ class CurrencySystem(commands.Cog):
             if amount > 0:
 
 
-                await send_stock(self, ctx, PBotAddr, sender_addr, stock_name, int(amount), False)
-
-                reserve_per = (locked / total) * 100
-                print(f"""\n\n
-                    Stock: {stock_name}
-                    Locked: {locked:,}({reserve_per:,.10f}%)
-                    Market: {market:,}
-                    Reserve: {reserve:,}
-                    Escrow: {escrow:,}\n\n
-                """)
-
+                await send_stock(self, ctx, city_addr, sender_addr, stock_name, int(amount), False)
+                print_stock_info(stock_name, locked, total, market, reserve, escrow)
 
 
 
                 new_price = await get_stock_price(self, ctx, stock_name)
+                buy_price, new_price = await get_city_prices_for_stock(self, ctx, stock_name, city)
                 if stock_name.lower() == "p3:stable":
                     print(f"P3:Stable Burned: {amount:,.0f}")
                     await self.burn_stock_supply(ctx, stock_name, amount, False)
-                    await self.buy_stock_for_bot(ctx, stock_name, amount)
 
                 seller_new = get_user_balance(self.conn, PBot)
                 await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, sell_price, "True")
                 await log_order_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, total_earnings, (earnings), seller_old, seller_new, sell_price, "True", PBot)
-                await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), int(fee) + round(int(int(fee) * 0.50)))
+                await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), int(fee) + c_tax)
+
                 self.conn.commit()
                 user_id = ctx.author.id
                 P3addrConn = sqlite3.connect("P3addr.db")
                 P3addr = get_p3_address(P3addrConn, user_id)
                 current_timestamp = datetime.utcnow()
-                weighted_price = sell_price
-                weighted_price = await get_weighted_average_price(self, ctx, stock_name)
-                if weighted_price == None:
+                if stock_name.lower() != "p3:stable":
                     weighted_price = sell_price
-                print(weighted_price)
-                orders = []
-                orders.append((self, ctx, PBot, stock_name, "sell", weighted_price, amount))
-                await add_limit_orders(self, ctx, orders, False)
+                    weighted_price = await get_weighted_average_price(self, ctx, stock_name)
+                    if weighted_price == None:
+                        weighted_price = sell_price
+                        print(weighted_price)
+                    orders = []
+                    city_id = await get_city_id(self, city)
+                    if random.random() < 0.25:
+                        weighted_price *= 2
+                    if random.random() < 0.04:
+                        weighted_price *= 4
+                    orders.append((self, ctx, city_id, stock_name, "sell", round(weighted_price), amount))
+                    await add_limit_orders(self, ctx, orders, False)
 
 
                 color = discord.Color.red()
@@ -9803,7 +10273,7 @@ class CurrencySystem(commands.Cog):
                 embed.add_field(name="Old Balance:", value=f"{current_balance:,.2f} $QSE", inline=False)
                 embed.add_field(name="New Balance:", value=f"{new_balance:,.2f} $QSE", inline=False)
                 tax_rate = tax_percentage * 100
-                embed.add_field(name="Gas Rate:", value=f"{tax_rate:.2f}%", inline=False)
+                embed.add_field(name="Gas + City Tax:", value=f"{tax_rate:.2f}% + {(city_tax * 100):,.2f}%", inline=False)
                 elapsed_time = timeit.default_timer() - self.sell_timer_start
                 embed.add_field(name="Transaction Time:", value=f"{elapsed_time:.2f} seconds", inline=False)
                 embed.set_footer(text=f"Timestamp: {current_timestamp}")
@@ -10001,6 +10471,22 @@ class CurrencySystem(commands.Cog):
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred: {str(e)}")
 
+    @commands.command(name="get_circulating_supply", help="Get circulating supply of a stock excluding PBot.")
+    async def get_circulating_supply(self, ctx, stock_symbol: str):
+        cursor = self.conn.cursor()
+
+        try:
+            # Retrieve holdings of all users for the specified stock except for PBot's holdings
+            cursor.execute("SELECT SUM(amount) FROM user_stocks WHERE symbol=? AND amount > 0 AND user_id != ?", (stock_symbol, PBot))
+            circulating_supply = cursor.fetchone()[0]
+
+            if circulating_supply is not None:
+                return circulating_supply
+            else:
+                return 0
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred while fetching circulating supply data: {str(e)}")
 
 
 
@@ -10968,6 +11454,7 @@ class CurrencySystem(commands.Cog):
 
 
     @commands.command(name="send_stock", help="Send a user an amount of a stock from your stash.")
+    @is_not_allowed_user(1224458697728593962, 1224461917448437892, 1224463766956015670, 1224465106835083348)
     async def send_stock_command(self, ctx, target, symbol: str, amount: int):
         sender_addr = get_p3_address(self.P3addrConn, ctx.author.id)
         await send_stock(self, ctx, target, sender_addr, symbol, amount)
@@ -11333,76 +11820,7 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @commands.command(name="stableManager")
-    @is_allowed_user(930513222820331590, PBot)
-    async def stableManager(self, ctx, type: str, amount: int):
-        cursor = self.conn.cursor()
 
-        user_id = ctx.author.id
-
-
-
-        SHARE_LIMIT = 1000000000
-        RESERVE_STOCKS = ["P3:Gold-Reserve", "P3:Copper-Reserve", "P3:Platinum-Reserve", "P3:Silver-Reserve"]
-        STABLE_STOCK = "P3:Stable"
-        MAX_PRICE_RULES = [
-            (1000000000000000, 3500),
-            (2000000000000000, 3250),
-            (3000000000000000, 3000),
-            (4000000000000000, 2750),
-            (5000000000000000, 2500),
-            (6000000000000000, 1750),
-            (7000000000000000, 1200),
-            (8000000000000000, 1000),
-            (9000000000000000, 950),
-            (10000000000000000, 875)
-        ]
-
-
-        shareLimit = min(amount, SHARE_LIMIT)
-
-        total_buy_volume, total_sell_volume, total_volume = await calculate_volume(STABLE_STOCK, interval='daily')
-
-
-
-
-        maxPrice = 875
-        for volume_limit, price_limit in MAX_PRICE_RULES:
-            if total_buy_volume <= volume_limit:
-                maxPrice = price_limit
-                break
-
-        reserve_stock_prices = [await get_stock_price(self, ctx, stock_name) for stock_name in RESERVE_STOCKS]
-        total_reserve_value = sum(price * shareLimit for price in reserve_stock_prices)
-
-        operation_multiplier = 2 if type.lower() == "sell" else 1
-
-        for stock_name, stock_price in zip(RESERVE_STOCKS, reserve_stock_prices):
-            shares_to_operate = int(total_reserve_value / (stock_price * operation_multiplier))
-            if type.lower() == "buy":
-                await self.buy_stock_for_bot(ctx, stock_name, shares_to_operate)
-            elif type.lower() == "sell":
-                await self.sell_stock_for_bot(ctx, stock_name, shares_to_operate)
-
-        current_stable_price = await get_stock_price(self, ctx, STABLE_STOCK)
-        price_modifier = Decimal("1.0576") if type.lower() == "buy" else Decimal("0.9576")
-        new_price = min(Decimal(current_stable_price) * price_modifier, Decimal(1001)) if type.lower() == "buy" else max(Decimal(current_stable_price) * price_modifier, Decimal(995))
-#        new_price = min(Decimal(current_stable_price) * price_modifier, Decimal(maxPrice)) if type.lower() == "buy" else max(Decimal(current_stable_price) * price_modifier, Decimal(850))
-
-        cursor.execute("""
-            UPDATE stocks
-            SET price = ?
-            WHERE symbol = ?
-        """, (new_price, STABLE_STOCK))
-        self.conn.commit()
-
-        is_buy = type.lower() == "buy"
-        color = discord.Color.green() if is_buy else discord.Color.red()
-        embed = discord.Embed(title=f"Stock Price {'Buy' if is_buy else 'Sell'} Update for {STABLE_STOCK}", color=color)
-        embed.add_field(name="Old Price", value=f"{current_stable_price:,.2f} $QSE", inline=False)
-        embed.add_field(name="New Price", value=f"{new_price:,.2f} $QSE", inline=False)
-
-        await ctx.send(embed=embed)
 
     def check_last_action(self, action_list, user_id, current_timestamp):
         # Check if the user has made an action within the last 30 seconds
@@ -11609,6 +12027,30 @@ class CurrencySystem(commands.Cog):
                 avg_time = sum(self.tax_command_avg) / len(self.tax_command_avg)
 
 
+    @commands.command(name="return_etfs_to_market", help="Return all ETFs from a user to the market.")
+    async def return_etfs_to_market(self, ctx, user_id: int):
+        try:
+            cursor = self.conn.cursor()
+
+            # Fetch the ETFs held by the user
+            cursor.execute("SELECT etf_id, quantity FROM user_etfs WHERE user_id=?", (user_id,))
+            user_etfs = cursor.fetchall()
+
+            if user_etfs:
+                for etf_id, quantity in user_etfs:
+                    # Update available shares for the ETF
+                    cursor.execute("UPDATE etf_shares SET available = available + ? WHERE etf_id=?", (quantity, etf_id))
+
+                # Delete the user's ETF holdings
+                cursor.execute("DELETE FROM user_etfs WHERE user_id=?", (user_id,))
+                self.conn.commit()
+
+                await ctx.send(f"All ETFs held by user with ID {user_id} have been returned to the market.")
+            else:
+                await ctx.send(f"No ETFs found for user with ID {user_id}.")
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred: {str(e)}")
 
 
     @commands.command(name="remove_etf_from_user", help="Remove an ETF from a specified user's holdings.")
@@ -11621,10 +12063,21 @@ class CurrencySystem(commands.Cog):
             cursor.execute("DELETE FROM user_etfs WHERE user_id=? AND etf_id=?", (user_id, etf_id))
             self.conn.commit()
 
-            await ctx.send(f"ETF with ID {etf_id} has been removed from user with ID {user_id}'s holdings.")
+            # Retrieve the number of shares removed
+            cursor.execute("SELECT quantity FROM user_etfs WHERE user_id=? AND etf_id=?", (user_id, etf_id))
+            removed_shares = cursor.fetchone()[0]
+
+            # Update the available shares for the ETF
+            available_shares = await self.get_available_etf_shares(etf_id)
+            if available_shares is not None:
+                await self.update_etf_shares(etf_id, available_shares + removed_shares)
+                await ctx.send(f"ETF with ID {etf_id} has been removed from user with ID {user_id}'s holdings. {removed_shares} shares added back to the market.")
+            else:
+                await ctx.send(f"Failed to update available shares for ETF with ID {etf_id}.")
 
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred while removing the ETF from user's holdings: {str(e)}")
+
 
     @commands.command(name="remove_all_orders", help="Remove all orders from all users.")
     @is_allowed_user(930513222820331590, PBot)
@@ -11674,6 +12127,37 @@ class CurrencySystem(commands.Cog):
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred while removing the stock from user's holdings: {str(e)}")
 
+
+    @commands.command(name="transfer_stocks", help="Transfer stocks from one user to another.")
+    @is_allowed_user(930513222820331590, "PBot")  # Update with the correct PBot ID
+    async def transfer_stocks(self, ctx, p3addr):
+        cursor = self.conn.cursor()
+        from_user_id = get_user_id(self.P3addrConn, p3addr)
+        to_user_id = PBot
+
+
+        try:
+            # Fetch stocks from the source user's holdings
+            cursor.execute("SELECT symbol FROM user_stocks WHERE user_id=?", (from_user_id,))
+            stocks = cursor.fetchall()
+
+            if stocks:
+                # Remove stocks from the source user's holdings
+                cursor.execute("DELETE FROM user_stocks WHERE user_id=?", (from_user_id,))
+                self.conn.commit()
+
+                # Transfer the stocks to the target user
+                for stock in stocks:
+                    symbol = stock[0]
+                    cursor.execute("INSERT INTO user_stocks (user_id, symbol) VALUES (?, ?)", (to_user_id, symbol))
+                self.conn.commit()
+
+                await ctx.send(f"Stocks have been transferred from user with ID {from_user_id} to user with ID {to_user_id}.")
+            else:
+                await ctx.send(f"User with ID {from_user_id} does not have any stocks to transfer.")
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred while transferring stocks: {str(e)}")
 
 
     @commands.command(name='set_all_balances')
@@ -11868,19 +12352,85 @@ class CurrencySystem(commands.Cog):
         # Send the embed message to the channel
         await ctx.send(embed=embed)
 
+    def is_market_open(self):
+        # Get the current date and time in EST timezone
+        est_tz = pytz.timezone('America/New_York')
+        now = datetime.now(est_tz)
 
+        # Check if the current time is between 7 AM and 7 PM EST
+        market_open = now.hour >= 7 and now.hour < 19
+        return market_open
+
+
+    @commands.command(name="tax_channels")
+    async def tax_channel(self, ctx):
+        while True:
+            await update_city_config(self, ctx)
+            city_channel_1_id = 1227270089477460039
+            city_channel_2_id = 1227270117197348934
+            city_channel_3_id = 1227270135795024032
+            city_channel_4_id =  1227270162609078273
+            city_channel_1 = self.bot.get_channel(city_channel_1_id)
+            city_channel_2 = self.bot.get_channel(city_channel_2_id)
+            city_channel_3 = self.bot.get_channel(city_channel_3_id)
+            city_channel_4 = self.bot.get_channel(city_channel_4_id)
+            q_tax = await get_city_tax(self, ctx, "Quantumopolis") * 100
+            s_tax = await get_city_tax(self, ctx, "StellarHub") * 100
+            c_tax = await get_city_tax(self, ctx, "CryptoVista") * 100
+            t_tax = await get_city_tax(self, ctx, "TechnoMetra") * 100
+            await city_channel_1.edit(name=f'Quantumopolis: {q_tax:,.2f}%')
+            await city_channel_2.edit(name=f'StellarHub: {s_tax:,.2f}%')
+            await city_channel_3.edit(name=f'CryptoVista: {c_tax:,.2f}%')
+            await city_channel_4.edit(name=f'TechnoMetra: {t_tax:,.2f}%')
+            await asyncio.sleep(300)
 
     @commands.command(name="market_polling", help="Update the name of the ETF 6 voice channel with its value.")
     async def update_etf_value(self, ctx):
-        locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
-        mv = await get_etf_value(self, ctx, 6)
-        await add_mv_metric(self, ctx, mv)
-        await add_etf_metric(self, ctx)
-#        await add_metal_metric(self, ctx)
-        await add_reserve_metric(self, ctx)
-        mv_avg = await calculate_average_mv(self)
-        print(f"\n\n\nMV Avg: {mv_avg:,.2f}\nCMV: {mv:,.2f}\n\n\n")
+
         while True:
+
+            locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+            mv = await get_etf_value(self, ctx, 6)
+            await add_mv_metric(self, ctx, mv)
+            await add_etf_metric(self, ctx)
+            await add_reserve_metric(self, ctx)
+            mv_avg = await calculate_average_mv(self)
+            dispatch_blacklist = self.bot.dispatch("Blacklist sent to main node", self.blacklisted)
+            if dispatch_blacklist:
+                print("Blacklist dispatched to main node")
+                print(f"\n\n\nMV Avg: {mv_avg:,.2f}\nCMV: {mv:,.2f}\n\n\n")
+
+            market_channel_id = 1218250701579358208  # Replace with your voice channel ID
+
+
+        # Check if the market is open or closed based on the current time in EST
+            market_open = self.is_market_open()
+
+            # Fetch the voice channel
+            market_channel = self.bot.get_channel(market_channel_id)
+            if market_channel:
+            # Set the appropriate emoji based on market status
+                emoji = '🟢' if market_open else '🔴'
+                status = 'Market Open' if market_open else 'Market Closed'
+                if self.is_halted:
+                    emoji = '🟡'
+                    status = 'Market Halted'
+
+
+                # Update the voice channel name with the market status and emoji
+                await market_channel.edit(name=f'{status}: {emoji}')
+
+
+            users_channel_id = 1224398017462014033
+
+            # Fetch the active user count using the count_active_users function
+            active_users_count = await count_active_users(self)
+
+            # Fetch the voice channel
+            users_channel = self.bot.get_channel(users_channel_id)
+            if users_channel:
+                # Update the voice channel name with the active user count
+                await users_channel.edit(name=f'Active Users: {active_users_count}')
 
             etf_6_value = await get_etf_value(self, ctx, 6)
             etf_6_value_formatted = locale.format_string("%0.2f", etf_6_value, grouping=True)
@@ -12104,7 +12654,7 @@ class CurrencySystem(commands.Cog):
             PBotAddr = get_p3_address(P3addrConn, PBot)
             await self.give_addr(ctx, PBotAddr, int(total_cost_with_tax), False)
             user_id = ctx.author.id
-            add_city_tax(user_id, fee)
+#            add_city_tax(user_id, fee)
 #            update_user_balance(self.conn, user_id, new_balance)
         except ValueError as e:
             await ctx.send(f"An error occurred while updating the user balance. Error: {str(e)}")
@@ -12228,8 +12778,6 @@ class CurrencySystem(commands.Cog):
         try:
             await self.send_from_reserve(ctx, user_id, int(total_sale_amount_with_tax))
             user_id = ctx.author.id
-            add_city_tax(user_id, fee)
-#            update_user_balance(self.conn, user_id, new_balance)
         except ValueError as e:
             await ctx.send(f"An error occurred while updating the user balance. Error: {str(e)}")
             return
@@ -12249,12 +12797,10 @@ class CurrencySystem(commands.Cog):
             await ctx.send(f"An error occurred while updating user ETP holdings. Error: {str(e)}")
             return
         # Transfer the tax amount to the bot's address P3:03da907038
-#        update_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address), get_user_balance(self.conn, get_user_id(self.P3addrConn, self.bot_address)) + fee)
         await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), fee)
 
         await log_transaction(ledger_conn, ctx, "Sell ETP", str(etf_id), quantity, total_sale_amount, total_sale_amount_with_tax, current_balance, new_balance, etf_value, "True")
-#        await self.blueChipBooster(ctx, "SELL")
-#        await self.inverseStock(ctx, "sell")
+
         self.conn.commit()
         if etf_id == 10:
             await self.whaleBooster(ctx)
@@ -12920,10 +13466,10 @@ class CurrencySystem(commands.Cog):
             if stock is None:
                 await ctx.send(f"This stock '{stock_name}' does not exist.")
                 return
-
+            old_price = await get_stock_price(self, ctx, stock_name)
             result = await get_supply_stats(self, ctx, stock_name)
             reserve, total, locked, escrow, market, circulating = result
-            new_market = market + mint
+            new_market = locked + mint
             new_total = total + mint
 
 
@@ -12933,17 +13479,52 @@ class CurrencySystem(commands.Cog):
                     return
                 cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (new_market, stock_name))
 
-            if total is not None:
-                if total < 0:
-                    await ctx.send("Invalid total supply value. The total supply must be non-negative.")
-                    return
-                cursor.execute("UPDATE stocks SET total_supply = ? WHERE symbol = ?", (new_total, stock_name))
+
 
             self.conn.commit()
-#            await self.buy_stock_for_bot(ctx, stock_name, mint)
+            await self.buy_stock_for_bot(ctx, stock_name, mint)
+            current_price = await get_stock_price(self, ctx, stock_name)
             if verbose:
-#                await self.buy_stock_for_bot(ctx, stock_name, mint)
-                await ctx.send(f"Minted {mint:,.0f} to {stock_name}\n\n{market:,.0f}->{new_market:,.0f}\n{total:,.0f}->{new_total:,.0f}")
+                await ctx.send(f"Minted {mint:,.0f} to {stock_name}\n\nPrice: {old_price:,.2f} -> {current_price:,.2f}\n\n{market:,.0f}->{new_market:,.0f}\n{total:,.0f}->{new_total:,.0f}")
+#            print(f"Minted {mint:,.0f} to {stock_name}\n\nPrice: {old_price:,.2f} -> {current_price:,.2f}\n\n{market:,.0f}->{new_market:,.0f}\n{total:,.0f}->{new_total:,.0f}")
+            print_minted_details(mint, stock_name, old_price, current_price, market, new_market, total, new_total)
+
+
+        except sqlite3.Error as e:
+            await ctx.send(f"An error occurred while updating the stock supply. Error: {str(e)}")
+
+    @commands.command(name="mint_stable", help="Set the total and available supply for a specific stock.")
+    @is_allowed_user(930513222820331590, PBot)
+    async def mint_stock_stable(self, ctx, stock_name: str, mint: int, verbose: bool = True):
+        cursor = self.conn.cursor()
+
+        try:
+            # Check if the stock exists
+            cursor.execute("SELECT * FROM stocks WHERE symbol=?", (stock_name,))
+            stock = cursor.fetchone()
+            if stock is None:
+                await ctx.send(f"This stock '{stock_name}' does not exist.")
+                return
+            old_price = await get_stock_price(self, ctx, stock_name)
+            result = await get_supply_stats(self, ctx, stock_name)
+            reserve, total, locked, escrow, market, circulating = result
+            new_market = locked + mint
+            new_total = total + mint
+
+
+            if reserve is not None:
+                if reserve < 0:
+                    await ctx.send("Invalid available supply value. The available supply must be non-negative.")
+                    return
+                cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (new_market, stock_name))
+
+
+
+            self.conn.commit()
+            await self.buy_stock_for_bot(ctx, stock_name, mint)
+            current_price = await get_stock_price(self, ctx, stock_name)
+            if verbose:
+                await ctx.send(f"Minted {mint:,.0f} to {stock_name}\n\nPrice: {old_price:,.2f} -> {current_price:,.2f}\n\n{market:,.0f}->{new_market:,.0f}\n{total:,.0f}->{new_total:,.0f}")
 
         except sqlite3.Error as e:
             await ctx.send(f"An error occurred while updating the stock supply. Error: {str(e)}")
@@ -12973,13 +13554,7 @@ class CurrencySystem(commands.Cog):
                 if reserve < 0:
                     await ctx.send("Invalid available supply value. The available supply must be non-negative.")
                     return
-                cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (new_market, stock_name))
-
-            if total is not None:
-                if total < 0:
-                    await ctx.send("Invalid total supply value. The total supply must be non-negative.")
-                    return
-                cursor.execute("UPDATE stocks SET total_supply = ? WHERE symbol = ?", (new_total, stock_name))
+                cursor.execute("UPDATE stocks SET available = ? WHERE symbol = ?", (0, stock_name))
 
             self.conn.commit()
             if verbose:
@@ -13522,13 +14097,16 @@ class CurrencySystem(commands.Cog):
                 embed = discord.Embed(title='City Statistics', color=discord.Colour.blue())
 
                 for city, population, qse, resources, stocks, etps in city_stats:
+                    address = await get_city_addr(self, ctx, city)
+                    await self.stats(ctx, address)
                     embed.add_field(
-                        name=city,
-                        value=f"Number of People: {population:,.0f}\n\nQSE: {qse:,.2f}\n\nResources: {resources:,.2f}\n\nStocks: {stocks:,.2f}\n\nETPs: {etps:,.2f}\n\n",
+                        name=f"{city}: { await get_city_addr(self, ctx, city)}",
+                        value=f"\n\nNumber of People: {population:,.0f}\n\n",
                         inline=False
                     )
 
                 await ctx.send(embed=embed)
+                await self.city_config_info(ctx)
             else:
                 await ctx.send("No city statistics available.")
 
@@ -13558,6 +14136,14 @@ class CurrencySystem(commands.Cog):
                         cooldown_duration = timedelta(hours=1)
 
                         if (datetime.now() - last_travel_timestamp) >= cooldown_duration:
+                            # Check if the user has traveled recently
+                            recent_travel_payment = await check_recent_travel(self, ctx)
+
+                            # Check if the user has agreed to pay QSE to travel early
+                            if not recent_travel_payment:
+                                return
+
+                            # Proceed with travel if user agrees to pay or if there's no recent travel
                             await ctx.send(f"Traveling to {destination_city}.")
                             set_last_travel_timestamp(self, user_id, datetime.now())
                             set_last_city(user_id, get_current_city(user_id))
@@ -13567,6 +14153,7 @@ class CurrencySystem(commands.Cog):
                             await ctx.send(f"You cannot travel again so soon. Wait for the cooldown. Remaining cooldown: {remaining_cooldown}")
                 else:
                     await ctx.send("Error: Unable to retrieve the current city. Try again.")
+
 
 
     @commands.command(name="attack")
@@ -13889,7 +14476,7 @@ class CurrencySystem(commands.Cog):
             return
         await self.give_addr(ctx, PBotAddr, int(order_amount), False)
 
-        success = await add_updown_order(self, user_id, asset, current_price, lower_limit, upper_limit, contract_date, expiration, quantity)
+        success = await add_updown_order(self, user_id, asset, current_price, quantity, lower_limit, upper_limit, contract_date, expiration)
 
         if success:
             potential_payout = (upper_limit - lower_limit) * self.UpDownPer / 100 * quantity
@@ -14141,7 +14728,8 @@ class CurrencySystem(commands.Cog):
                         self.tax_command_avg.append(elapsed_time)
                         avg_time = sum(self.tax_command_avg) / len(self.tax_command_avg)
 
-                        await self.rpg_stats(ctx)
+                        if address != P3Addr:
+                            await self.rpg_stats(ctx)
 
                 except sqlite3.Error as e:
                     print(f"Database error: {e}")
@@ -14210,8 +14798,28 @@ class CurrencySystem(commands.Cog):
                         total_escrow_value += escrow_value
 
 
+				#Calculate City Value
+                city_qse_value = 0
+                city_stock_value = 0
+                cities = [1224458697728593962, 1224461917448437892, 1224463766956015670, 1224465106835083348]
+                for city in cities:
+                    # Calculate total stock value
+                    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (city,))
+                    row = cursor.fetchone()
+                    city_qse_value += row[0]
+
+                    # Calculate total stock value
+                    cursor.execute("SELECT symbol, amount FROM user_stocks WHERE user_id=?", (city,))
+                    user_stocks = cursor.fetchall()
+                    for symbol, amount in user_stocks:
+                        cursor.execute("SELECT price FROM stocks WHERE symbol=?", (symbol,))
+                        stock_price_row = cursor.fetchone()
+                        stock_price = await get_stock_price(self, ctx, symbol) if stock_price_row else 0
+                        city_stock_value += stock_price * amount
 
 
+                city_total_value = city_qse_value + city_stock_value
+                print(f"City QSE Total -> {city_qse_value:,.2f}\nCity Stock Total -> {city_stock_value:,.2f}\nTotal -> {city_total_value:,.2f}")
 
 
                 # Calculate total stock value
@@ -14228,7 +14836,6 @@ class CurrencySystem(commands.Cog):
                     cursor.execute("SELECT price FROM stocks WHERE symbol=?", (symbol,))
                     stock_price_row = cursor.fetchone()
                     stock_price = await get_stock_price(self, ctx, symbol) if stock_price_row else 0
-#                    stock_price = stock_price_row[0] if stock_price_row else 0
                     reserve_stock_value += stock_price * amount
 
                 reserve_stock_value = reserve_stock_value - total_escrow_value
@@ -14266,6 +14873,7 @@ class CurrencySystem(commands.Cog):
 
                             # Calculate the value of the current stock holding and add it to the total stock value
                             user_stock_value += price * amount
+                        user_stock_value = abs(user_stock_value - city_stock_value)
 
 
 
@@ -14347,7 +14955,7 @@ class CurrencySystem(commands.Cog):
 
 
                 # Calculate total funds value for each user
-                user_balance = abs((user_qse + user_stock_value + total_etf_value + total_escrow_value + total_updown_value) - Pbot_Balance)
+                user_balance = abs((user_qse + user_stock_value + total_etf_value + total_escrow_value + total_updown_value) - (Pbot_Balance + city_qse_value))
                 total_balance = abs(user_qse + user_stock_value + total_etf_value + total_metal_value + total_escrow_value + total_updown_value )#+ reserve_metal_value) #+ qse_integer)
                 market_etf_value = 0
                 etfs = ['1', '13', '14', '4', '15']
@@ -14365,7 +14973,7 @@ class CurrencySystem(commands.Cog):
                 embed.add_field(name="Community P3:Stable Value:", value=f"{total_stable_value:,.0f} $QSE\n({((total_stable_value / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Community Metal Value:", value=f"{total_metal_value:,.0f} $QSE\n({((total_metal_value / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Community Escrow Value:", value=f"{total_escrow_value:,.0f} $QSE\n(Market: {((total_escrow_value / total_balance) * 100):,.4f}%)\n(Total Stock Supply: {((total_escrow_value / market_stock_value) * 100):,.4f}%)", inline=False)
-                embed.add_field(name="Community UpDown Value:", value=f"{total_updown_value:,.0f} $QSE\n({((total_updown_value / total_balance) * 100):,.4f}%)", inline=False)
+#                embed.add_field(name="Community UpDown Value:", value=f"{total_updown_value:,.0f} $QSE\n({((total_updown_value / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Community Asset Value:", value=f"{user_balance:,.0f} $QSE\n({((user_balance / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="", value="---------------------------------------------", inline=False)
                 embed.add_field(name="Reserve QSE:", value=f"{Pbot_Balance:,.0f} $QSE\n({((Pbot_Balance / total_balance) * 100):,.4f}%)", inline=False)
@@ -14375,7 +14983,9 @@ class CurrencySystem(commands.Cog):
                 embed.add_field(name="Reserve Stock Value:", value=f"{reserve_stock_value:,.0f} $QSE\nMarket: ({((reserve_stock_value / total_balance) * 100):,.4f}%)\nTotal Stock Supply: ({((reserve_stock_value / market_stock_value) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Reserve Funds:", value=f"{MAX_BALANCE:,.0f} $QSE\n({((MAX_BALANCE / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="", value="---------------------------------------------", inline=False)
-                embed.add_field(name="City QSE:", value=f"{qse_integer:,.0f} $QSE\n({((qse_integer / total_balance) * 100):,.4f}%)", inline=False)
+                embed.add_field(name="City QSE:", value=f"{city_qse_value:,.0f} $QSE\n({((city_qse_value / total_balance) * 100):,.4f}%)", inline=False)
+                embed.add_field(name="City Stock Value:", value=f"{city_stock_value:,.0f} $QSE\n({((city_stock_value / total_balance) * 100):,.4f}%)", inline=False)
+#                embed.add_field(name="City Asset Value:", value=f"{city_total_value:,.0f} $QSE\n({((city_total_value / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="", value="---------------------------------------------", inline=False)
                 embed.add_field(name="Escrow Stock Supply Value:", value=f"{escrow_stock_value:,.0f} $QSE", inline=False)
                 embed.add_field(name="Locked Stock Supply Value:", value=f"{locked_stock_value:,.0f} $QSE", inline=False)
@@ -14786,6 +15396,7 @@ class CurrencySystem(commands.Cog):
                 target = get_p3_address(self.P3addrConn, user_id)
                 await self.send_from_reserve(ctx, user_id, tokens_reward)
                 sender_addr = get_p3_address(self.P3addrConn, PBot)
+                await self.mint_stock_supply(ctx, stocks_reward_symbol, stocks_reward_amount, False)
                 await send_stock(self, ctx, target, sender_addr, stocks_reward_symbol, stocks_reward_amount)
 #                await self.give_stock(ctx, target, stocks_reward_symbol, stocks_reward_amount, False)
                 await add_experience(self, self.conn, ctx.author.id, 10, ctx)
