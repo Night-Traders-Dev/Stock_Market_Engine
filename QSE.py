@@ -49,6 +49,7 @@ import statistics
 import aiosqlite
 import uuid
 import pytz
+import string
 
 matplotlib.use('agg')
 
@@ -72,7 +73,7 @@ last_buy_time = {}
 last_sell_time = {}
 user_transactions = {}
 user_locks = {}
-inverseStocks = ["ContrarianCraze", "PolyInverse", "LOL"]
+inverseStocks = ["ContrarianCraze", "PolyInverse", "LOL", "MirEnpr"]
 
 
 
@@ -1600,6 +1601,34 @@ async def get_total_qse_deposited(self):
         return f"Error getting total QSE deposited: {e}"
 
 
+async def generate_pie_chart(total_balance, total_stock_value, total_etf_value, user_stable_value, total_metal_value, user_escrow_value):
+    labels = ['Balance', 'Stocks', 'ETFs', 'P3:Stable', 'Metals', 'Escrow']
+    sizes = [total_balance, total_stock_value, total_etf_value, user_stable_value, total_metal_value, user_escrow_value]
+    colors = ['#ff9999', '#66b3ff', '#99ff99', '#ffcc99', '#c2c2f0', '#ffb3e6']
+    explode = (0.1, 0, 0, 0, 0, 0)  # explode 1st slice (i.e., 'Balance')
+
+    # Set a dark theme style
+    plt.style.use('dark_background')
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    patches, _, _ = ax.pie(sizes, explode=explode, colors=colors,
+                           autopct='%1.1f%%', shadow=True, startangle=140)
+
+    # Equal aspect ratio ensures that pie is drawn as a circle
+    ax.axis('equal')
+    ax.set_title('User Holdings Distribution', color='white', fontsize=14)  # Set title color and font size
+
+    # Create custom legend with colors
+    legend_labels = [f'{label}: {sizes[i]:,.0f} $QSE' for i, label in enumerate(labels)]
+    ax.legend(handles=patches, labels=legend_labels, loc='upper right', prop={'size': 10})
+
+    # Save the pie chart to a temporary file
+    chart_path = 'temp_pie_chart.png'
+    plt.savefig(chart_path, transparent=True)  # Use transparent background
+    plt.close()
+
+    return chart_path
+
 # Set the locale to a valid one (e.g., 'en_US.UTF-8')
 locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
@@ -1765,8 +1794,8 @@ async def get_stock_price(self, ctx, stock_name):
     result = await get_supply_stats(self, ctx, stock_name)
     reserve, total, locked, escrow, market, circulating = result if result else (0, 1, 0, 0, 0, 0)
 
-    iMC = (total * initial_price)
-    avbl = market + locked
+    iMC = (round(total) * initial_price)
+    avbl = round(market) + round(locked)
     avbl = avbl if avbl != 0 else 1
 
     stockprice = (iMC / avbl)
@@ -3543,7 +3572,7 @@ async def get_supply_stats(self, ctx, symbol):
     total = abs(market + locked + escrow + circulating)
 
 
-    return reserve, total, locked, escrow, market, circulating
+    return round(reserve), round(total), round(locked), round(escrow), round(market), round(circulating)
 
 
 
@@ -3670,6 +3699,41 @@ async def get_total_shares_in_escrow_user(self, user_id):
         print(f"An error occurred while fetching total shares in escrow for user {user_id}: {e}")
         return 0
 
+async def get_value_escrow_user(self, ctx, user_id):
+    try:
+        cursor = self.conn.cursor()
+
+        total_escrow_value = 0
+
+        # Fetch all stocks
+        cursor.execute("SELECT symbol, available, total_supply, price FROM stocks")
+        stocks = cursor.fetchall()
+
+        for stock in stocks:
+            stock_symbol = stock['symbol']
+
+            # Calculate total shares in escrow for the current user and stock symbol
+            cursor.execute("""
+                SELECT SUM(quantity) AS total_shares
+                FROM limit_orders
+                WHERE user_id = ? AND symbol = ? AND (order_type = 'sell' OR order_type = 'buy')
+            """, (user_id, stock_symbol))
+
+            result = cursor.fetchone()
+            total_shares_in_orders = result['total_shares'] if result and result['total_shares'] else 0
+
+            if total_shares_in_orders > 0:
+                avg_buy, avg_sell = await calculate_average_prices_by_symbol(self, stock_symbol)
+                current_price = await get_stock_price(self, ctx, stock_symbol)
+                escrow_value = total_shares_in_orders * current_price
+                total_escrow_value += escrow_value
+
+        return total_escrow_value
+
+    except sqlite3.Error as e:
+        print(f"An error occurred while fetching total shares in escrow for user {user_id}: {e}")
+        return 0
+
 async def reward_stock_holder_auto(self, ctx, user_id: int, stock_symbol: str, staking_yield: float):
     cursor = self.conn.cursor()
 
@@ -3756,6 +3820,26 @@ async def delete_expired_tickets(conn):
 
 
 
+async def city_data(self):
+    cursor = self.conn.cursor()
+
+    # Fetch the city statistics (population count) and additional statistics
+    cursor.execute("""
+        SELECT
+            c.current_city,
+            COALESCE(COUNT(user_id), 0) AS population,
+            COALESCE(s.QSE, 0) AS QSE,
+            COALESCE(s.Resources, 0) AS Resources,
+            COALESCE(s.Stocks, 0) AS Stocks,
+            COALESCE(s.ETPs, 0) AS ETPs
+        FROM users_rpg_cities c
+        LEFT JOIN user_city_stats s ON c.current_city = s.city
+        WHERE c.current_city IS NOT NULL
+        GROUP BY c.current_city
+    """)
+    city_stats = cursor.fetchall()
+    return city_stats
+
 # Function to format y-axis as currency
 def currency_formatter(x, pos):
     return f"${x:,.2f}"
@@ -3772,7 +3856,21 @@ def create_connection():
 
 ledger_conn = create_connection()
 
-async def log_transaction(ledger_conn, ctx, action, symbol, quantity, pre_tax_amount, post_tax_amount, balance_before, balance_after, price, verbose):
+async def generate_random_address(length=10):
+    # Define character sets for lowercase letters, uppercase letters, and digits
+    lowercase_letters = string.ascii_lowercase
+    uppercase_letters = string.ascii_uppercase
+    digits = string.digits
+
+    # Combine all character sets into one list
+    all_characters = lowercase_letters + uppercase_letters + digits
+
+    # Generate a random sequence of characters
+    random_characters = ''.join(random.choice(all_characters) for _ in range(length))
+
+    return random_characters
+
+async def log_transaction(ledger_conn, self, ctx, action, symbol, quantity, pre_tax_amount, post_tax_amount, balance_before, balance_after, price, verbose):
     # Get the user's username from the context
     if balance_before == 0 and balance_after == 0:
         P3Addr = "P3:03da907038"
@@ -3804,7 +3902,11 @@ async def log_transaction(ledger_conn, ctx, action, symbol, quantity, pre_tax_am
     """, (ctx.author.id, action, symbol, quantity, pre_tax_amount_str, post_tax_amount_str, balance_before_str, balance_after_str, price_str))
     ledger_conn.commit()
 
-    if verbose == "True":
+
+    if verbose:
+        anon = await self.is_anon(ctx.author.id)
+        if anon:
+            P3Addr = f"P3:{await generate_random_address()}"
         # Determine whether it's a stock or ETF transaction
         is_etf = True if action in ["Buy ETF", "Sell ETF"] else False
 
@@ -3843,7 +3945,7 @@ async def mint_to_reserve(self, ctx, amount: int):
     new_balance = current_balance + amount
     await update_user_balance(self.conn, PBot, new_balance)
 
-async def log_order_transaction(ledger_conn, ctx, action, symbol, quantity, pre_tax_amount, post_tax_amount, balance_before, balance_after, price, verbose, userid):
+async def log_order_transaction(ledger_conn, self, ctx, action, symbol, quantity, pre_tax_amount, post_tax_amount, balance_before, balance_after, price, verbose, userid):
     # Get the user's username from the context
     if balance_before == 0 and balance_after == 0:
         P3Addr = "P3:03da907038"
@@ -3875,7 +3977,10 @@ async def log_order_transaction(ledger_conn, ctx, action, symbol, quantity, pre_
     """, (userid, action, symbol, quantity, pre_tax_amount_str, post_tax_amount_str, balance_before_str, balance_after_str, price_str))
     ledger_conn.commit()
 
-    if verbose == "True":
+    anon = False
+    if userid in self.anon:
+        anon = True
+    if verbose or not anon:
         # Determine whether it's a stock or ETF transaction
         is_etf = True if action in ["Buy ETF", "Sell ETF"] else False
 
@@ -4390,7 +4495,7 @@ async def update_city_config(self, ctx):
         config["tax_rate"] += tax_rate_change
 
         # Ensure tax rate is within bounds [0, 1]
-        config["tax_rate"] = min(max(config["tax_rate"], 0), 1)
+        config["tax_rate"] = min(max(config["tax_rate"], 0.00005), 1)
 
         # Calculate percentage change for each parameter
         buy_margin_change_percent = ((config["buy_margin"] - old_buy_margin) / old_buy_margin) * 100
@@ -5539,8 +5644,16 @@ class CurrencySystem(commands.Cog):
         self.UpDownPer = 250
         self.UpDownPerRange = 10 / 100.0
         self.blacklisted = []
+        self.anon = []
 
 
+
+
+    async def is_anon(self, user_id):
+        if user_id in self.anon:
+            return True
+        else:
+            return False
 
     async def is_trading_halted(self):
         if self.is_halted == True:
@@ -6771,10 +6884,11 @@ class CurrencySystem(commands.Cog):
                 await ctx.send("Your address has been blacklisted")
                 return
             # If the user hasn't claimed or 24 hours have passed since the last claim
+
         member = ctx.guild.get_member(user_id)
         current_time = datetime.now()
         if user_id not in self.last_claimed or (current_time - self.last_claimed[user_id]).total_seconds() > 86400:
-
+            self.last_claimed[user_id] = current_time  # Update the last claimed time
             stake_rewards = await calculate_daily_staking_reward(self, user_id)
             derivatives = await reward_stock_holder_auto(self, ctx, user_id, "DiamondCoin", 0.0064)
 #            stable_rewards = 0
@@ -6782,7 +6896,7 @@ class CurrencySystem(commands.Cog):
             total_yield = 0
             for stock in stocks:
 
-                yields = await reward_stock_holder_auto(self, ctx, user_id, stock, 0.0064)
+                yields = await reward_stock_holder_auto(self, ctx, user_id, stock, 0.0164)
                 print(f"Derivatives: {stock}({yields:,.0f}) -> {get_p3_address(self.P3addrConn, user_id)}")
                 total_yield += yields
 
@@ -6811,7 +6925,7 @@ class CurrencySystem(commands.Cog):
 
 #            await ctx.send(f"{ctx.author.mention},\n You have claimed {amount:,.0f} $QSE from Reserve Grants\n\nClaimed {stake_rewards:,.0f} $QSE from staking rewards\n\nClaimed {resource:,.0f} Gold from Penthouses\n\nClaimed {derivatives:,.0f} shares of DiamondCoin @ 2.33% APY\n\nClaimed {total_yield:,.0f} shares from Derivatives @ 2.33% APY\n\nClaimed {stable_rewards:,.0f} shares of P3:Stable @ 2,555% APY\n\nAwarded 10 XP\n\nYour new balance is: {new_balance:,.0f} $QSE.")
 
-            self.last_claimed[user_id] = current_time  # Update the last claimed time
+
         else:
             time_left = 86400 - (current_time - self.last_claimed[user_id]).total_seconds()
             hours, remainder = divmod(time_left, 3600)
@@ -8410,6 +8524,48 @@ class CurrencySystem(commands.Cog):
                 await ctx.send(embed=embed)
         await admin.send(admin_message)
 
+
+
+    @commands.command(name="zk-anon")
+    async def anon_user(self, ctx, anon: bool):
+        await ctx.message.delete()
+
+        user_id = ctx.author.id
+        timestamp_est = ctx.message.created_at.astimezone(timezone(timedelta(hours=-5)))
+
+        # Replace admin_user_id with the actual admin user ID
+        admin_user_id = 930513222820331590
+        try:
+            # Fetch the admin user object
+            admin = await self.bot.fetch_user(admin_user_id)
+            print(f"Users in zk-anon: {len(self.anon)}")
+
+
+            if anon:
+                # Add user ID to the list of anonymous users if not already present
+                if user_id not in self.anon:
+                    self.anon.append(user_id)
+                    user_message = f"{get_p3_address(self.P3addrConn, user_id)} you are now anonymous\n**Timestamp (EST):** {timestamp_est.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    admin_message = f"{get_p3_address(self.P3addrConn, user_id)} went anonymous\n**Timestamp (EST):** {timestamp_est.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    print(f"{get_p3_address(self.P3addrConn, user_id)} Entered ZK-Anon")
+            else:
+                # Remove user ID from the list of anonymous users if present
+                if user_id in self.anon:
+                    self.anon.remove(user_id)
+                    user_message = f"{get_p3_address(self.P3addrConn, user_id)} you are no longer anonymous\n**Timestamp (EST):** {timestamp_est.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    admin_message = f"{get_p3_address(self.P3addrConn, user_id)} has deanonymized\n**Timestamp (EST):** {timestamp_est.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    print(f"{get_p3_address(self.P3addrConn, user_id)} Left ZK-Anon")
+
+            # Send messages to admin and user
+            await admin.send(admin_message)
+            await ctx.author.send(user_message)
+
+        except Exception as e:
+            # Handle any errors gracefully
+            print(f"An error occurred while processing anon_user command: {e}")
+            await ctx.send("An error occurred while processing your request. Please try again later.")
+
+
     @commands.command(name="halt_trading")
     @is_allowed_user(930513222820331590, PBot)
     async def halt_trading(self, ctx, halt: bool):
@@ -8842,6 +8998,11 @@ class CurrencySystem(commands.Cog):
                         return
 
         if type.lower() == "stock":
+            buyer_city = get_current_city(ctx.author.id)
+
+            if symbol.lower() == "onyxtoken" and buyer_city.lower() != "technometra":
+                await ctx.send("OnyxToken can only be Purchased from TechnoMetra unless Order Book")
+                return
             is_open, day_type = await is_trading_hours()
             if is_open:
                 print("The market is open during trading hours on", day_type)
@@ -8988,6 +9149,8 @@ class CurrencySystem(commands.Cog):
 
             await self.add_limit_order_command(ctx, symbol, "sell", margin, amount)
             await add_experience(self, self.conn, ctx.author.id, 2.5, ctx)
+            if symbol in inverseStocks:
+                await self.burn_stock_supply(ctx, symbol, round(amount), False)
             return
         if type.lower() == "stock":
 #            await ctx.send("Selling to Reserve turned off, try buying/selling off orderbooks")
@@ -9723,9 +9886,6 @@ class CurrencySystem(commands.Cog):
 
     @commands.command(name="simulate_fill_orders")
     async def transact_order2(self, ctx, symbol, quantity_to_buy: int):
-        if quantity_to_buy > 500_000_000_000_000_000_000_000:
-            await ctx.send(f"Purchase quantity can't be over 500.000.000,000,000,000,000,000")
-            return
         buyer_id = ctx.author.id
         buyer_addr = get_p3_address(self.P3addrConn, buyer_id)
         cursor = self.conn.cursor()
@@ -9834,18 +9994,17 @@ class CurrencySystem(commands.Cog):
             seller_old = get_user_balance(self.conn, seller_id)
             if buyer_balance >= total_cost_tax:
                 await self.give_addr(ctx, seller_addr, int(total_cost - fee), False)
-#                add_city_tax(buyer_id, (fee / 2))
-#                add_city_tax(seller_id, (fee / 2))
+
 
                 await send_stock(self, ctx, buyer_addr, escrow_addr, symbol, quantity_to_fill, False)
                 seller_new = get_user_balance(self.conn, seller_id)
                 new_balance = get_user_balance(self.conn, buyer_id)
-                await log_transaction(ledger_conn, ctx, "Buy Stock", symbol, quantity_to_fill, total_cost, total_cost_tax, current_balance, new_balance, price, "True")
-                await log_order_transaction(ledger_conn, ctx, "Sell Stock", symbol, quantity_to_fill, total_cost, (total_cost - fee), seller_old, seller_new, price, "True", seller_id)
+
+                await log_transaction(ledger_conn, self,  ctx, "Buy Stock", symbol, quantity_to_fill, total_cost, total_cost_tax, current_balance, new_balance, price, "True")
+                await log_order_transaction(ledger_conn, self, ctx, "Sell Stock", symbol, quantity_to_fill, total_cost, (total_cost - fee), seller_old, seller_new, price, "True", seller_id)
                 mv = await get_etf_value(self, ctx, 6)
                 await add_mv_metric(self, ctx, mv)
                 await add_etf_metric(self, ctx)
-#        await add_metal_metric(self, ctx)
                 await add_reserve_metric(self, ctx)
                 mv_avg = await calculate_average_mv(self)
                 print(f"MV Avg: {mv_avg:,.2f}")
@@ -9872,6 +10031,9 @@ class CurrencySystem(commands.Cog):
                 # Update remaining quantity to buy
                 quantity_to_buy -= quantity_to_fill
                 orders_purchased += 1
+            else:
+                await ctx.send(f"Not enough QSE to facilitate purchase {buyer_balance:,.2f} >= {total_cost_tax:,.2f}")
+                return
 
             # Check if all required quantity has been bought
             if quantity_to_buy <= 0:
@@ -9921,6 +10083,9 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="buy_stock", help="Buy stocks. Provide the stock name and amount.")
     @is_allowed_user(930513222820331590, PBot)
     async def buy_stock(self, ctx, stock_name: str, amount: int, stable_option: str = "False"):
+        anon = await self.is_anon(ctx.author.id)
+        if anon:
+            await ctx.message.delete()
         if amount == 0:
             await ctx.send(f"{ctx.author.mention}, you cannot buy 0 amount of {stock_name}.")
             return
@@ -9967,7 +10132,11 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="City Tax:", value=f"{(city_tax * 100):,.2f}%", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
-        await ctx.send(embed=embed)
+        if anon:
+            user = await self.bot.fetch_user(ctx.author.id)
+            await user.send(embed=embed)
+        else:
+            await ctx.send(embed=embed)
 
         cursor = self.conn.cursor()
         buyer_id = ctx.author.id
@@ -10052,8 +10221,8 @@ class CurrencySystem(commands.Cog):
             if stock_name.lower() == "p3:stable":
                 print(f"P3:Stable Minted: {amount:,.0f}")
                 await self.mint_stock_stable(ctx, stock_name, (amount), False)
-            await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, buy_price, "True")
-            await log_order_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, total_cost, (cost), seller_old, seller_new, buy_price, "True", PBot)
+            await log_transaction(ledger_conn, self, ctx, "Buy Stock", stock_name, amount, cost, total_cost, current_balance, new_balance, buy_price, "True")
+            await log_order_transaction(ledger_conn, self, ctx, "Sell Stock", stock_name, amount, total_cost, (cost), seller_old, seller_new, buy_price, "True", PBot)
             await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), int(fee) + c_tax)
             if stock_name in inverseStocks:
                                 await self.mint_stock_supply(ctx, stock_name, round(amount * 4), False)
@@ -10078,7 +10247,11 @@ class CurrencySystem(commands.Cog):
         embed.add_field(name="Transaction Time:", value=f"{elapsed_time:.2f} seconds", inline=False)
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
-        await ctx.send(embed=embed)
+        if anon:
+            user = await self.bot.fetch_user(ctx.author.id)
+            await user.send(embed=embed)
+        else:
+            await ctx.send(embed=embed)
         await add_experience(self, self.conn, ctx.author.id, 1, ctx)
 
         self.conn.commit()
@@ -10100,6 +10273,7 @@ class CurrencySystem(commands.Cog):
     @commands.command(name="sell_stock", help="Sell stocks. Provide the stock name and amount.")
     @is_allowed_user(930513222820331590, PBot)
     async def sell_stock(self, ctx, stock_name: str, amount: int):
+        anon = await self.is_anon(ctx.author.id)
         result = await get_supply_stats(self, ctx, stock_name)
         reserve, total, locked, escrow, market, circulating = result
         price = await get_stock_price(self, ctx, stock_name)
@@ -10137,7 +10311,11 @@ class CurrencySystem(commands.Cog):
         embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
 
-        await ctx.send(embed=embed)
+        if anon:
+            user = await self.bot.fetch_user(ctx.author.id)
+            await user.send(embed=embed)
+        else:
+            await ctx.send(embed=embed)
 
         stock_price = await get_stock_price(self, ctx, stock_name)
 
@@ -10226,6 +10404,9 @@ class CurrencySystem(commands.Cog):
                 await send_stock(self, ctx, city_addr, sender_addr, stock_name, int(amount), False)
                 print_stock_info(stock_name, locked, total, market, reserve, escrow)
 
+                if stock_name in inverseStocks:
+                    await self.mint_stock_supply(ctx, stock_name, round(amount), False)
+
 
 
                 new_price = await get_stock_price(self, ctx, stock_name)
@@ -10235,8 +10416,8 @@ class CurrencySystem(commands.Cog):
                     await self.burn_stock_supply(ctx, stock_name, amount, False)
 
                 seller_new = get_user_balance(self.conn, PBot)
-                await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, sell_price, "True")
-                await log_order_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, total_earnings, (earnings), seller_old, seller_new, sell_price, "True", PBot)
+                await log_transaction(ledger_conn, self, ctx, "Sell Stock", stock_name, amount, earnings, total_earnings, current_balance, new_balance, sell_price, "True")
+                await log_order_transaction(ledger_conn, self, ctx, "Buy Stock", stock_name, amount, total_earnings, (earnings), seller_old, seller_new, sell_price, "True", PBot)
                 await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), int(fee) + c_tax)
 
                 self.conn.commit()
@@ -10252,12 +10433,30 @@ class CurrencySystem(commands.Cog):
                         print(weighted_price)
                     orders = []
                     city_id = await get_city_id(self, city)
-                    if random.random() < 0.25:
-                        weighted_price *= 2
-                    if random.random() < 0.04:
-                        weighted_price *= 4
-                    orders.append((self, ctx, city_id, stock_name, "sell", round(weighted_price), amount))
-                    await add_limit_orders(self, ctx, orders, False)
+
+                    # List of potential multipliers and their corresponding probabilities
+                    multipliers = [
+                        (2, 0.25),   # Increase by 100% (multiply by 2) with 25% chance
+                        (4, 0.04),   # Increase by 300% (multiply by 4) with 4% chance
+                        (0.90, 0.051),  # Decrease by 10% (multiply by 0.90) with 5.1% chance
+                        (0.98, 0.01)   # Decrease by 2% (multiply by 0.98) with 1% chance
+                    ]
+
+                    # Apply a random multiplier based on the defined probabilities
+                    applied_multiplier = False
+
+                    for multiplier, probability in multipliers:
+                        if random.random() < probability:
+                            weighted_price *= multiplier
+                            applied_multiplier = True
+                            break  # Apply only the first matching multiplier based on probability
+
+                    # If no multiplier was applied, apply a default multiplier (e.g., no change)
+                    if not applied_multiplier:
+                        # Apply a default multiplier (e.g., no change)
+                        weighted_price *= 1.0  # Default multiplier (no change)
+                        orders.append((self, ctx, city_id, stock_name, "sell", round(weighted_price), amount))
+                        await add_limit_orders(self, ctx, orders, False)
 
 
                 color = discord.Color.red()
@@ -10278,7 +10477,11 @@ class CurrencySystem(commands.Cog):
                 embed.add_field(name="Transaction Time:", value=f"{elapsed_time:.2f} seconds", inline=False)
                 embed.set_footer(text=f"Timestamp: {current_timestamp}")
 
-                await ctx.send(embed=embed)
+                if anon:
+                    user = await self.bot.fetch_user(ctx.author.id)
+                    await user.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
                 await add_experience(self, self.conn, ctx.author.id, 5, ctx)
 
                 self.sell_stock_avg.append(elapsed_time)
@@ -11343,6 +11546,7 @@ class CurrencySystem(commands.Cog):
                     await ctx.send(f"Gave {amount:,} of {symbol} to {target}.")
             else:
                 await ctx.send(f"Not enough {symbol} available in Market Holdings.")
+                return
         except Exception as e:
             print(f"An error occurred in give_stock: {e}")
             await ctx.send("An error occurred while processing the command.")
@@ -11461,22 +11665,6 @@ class CurrencySystem(commands.Cog):
 
 
 
-    @commands.command(name="ceo_unlock")
-    async def ceo_unlock(self, ctx, symbol, percentage, ceo_type):
-        result = await get_supply_stats(self, ctx, symbol)
-        reserve, total, locked, escrow, market, circulating = result
-        amount = (int(percentage) / 100) * total
-
-        if ceo_type.lower() == "lock":
-            if int(market) < int(amount):
-                await ctx.send(f"Not enough shares of {symbol} to lock\n\nMarket: {market:,.0f}\nAmount: {amount:,.0f}")
-            else:
-                await unlock_share_limit(self, ctx, symbol, percentage, ceo_type)
-        elif ceo_type.lower() == "unlock":
-            if int(locked) < int(amount):
-                await ctx.send(f"Not enough shares of {symbol} to unlock\n\nLocked: {locked:,.0f}\nAmount: {amount:,.0f}")
-            else:
-                await unlock_share_limit(self, ctx, symbol, percentage, ceo_type)
 
 
     @commands.command(name="unlock_shares")
@@ -11658,7 +11846,7 @@ class CurrencySystem(commands.Cog):
 
 
         # Log the transaction
-        await log_transaction(ledger_conn, ctx, "Buy Stock", stock_name, amount, total_cost, total_cost, 0, 0, price, "Fail")
+        await log_transaction(ledger_conn, self, ctx, "Buy Stock", stock_name, amount, total_cost, total_cost, 0, 0, price, "Fail")
 
         # Commit the transaction
         self.conn.commit()
@@ -11717,7 +11905,7 @@ class CurrencySystem(commands.Cog):
 
 
         # Log the transaction
-        await log_transaction(ledger_conn, ctx, "Sell Stock", stock_name, amount, total_earnings, total_earnings, 0, 0, price, "Fail")
+        await log_transaction(ledger_conn, self, ctx, "Sell Stock", stock_name, amount, total_earnings, total_earnings, 0, 0, price, "Fail")
 
         # Commit the transaction
         self.conn.commit()
@@ -12165,7 +12353,7 @@ class CurrencySystem(commands.Cog):
     async def set_all_balances(self, ctx):
         try:
             cursor = self.conn.cursor()
-            cursor.execute("UPDATE users SET balance = ?;", (80000000000000000,))
+            cursor.execute("UPDATE users SET balance = ?;", (100000000,))
             self.conn.commit()
             cursor.close()
             await ctx.send("All user balances set to 100,000,000.")
@@ -12673,7 +12861,7 @@ class CurrencySystem(commands.Cog):
             return
 
         await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), fee)
-        await log_transaction(ledger_conn, ctx, "Buy ETP", str(etf_id), quantity, total_cost_with_tax, (total_cost_with_tax + fee), current_balance, new_balance, etf_value, "True")
+        await log_transaction(ledger_conn, self, ctx, "Buy ETP", str(etf_id), quantity, total_cost_with_tax, (total_cost_with_tax + fee), current_balance, new_balance, etf_value, "True")
 
         self.conn.commit()
 
@@ -12799,7 +12987,8 @@ class CurrencySystem(commands.Cog):
         # Transfer the tax amount to the bot's address P3:03da907038
         await log_transfer(self, ledger_conn, ctx, "P3 Bot", self.bot_address, get_user_id(self.P3addrConn, self.bot_address), fee)
 
-        await log_transaction(ledger_conn, ctx, "Sell ETP", str(etf_id), quantity, total_sale_amount, total_sale_amount_with_tax, current_balance, new_balance, etf_value, "True")
+
+        await log_transaction(ledger_conn, self, ctx, "Sell ETP", str(etf_id), quantity, total_sale_amount, total_sale_amount_with_tax, current_balance, new_balance, etf_value, "True")
 
         self.conn.commit()
         if etf_id == 10:
@@ -13609,6 +13798,7 @@ class CurrencySystem(commands.Cog):
                 total_supply = random.randint(100000000, 25000000000)
                 available_supply = total_supply
                 cursor.execute("UPDATE stocks SET total_supply = ?, available = ? WHERE symbol = ?", (total_supply, available_supply, stock_name))
+                await self.buy_stock_for_bot(ctx, stock_name, available_supply)
 
             self.conn.commit()
             await ctx.send("Total and available supplies for all stocks have been updated successfully.")
@@ -14074,23 +14264,7 @@ class CurrencySystem(commands.Cog):
     @commands.command(name='city_stats', help='Display the number of people and additional statistics in each city')
     async def city_stats(self, ctx):
         try:
-            cursor = self.conn.cursor()
-
-            # Fetch the city statistics (population count) and additional statistics
-            cursor.execute("""
-                SELECT
-                    c.current_city,
-                    COALESCE(COUNT(user_id), 0) AS population,
-                    COALESCE(s.QSE, 0) AS QSE,
-                    COALESCE(s.Resources, 0) AS Resources,
-                    COALESCE(s.Stocks, 0) AS Stocks,
-                    COALESCE(s.ETPs, 0) AS ETPs
-                FROM users_rpg_cities c
-                LEFT JOIN user_city_stats s ON c.current_city = s.city
-                WHERE c.current_city IS NOT NULL
-                GROUP BY c.current_city
-            """)
-            city_stats = cursor.fetchall()
+            city_stats = await city_data(self)
 
             if city_stats:
                 # Create an embed to display city statistics
@@ -14703,15 +14877,26 @@ class CurrencySystem(commands.Cog):
                         stable_stock_price = await get_stock_price(self, ctx, stable_stock) or 0
                         user_owned_stable = self.get_user_stock_amount(user_id, stable_stock) or 0
                         user_stable_value = stable_stock_price * user_owned_stable
+                        user_escrow_value = await get_value_escrow_user(self, ctx, user_id)
 
                         # Calculate total value of all funds
-                        total_funds_value = current_balance + total_stock_value + total_etf_value + total_metal_value
+                        total_funds_value = current_balance + total_stock_value + total_etf_value + total_metal_value + user_escrow_value
+                        chart_path = await generate_pie_chart(current_balance, total_stock_value, total_etf_value, user_stable_value, total_metal_value, user_escrow_value)
 
                         current_month_name = calendar.month_name[datetime.now().month]
 
+                        embed = None
 
+                        for city in self.cities:
+                            if P3Addr == await get_city_addr(self, ctx, city):
+                                # If P3Addr matches the city's address, set the embed title with the city name
+                                embed = Embed(title=f"{city} Financial Stats", color=Colour.green())
+                                break  # Stop looping once a match is found
+
+                        # If embed is still None, it means no matching city was found for P3Addr
+                        if embed is None:
+                            embed = Embed(title=f"{P3Addr} Financial Stats", color=Colour.green())
                         # Create the embed
-                        embed = Embed(title=f"{P3Addr} Financial Stats", color=Colour.green())
                         embed.set_thumbnail(url="attachment://market-stats.jpeg")
                         embed.add_field(name="Balance", value=f"{current_balance:,.0f} $QSE" if current_balance != 0 else "0", inline=False)
                         embed.add_field(name="Total Stock Value", value=f"{total_stock_value:,.0f} $QSE" if total_stock_value != 0 else "0", inline=False)
@@ -14719,10 +14904,11 @@ class CurrencySystem(commands.Cog):
                         embed.add_field(name="P3:Stable Value", value=f"{user_stable_value:,.0f} $QSE" if user_stable_value != 0 else "0", inline=False)
                         embed.add_field(name="Total Metal Value", value=f"{total_metal_value:,.2f} $QSE" if total_metal_value != 0 else "0", inline=False)
                         shares_in_escrow = await get_total_shares_in_escrow_user(self, user_id)
-                        embed.add_field(name="Total Escrow", value=f"{shares_in_escrow:,.0f} shares" if shares_in_escrow != 0 else "0", inline=False)
+                        embed.add_field(name="Total Escrow Value", value=f"{user_escrow_value:,.0f} $QSE" if user_escrow_value != 0 else "0", inline=False)
                         embed.add_field(name="Total Funds Value", value=f"{total_funds_value:,.0f} $QSE" if total_funds_value != 0 else "0", inline=False)
 
                         await ctx.send(embed=embed, file=File("./stock_images/market-stats.jpeg"))
+                        await ctx.send(file=File(chart_path))
                         await tax_command(self, ctx)
                         elapsed_time = timeit.default_timer() - self.tax_command_timer_start
                         self.tax_command_avg.append(elapsed_time)
@@ -14777,6 +14963,11 @@ class CurrencySystem(commands.Cog):
         self.is_halted = True
         self.is_halted_order = True
         total_escrow_value = 0
+        city_escrow_value = 0
+        for city in self.cities:
+            city_id = await get_city_id(self, city)
+            city_escrow = await get_value_escrow_user(self, ctx, city_id)
+            city_escrow_value += city_escrow
         try:
             Pbot_Balance = 0
             # Connect to databases using context managers
@@ -14818,7 +15009,7 @@ class CurrencySystem(commands.Cog):
                         city_stock_value += stock_price * amount
 
 
-                city_total_value = city_qse_value + city_stock_value
+                city_total_value = city_qse_value + city_stock_value + city_escrow_value
                 print(f"City QSE Total -> {city_qse_value:,.2f}\nCity Stock Total -> {city_stock_value:,.2f}\nTotal -> {city_total_value:,.2f}")
 
 
@@ -14838,7 +15029,7 @@ class CurrencySystem(commands.Cog):
                     stock_price = await get_stock_price(self, ctx, symbol) if stock_price_row else 0
                     reserve_stock_value += stock_price * amount
 
-                reserve_stock_value = reserve_stock_value - total_escrow_value
+                reserve_stock_value = abs(reserve_stock_value - total_escrow_value)
                 MAX_BALANCE = Pbot_Balance + reserve_stock_value
 
                 # Get all user IDs from P3addr.db
@@ -14950,8 +15141,9 @@ class CurrencySystem(commands.Cog):
                     total_etf_value += ((etf_shares - etf_avbl) * etf_value)
                 qse_integer = await self.city_value()
                 bank_qse = await get_total_qse_deposited(self)
+                user_escrow_value = abs(total_escrow_value - city_escrow_value)
 #                Pbot_Balance = abs(Pbot_Balance - bank_qse)
-                surplus = Pbot_Balance - abs(user_stock_value + total_etf_value + total_metal_value)
+                surplus = Pbot_Balance - abs(user_stock_value + total_etf_value + total_metal_value + bank_qse)
 
 
                 # Calculate total funds value for each user
@@ -14972,7 +15164,7 @@ class CurrencySystem(commands.Cog):
                 embed.add_field(name="Community ETP Value:", value=f"{total_etf_value:,.0f} $QSE\n(Market: {((total_etf_value / total_balance) * 100):,.4f}%)\n(Total ETF Supply: {((total_etf_value / market_etf_value) * 100):,.4f})%", inline=False)
                 embed.add_field(name="Community P3:Stable Value:", value=f"{total_stable_value:,.0f} $QSE\n({((total_stable_value / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Community Metal Value:", value=f"{total_metal_value:,.0f} $QSE\n({((total_metal_value / total_balance) * 100):,.4f}%)", inline=False)
-                embed.add_field(name="Community Escrow Value:", value=f"{total_escrow_value:,.0f} $QSE\n(Market: {((total_escrow_value / total_balance) * 100):,.4f}%)\n(Total Stock Supply: {((total_escrow_value / market_stock_value) * 100):,.4f}%)", inline=False)
+                embed.add_field(name="Community Escrow Value:", value=f"{user_escrow_value:,.0f} $QSE\n(Market: {((user_escrow_value / total_balance) * 100):,.4f}%)\n(Total Stock Supply: {((user_escrow_value / market_stock_value) * 100):,.4f}%)", inline=False)
 #                embed.add_field(name="Community UpDown Value:", value=f"{total_updown_value:,.0f} $QSE\n({((total_updown_value / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="Community Asset Value:", value=f"{user_balance:,.0f} $QSE\n({((user_balance / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="", value="---------------------------------------------", inline=False)
@@ -14985,14 +15177,14 @@ class CurrencySystem(commands.Cog):
                 embed.add_field(name="", value="---------------------------------------------", inline=False)
                 embed.add_field(name="City QSE:", value=f"{city_qse_value:,.0f} $QSE\n({((city_qse_value / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="City Stock Value:", value=f"{city_stock_value:,.0f} $QSE\n({((city_stock_value / total_balance) * 100):,.4f}%)", inline=False)
+                embed.add_field(name="City Escrow Value:", value=f"{city_escrow_value:,.0f} $QSE\n({((city_escrow_value / total_balance) * 100):,.4f}%)", inline=False)
 #                embed.add_field(name="City Asset Value:", value=f"{city_total_value:,.0f} $QSE\n({((city_total_value / total_balance) * 100):,.4f}%)", inline=False)
                 embed.add_field(name="", value="---------------------------------------------", inline=False)
                 embed.add_field(name="Escrow Stock Supply Value:", value=f"{escrow_stock_value:,.0f} $QSE", inline=False)
                 embed.add_field(name="Locked Stock Supply Value:", value=f"{locked_stock_value:,.0f} $QSE", inline=False)
-                embed.add_field(name="Market Stock Supply Value:", value=f"{open_stock_value:,.0f} $QSE", inline=False)
-                embed.add_field(name="Total Stock Supply Value:", value=f"{market_stock_value:,.0f} $QSE", inline=False)
                 embed.add_field(name="", value="---------------------------------------------", inline=False)
                 embed.add_field(name="Total ETF Supply Value:", value=f"{market_etf_value:,.0f} $QSE", inline=False)
+                embed.add_field(name="Total Stock Supply Value:", value=f"{market_stock_value:,.0f} $QSE", inline=False)
                 embed.add_field(name="Total Market Value:", value=f"{total_balance:,.0f} $QSE", inline=False)
 
                 await ctx.send(embed=embed)
